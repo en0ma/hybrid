@@ -159,13 +159,20 @@ async fn measure_state_backed_match_cu() {
     assert!(units > 0);
 }
 
-
 async fn units_for_multipage_state_backed_quote() -> u64 {
     let market_key = Pubkey::new_unique();
-    let ask_0_key = Pubkey::new_unique();
-    let ask_1_key = Pubkey::new_unique();
-    let boundary_0_key = Pubkey::new_unique();
-    let boundary_1_key = Pubkey::new_unique();
+    let (ask_0_key, _) =
+        Pubkey::find_program_address(&[b"ask-page", market_key.as_ref(), &0u32.to_le_bytes()], &ID);
+    let (ask_1_key, _) =
+        Pubkey::find_program_address(&[b"ask-page", market_key.as_ref(), &1u32.to_le_bytes()], &ID);
+    let (boundary_0_key, _) = Pubkey::find_program_address(
+        &[b"boundary-page", market_key.as_ref(), &0u32.to_le_bytes()],
+        &ID,
+    );
+    let (boundary_1_key, _) = Pubkey::find_program_address(
+        &[b"boundary-page", market_key.as_ref(), &1u32.to_le_bytes()],
+        &ID,
+    );
 
     let market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
     let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
@@ -173,44 +180,38 @@ async fn units_for_multipage_state_backed_quote() -> u64 {
 
     let mut ask_0 = AskPage::default();
     ask_0.set_links(PageLinks::new(0, None, Some(1)));
-    ask_0
-        .insert(AskEntry {
-            price_x64: Q64,
-            sqrt_price_x64: Q64,
-            base_qty: 1_000,
-            sequence: 1,
-        })
-        .unwrap();
-
-    let ask_1_sqrt = Q64 + Q64 / 100;
     let mut ask_1 = AskPage::default();
     ask_1.set_links(PageLinks::new(1, Some(0), None));
-    ask_1
-        .insert(AskEntry {
-            price_x64: spot_price_x64(ask_1_sqrt).unwrap(),
-            sqrt_price_x64: ask_1_sqrt,
-            base_qty: 2_000,
-            sequence: 2,
-        })
-        .unwrap();
+    for index in 0..64u64 {
+        let sqrt_price_x64 = Q64 + u128::from(index) * 1_000_000_000_000u128;
+        let entry = AskEntry {
+            price_x64: spot_price_x64(sqrt_price_x64).unwrap(),
+            sqrt_price_x64,
+            base_qty: 1_000,
+            sequence: index + 1,
+        };
+        if index < 32 {
+            ask_0.insert(entry).unwrap();
+        } else {
+            ask_1.insert(entry).unwrap();
+        }
+    }
 
     let mut boundary_0 = BoundaryPage::default();
     boundary_0.set_links(PageLinks::new(0, None, Some(1)));
-    boundary_0
-        .insert(BoundaryEntry {
-            sqrt_price_x64: Q64 + Q64 / 200,
-            liquidity_after: 1_500_000,
-        })
-        .unwrap();
-
     let mut boundary_1 = BoundaryPage::default();
     boundary_1.set_links(PageLinks::new(1, Some(0), None));
-    boundary_1
-        .insert(BoundaryEntry {
-            sqrt_price_x64: Q64 + Q64 / 80,
-            liquidity_after: 2_000_000,
-        })
-        .unwrap();
+    for index in 0..64u64 {
+        let entry = BoundaryEntry {
+            sqrt_price_x64: Q64 + (u128::from(index) + 1) * 500_000_000_000u128,
+            liquidity_after: 1_500_000 + u128::from(index),
+        };
+        if index < 32 {
+            boundary_0.insert(entry).unwrap();
+        } else {
+            boundary_1.insert(entry).unwrap();
+        }
+    }
 
     let mut ask_0_data = vec![0u8; ASK_PAGE_BYTES];
     let mut ask_1_data = vec![0u8; ASK_PAGE_BYTES];
