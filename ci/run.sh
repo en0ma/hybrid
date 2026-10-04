@@ -15,8 +15,8 @@ cargo test --workspace --all-features
 command -v cargo-build-sbf >/dev/null 2>&1 || { echo "cargo-build-sbf missing"; exit 1; }
 command -v cargo-test-sbf >/dev/null 2>&1 || { echo "cargo-test-sbf missing"; exit 1; }
 
-cargo build-sbf
-cargo test-sbf
+cargo build-sbf --manifest-path program/Cargo.toml
+cargo test-sbf --manifest-path program/Cargo.toml --features test-sbf
 
 if [[ ! -f fuzz/Cargo.toml ]]; then
   echo "fuzz/Cargo.toml is required once Hybrid contains Rust program code."
