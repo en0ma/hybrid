@@ -27,7 +27,6 @@ pub enum StateError {
     Corrupt,
 }
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PageLinks {
     pub page_index: u32,
@@ -49,15 +48,15 @@ impl PageLinks {
     fn encode_into(self, reserved: &mut [u8; 14]) {
         reserved.fill(0);
         reserved[0..4].copy_from_slice(&self.page_index.to_le_bytes());
-        reserved[4..8].copy_from_slice(
-            &self.prev_page.unwrap_or(Self::NONE).to_le_bytes(),
-        );
-        reserved[8..12].copy_from_slice(
-            &self.next_page.unwrap_or(Self::NONE).to_le_bytes(),
-        );
+        reserved[4..8].copy_from_slice(&self.prev_page.unwrap_or(Self::NONE).to_le_bytes());
+        reserved[8..12].copy_from_slice(&self.next_page.unwrap_or(Self::NONE).to_le_bytes());
     }
 
     fn decode_from(reserved: &[u8; 14]) -> Self {
+        if reserved[..12].iter().all(|byte| *byte == 0) {
+            return Self::new(0, None, None);
+        }
+
         let page_index = u32::from_le_bytes(reserved[0..4].try_into().expect("page index"));
         let prev_raw = u32::from_le_bytes(reserved[4..8].try_into().expect("prev page"));
         let next_raw = u32::from_le_bytes(reserved[8..12].try_into().expect("next page"));
@@ -624,12 +623,14 @@ impl BoundaryPage {
     }
 }
 
-
 pub fn validate_ask_chain(pages: &[AskPage]) -> Result<(), StateError> {
     for (index, page) in pages.iter().enumerate() {
         page.validate_order()?;
         let links = page.links();
         if links.page_index != index as u32 {
+            return Err(StateError::Corrupt);
+        }
+        if index > 0 && index + 1 < pages.len() && page.is_empty() {
             return Err(StateError::Corrupt);
         }
         match index {
@@ -638,6 +639,16 @@ pub fn validate_ask_chain(pages: &[AskPage]) -> Result<(), StateError> {
                 return Err(StateError::Corrupt)
             }
             _ => {}
+        }
+
+        for entry in page.as_slice() {
+            if pages[index + 1..]
+                .iter()
+                .flat_map(|later| later.as_slice())
+                .any(|other| other.sequence == entry.sequence)
+            {
+                return Err(StateError::Corrupt);
+            }
         }
     }
     for pair in pages.windows(2) {
@@ -651,6 +662,9 @@ pub fn validate_boundary_chain(pages: &[BoundaryPage]) -> Result<(), StateError>
         page.validate_order()?;
         let links = page.links();
         if links.page_index != index as u32 {
+            return Err(StateError::Corrupt);
+        }
+        if index > 0 && index + 1 < pages.len() && page.is_empty() {
             return Err(StateError::Corrupt);
         }
         match index {
@@ -885,7 +899,10 @@ mod tests {
         assert_eq!(validate_ask_chain(&[first, second]), Ok(()));
 
         second.set_links(PageLinks::new(1, None, None));
-        assert_eq!(validate_ask_chain(&[first, second]), Err(StateError::Corrupt));
+        assert_eq!(
+            validate_ask_chain(&[first, second]),
+            Err(StateError::Corrupt)
+        );
     }
 
     #[test]
@@ -928,4 +945,47 @@ mod tests {
         assert_eq!(core::mem::size_of::<AskPage>(), ASK_PAGE_BYTES);
     }
 
+    #[test]
+    fn legacy_zero_page_header_decodes_as_unlinked_page_zero() {
+        let page = AskPage::default();
+        assert_eq!(page.links(), PageLinks::new(0, None, None));
+        assert_eq!(validate_ask_chain(core::slice::from_ref(&page)), Ok(()));
+    }
+
+    #[test]
+    fn ask_chain_rejects_duplicate_sequences_across_pages() {
+        let mut first = AskPage::default();
+        first.set_links(PageLinks::new(0, None, Some(1)));
+        first.insert(ask(Q64, 10, 7)).unwrap();
+
+        let mut second = AskPage::default();
+        second.set_links(PageLinks::new(1, Some(0), None));
+        second.insert(ask(Q64 + Q64 / 100, 10, 7)).unwrap();
+
+        assert_eq!(
+            validate_ask_chain(&[first, second]),
+            Err(StateError::Corrupt)
+        );
+    }
+
+    #[test]
+    fn chains_reject_empty_interior_pages() {
+        let mut first = AskPage::default();
+        first.set_links(PageLinks::new(0, None, Some(1)));
+        first.insert(ask(Q64, 10, 1)).unwrap();
+
+        let mut middle = AskPage::default();
+        middle.set_links(PageLinks::new(1, Some(0), Some(2)));
+
+        let mut last_page = AskPage::default();
+        last_page.set_links(PageLinks::new(2, Some(1), None));
+        last_page
+            .insert(ask(Q64 + Q64 / 100, 10, 2))
+            .unwrap();
+
+        assert_eq!(
+            validate_ask_chain(&[first, middle, last_page]),
+            Err(StateError::Corrupt)
+        );
+    }
 }
