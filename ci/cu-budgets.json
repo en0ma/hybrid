@@ -1,5 +1,6 @@
 {
   "noop": 5000,
   "passive_quote": 15000,
-  "hybrid_match": 30000
+  "hybrid_match": 30000,
+  "multilevel_match": 50000
 }
