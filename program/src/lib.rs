@@ -173,6 +173,30 @@ pub fn process_instruction(
                 .map_err(|_| ProgramError::InvalidAccountData)?;
             drop(market_data);
 
+            let market_key = _accounts[0].key;
+            for (index, account) in _accounts[1..1 + ask_page_count].iter().enumerate() {
+                let index_bytes = (index as u32).to_le_bytes();
+                let (expected, _) = Pubkey::find_program_address(
+                    &[b"ask-page", market_key.as_ref(), &index_bytes],
+                    _program_id,
+                );
+                if *account.key != expected {
+                    return Err(ProgramError::InvalidSeeds);
+                }
+            }
+
+            let boundary_start = 1 + ask_page_count;
+            for (index, account) in _accounts[boundary_start..].iter().enumerate() {
+                let index_bytes = (index as u32).to_le_bytes();
+                let (expected, _) = Pubkey::find_program_address(
+                    &[b"boundary-page", market_key.as_ref(), &index_bytes],
+                    _program_id,
+                );
+                if *account.key != expected {
+                    return Err(ProgramError::InvalidSeeds);
+                }
+            }
+
             let mut ask_pages = Vec::with_capacity(ask_page_count);
             for account in &_accounts[1..1 + ask_page_count] {
                 let data = account
@@ -185,7 +209,6 @@ pub fn process_instruction(
             hybrid_state::validate_ask_chain(&ask_pages)
                 .map_err(|_| ProgramError::InvalidAccountData)?;
 
-            let boundary_start = 1 + ask_page_count;
             let mut boundary_pages = Vec::with_capacity(boundary_page_count);
             for account in &_accounts[boundary_start..] {
                 let data = account
@@ -204,7 +227,12 @@ pub fn process_instruction(
                 .sum::<usize>();
             let mut asks = Vec::with_capacity(ask_count);
             for page in &ask_pages {
-                asks.extend(page.as_slice().iter().copied().map(hybrid_state::AskEntry::as_limit_ask));
+                asks.extend(
+                    page.as_slice()
+                        .iter()
+                        .copied()
+                        .map(hybrid_state::AskEntry::as_limit_ask),
+                );
             }
 
             let boundary_count = boundary_pages
