@@ -6,7 +6,7 @@ trap 'rm -f "$OUT"' EXIT
 
 export SBF_OUT_DIR="${SBF_OUT_DIR:-$PWD/target/deploy}"
 cargo build-sbf --manifest-path program/Cargo.toml
-cargo test-sbf --manifest-path program/Cargo.toml --features test-sbf --test cu -- --nocapture | tee "$OUT"
+cargo test-sbf --manifest-path program/Cargo.toml --features test-sbf --test cu -- --nocapture 2>&1 | tee "$OUT"
 
 python3 - "$OUT" ci/cu-budgets.json <<'PY'
 import json, re, sys
