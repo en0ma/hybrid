@@ -12,6 +12,12 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 
+if [[ ! -f ci/state-check.sh || ! -f ci/state-budgets.json ]]; then
+  echo "Persistent state byte budget files are required."
+  exit 1
+fi
+bash ci/state-check.sh
+
 command -v cargo-build-sbf >/dev/null 2>&1 || { echo "cargo-build-sbf missing"; exit 1; }
 command -v cargo-test-sbf >/dev/null 2>&1 || { echo "cargo-test-sbf missing"; exit 1; }
 
