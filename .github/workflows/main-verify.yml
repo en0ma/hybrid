@@ -14,6 +14,7 @@ permissions:
 env:
   MANIFEST_COMMIT: d04b7aa90b098ba64ebcdf398e9a24d89a9114d8
   SURFPOOL_VERSION: "1.5.0"
+  SOLANA_VERSION: "v4.3.0"
 
 jobs:
   verify:
@@ -26,10 +27,14 @@ jobs:
       - name: Assert fresh main head
         run: test "$(git rev-parse HEAD)" = "${{ github.sha }}"
       - name: Core CI
-        run: bash ci/run.sh
+        run: |
+          source ci/install-solana.sh
+          bash ci/run.sh
       - name: Mainnet-fork suite
         env:
           SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
         run: bash ci/fork.sh
       - name: Manifest baseline comparison
-        run: bash ci/manifest-compare.sh
+        run: |
+          source ci/install-solana.sh
+          bash ci/manifest-compare.sh
