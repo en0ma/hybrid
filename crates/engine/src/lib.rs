@@ -64,8 +64,7 @@ fn mul_q64_floor(a: u128, b: u128) -> Result<u128, QuoteError> {
     let cross_b = b_hi.checked_mul(a_lo).ok_or(QuoteError::Overflow)?;
     let low = a_lo.checked_mul(b_lo).ok_or(QuoteError::Overflow)? >> 64;
 
-    high
-        .checked_add(cross_a)
+    high.checked_add(cross_a)
         .and_then(|v| v.checked_add(cross_b))
         .and_then(|v| v.checked_add(low))
         .ok_or(QuoteError::Overflow)
@@ -154,10 +153,7 @@ fn passive_base_delta(
         .ok_or(QuoteError::Overflow)
 }
 
-fn passive_to_target(
-    state: PassiveState,
-    target_sqrt_x64: u128,
-) -> Result<Quote, QuoteError> {
+fn passive_to_target(state: PassiveState, target_sqrt_x64: u128) -> Result<Quote, QuoteError> {
     if state.liquidity == 0 {
         return Err(QuoteError::ZeroLiquidity);
     }
@@ -175,11 +171,7 @@ fn passive_to_target(
     let delta = target_sqrt_x64 - state.sqrt_price_x64;
     let quote_in = mul_q64_ceil(state.liquidity, delta)?;
     let quote_in = u64::try_from(quote_in).map_err(|_| QuoteError::Overflow)?;
-    let base_out = passive_base_delta(
-        state.liquidity,
-        state.sqrt_price_x64,
-        target_sqrt_x64,
-    )?;
+    let base_out = passive_base_delta(state.liquidity, state.sqrt_price_x64, target_sqrt_x64)?;
     let base_out = u64::try_from(base_out).map_err(|_| QuoteError::Overflow)?;
 
     Ok(Quote {
@@ -211,10 +203,7 @@ fn base_for_quote_at_price(quote: u64, price_x64: u128) -> Result<u64, QuoteErro
 /// consumed only until its marginal price reaches the explicit ask; then the
 /// resting ask gets priority. Any remaining input returns to passive liquidity
 /// after the active order is exhausted.
-pub fn quote_buy_exact_in(
-    market: HybridMarket,
-    quote_in: u64,
-) -> Result<HybridQuote, QuoteError> {
+pub fn quote_buy_exact_in(market: HybridMarket, quote_in: u64) -> Result<HybridQuote, QuoteError> {
     if market.passive.liquidity == 0 {
         return Err(QuoteError::ZeroLiquidity);
     }
