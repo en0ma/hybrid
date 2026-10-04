@@ -161,10 +161,14 @@ async fn measure_state_backed_match_cu() {
 
 async fn units_for_multipage_state_backed_quote() -> u64 {
     let market_key = Pubkey::new_unique();
-    let (ask_0_key, _) =
-        Pubkey::find_program_address(&[b"ask-page", market_key.as_ref(), &0u32.to_le_bytes()], &ID);
-    let (ask_1_key, _) =
-        Pubkey::find_program_address(&[b"ask-page", market_key.as_ref(), &1u32.to_le_bytes()], &ID);
+    let (ask_0_key, _) = Pubkey::find_program_address(
+        &[b"ask-page", market_key.as_ref(), &0u32.to_le_bytes()],
+        &ID,
+    );
+    let (ask_1_key, _) = Pubkey::find_program_address(
+        &[b"ask-page", market_key.as_ref(), &1u32.to_le_bytes()],
+        &ID,
+    );
     let (boundary_0_key, _) = Pubkey::find_program_address(
         &[b"boundary-page", market_key.as_ref(), &0u32.to_le_bytes()],
         &ID,
