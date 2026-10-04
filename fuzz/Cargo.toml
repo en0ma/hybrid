@@ -10,10 +10,18 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 hybrid-engine = { path = "../crates/engine" }
+hybrid-state = { path = "../crates/state" }
 
 [[bin]]
 name = "passive_quote"
 path = "fuzz_targets/passive_quote.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "state_page"
+path = "fuzz_targets/state_page.rs"
 test = false
 doc = false
 bench = false
