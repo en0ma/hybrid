@@ -16,9 +16,9 @@ Manifest is pinned to:
 
 The public Manifest repository is compiled and tested on each gate. Its production replay benchmark uses a private repository, so Hybrid does not pretend that metric is reproducible. Instead, `ci/compare-cu.sh` is the extension point for identical Hybrid-vs-Manifest transactions under our own public fixture set.
 
-## CU and bytecode budget contract
+## State, CU and bytecode budget contract
 
-Once Hybrid has an executable program, `ci/cu-check.sh`, `ci/compare-cu.sh`, and `ci/bytecode-check.sh` are mandatory. They fail on regressions rather than merely report numbers. CU thresholds live in `ci/cu-budgets.json`; compiled SBF size thresholds live in `ci/bytecode-budgets.json`. Both are versioned in-repo and reviewed like protocol code.
+Persistent account-layout thresholds live in `ci/state-budgets.json` and are enforced by `ci/state-check.sh`. Once Hybrid has an executable program, `ci/cu-check.sh`, `ci/compare-cu.sh`, and `ci/bytecode-check.sh` are also mandatory. All checks fail on regressions rather than merely report numbers. CU thresholds live in `ci/cu-budgets.json`; compiled SBF size thresholds live in `ci/bytecode-budgets.json`. Every budget is versioned in-repo and reviewed like protocol code.
 
 ## Exact-head merge rule
 
