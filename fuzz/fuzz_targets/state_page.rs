@@ -2,7 +2,8 @@
 
 use hybrid_engine::{spot_price_x64, Q64};
 use hybrid_state::{
-    AskEntry, AskPage, BoundaryEntry, BoundaryPage, ASK_PAGE_BYTES, BOUNDARY_PAGE_BYTES,
+    validate_ask_chain, validate_boundary_chain, AskEntry, AskPage, BoundaryEntry, BoundaryPage,
+    PageLinks, ASK_PAGE_BYTES, BOUNDARY_PAGE_BYTES,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -10,6 +11,7 @@ fuzz_target!(|data: (u64, u64, u64, u64, u64, u64)| {
     let (a, b, c, d, e, f) = data;
 
     let mut asks = AskPage::default();
+    asks.set_links(PageLinks::new(0, None, None));
     let candidates = [
         (a, b, c),
         (d, e, f),
@@ -47,6 +49,7 @@ fuzz_target!(|data: (u64, u64, u64, u64, u64, u64)| {
     assert_eq!(decoded_asks, asks);
 
     let mut boundaries = BoundaryPage::default();
+    boundaries.set_links(PageLinks::new(0, None, None));
     for (seed, liquidity_seed) in [(a, b), (c, d), (e, f)] {
         let entry = BoundaryEntry {
             sqrt_price_x64: Q64.saturating_add(1 + u128::from(seed % 100_000)),
@@ -71,4 +74,15 @@ fuzz_target!(|data: (u64, u64, u64, u64, u64, u64)| {
     boundaries.encode_into(&mut boundary_bytes).unwrap();
     let decoded_boundaries = BoundaryPage::decode_from(&boundary_bytes).unwrap();
     assert_eq!(decoded_boundaries, boundaries);
+
+    assert!(validate_ask_chain(core::slice::from_ref(&asks)).is_ok());
+    assert!(validate_boundary_chain(core::slice::from_ref(&boundaries)).is_ok());
+
+    let mut bad_asks = asks;
+    bad_asks.set_links(PageLinks::new(7, None, None));
+    assert!(validate_ask_chain(core::slice::from_ref(&bad_asks)).is_err());
+
+    let mut bad_boundaries = boundaries;
+    bad_boundaries.set_links(PageLinks::new(9, None, None));
+    assert!(validate_boundary_chain(core::slice::from_ref(&bad_boundaries)).is_err());
 });
