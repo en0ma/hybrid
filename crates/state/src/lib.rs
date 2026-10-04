@@ -580,11 +580,25 @@ mod tests {
 
     #[test]
     fn layouts_are_exact_and_small() {
-        assert_eq!(core::mem::size_of::<MarketHeader>(), 128);
-        assert_eq!(core::mem::size_of::<AskEntry>(), 48);
-        assert_eq!(core::mem::size_of::<BoundaryEntry>(), 32);
-        assert_eq!(core::mem::size_of::<AskPage>(), 1_552);
-        assert_eq!(core::mem::size_of::<BoundaryPage>(), 1_040);
+        let layouts = [
+            ("market_header", core::mem::size_of::<MarketHeader>(), 128usize),
+            ("ask_entry", core::mem::size_of::<AskEntry>(), 48usize),
+            (
+                "boundary_entry",
+                core::mem::size_of::<BoundaryEntry>(),
+                32usize,
+            ),
+            ("ask_page", core::mem::size_of::<AskPage>(), 1_552usize),
+            (
+                "boundary_page",
+                core::mem::size_of::<BoundaryPage>(),
+                1_040usize,
+            ),
+        ];
+        for (name, actual, expected) in layouts {
+            println!("HYBRID_STATE_BYTES {name} {actual}");
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]
