@@ -1,3 +1,5 @@
+#![cfg(feature = "test-sbf")]
+
 use hybrid_program::ID;
 use solana_instruction::Instruction;
 use solana_program_test::ProgramTest;
