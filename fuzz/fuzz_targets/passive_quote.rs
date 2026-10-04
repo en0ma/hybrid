@@ -75,4 +75,58 @@ fuzz_target!(|data: (u64, u64, u64, u64)| {
         assert!(q.fully_consumed_asks <= asks.len() as u32);
         assert!(q.crossed_boundaries <= boundaries.len() as u32);
     }
+
+
+    let tombstone_sqrt = Q64 + 1 + u128::from(sqrt_hi % 10_000);
+    let live_sqrt = tombstone_sqrt.saturating_add(step.max(1));
+    if let (Ok(tombstone_price), Ok(live_price)) = (
+        spot_price_x64(tombstone_sqrt),
+        spot_price_x64(live_sqrt),
+    ) {
+        let passive = PassiveState {
+            sqrt_price_x64: Q64,
+            liquidity: u128::from(liquidity_hi).max(1) << 48,
+        };
+        let tombstone = LimitAsk {
+            price_x64: tombstone_price,
+            sqrt_price_x64: tombstone_sqrt,
+            base_qty: 0,
+        };
+        let live = LimitAsk {
+            price_x64: live_price,
+            sqrt_price_x64: live_sqrt,
+            base_qty: ask_qty.max(1),
+        };
+
+        let with_tombstone =
+            quote_buy_exact_in_levels(passive, &[tombstone, live], &[], amount_in);
+        let without_tombstone = quote_buy_exact_in_levels(passive, &[live], &[], amount_in);
+
+        if let (Ok(with_tombstone), Ok(without_tombstone)) =
+            (with_tombstone, without_tombstone)
+        {
+            assert_eq!(with_tombstone.amount_in, without_tombstone.amount_in);
+            assert_eq!(with_tombstone.amount_out, without_tombstone.amount_out);
+            assert_eq!(
+                with_tombstone.active_base_out,
+                without_tombstone.active_base_out
+            );
+            assert_eq!(
+                with_tombstone.passive_base_out,
+                without_tombstone.passive_base_out
+            );
+            assert_eq!(
+                with_tombstone.next_sqrt_price_x64,
+                without_tombstone.next_sqrt_price_x64
+            );
+            assert_eq!(
+                with_tombstone.final_liquidity,
+                without_tombstone.final_liquidity
+            );
+            assert_eq!(
+                with_tombstone.crossed_boundaries,
+                without_tombstone.crossed_boundaries
+            );
+        }
+    }
 });
