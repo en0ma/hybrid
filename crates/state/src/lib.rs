@@ -309,10 +309,11 @@ impl AskPage {
             self.remove_by_sequence(sequence)?;
             return Ok(());
         }
+        let len = usize::from(self.len);
         let entry = self
             .entries
             .iter_mut()
-            .take(usize::from(self.len))
+            .take(len)
             .find(|e| e.sequence == sequence)
             .ok_or(StateError::NotFound)?;
         entry.base_qty = base_qty;
