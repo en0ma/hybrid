@@ -13,6 +13,8 @@ trap cleanup EXIT
 args=(start --ci --no-deploy)
 if [[ -n "${SOLANA_RPC_URL:-}" ]]; then
   args+=(--rpc-url "$SOLANA_RPC_URL")
+else
+  args+=(--network mainnet)
 fi
 
 docker run -d --name "$CONTAINER"   -p "$RPC_PORT:8899"   -e NO_DNA=1   "surfpool/surfpool:$SURFPOOL_VERSION" "${args[@]}" >/dev/null
