@@ -275,8 +275,7 @@ pub fn quote_buy_exact_in(market: HybridMarket, quote_in: u64) -> Result<HybridQ
         // Compute affordability from the taker's bounded u64 input first.
         // This avoids materializing the full notional of a very large ask,
         // which may exceed u64 even though a small partial fill is valid.
-        let affordable =
-            base_for_quote_at_price(remaining_quote, ask.price_x64)?.min(ask.base_qty);
+        let affordable = base_for_quote_at_price(remaining_quote, ask.price_x64)?.min(ask.base_qty);
 
         if affordable > 0 {
             let quote_used = quote_for_base_at_price(affordable, ask.price_x64)?;
