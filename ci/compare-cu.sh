@@ -7,7 +7,7 @@ set -euo pipefail
 HYBRID_LOG="$(mktemp)"
 trap 'rm -f "$HYBRID_LOG"' EXIT
 export SBF_OUT_DIR="${SBF_OUT_DIR:-$PWD/target/deploy}"
-cargo test-sbf --manifest-path program/Cargo.toml --features test-sbf --test cu -- --nocapture | tee "$HYBRID_LOG"
+cargo test-sbf --manifest-path program/Cargo.toml --features test-sbf --test cu -- --nocapture 2>&1 | tee "$HYBRID_LOG"
 
 python3 - "$HYBRID_LOG" "$MANIFEST_REPO" <<'PY'
 import json, pathlib, re, subprocess, sys
