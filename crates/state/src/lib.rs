@@ -27,6 +27,48 @@ pub enum StateError {
     Corrupt,
 }
 
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PageLinks {
+    pub page_index: u32,
+    pub prev_page: Option<u32>,
+    pub next_page: Option<u32>,
+}
+
+impl PageLinks {
+    pub const NONE: u32 = u32::MAX;
+
+    pub const fn new(page_index: u32, prev_page: Option<u32>, next_page: Option<u32>) -> Self {
+        Self {
+            page_index,
+            prev_page,
+            next_page,
+        }
+    }
+
+    fn encode_into(self, reserved: &mut [u8; 14]) {
+        reserved.fill(0);
+        reserved[0..4].copy_from_slice(&self.page_index.to_le_bytes());
+        reserved[4..8].copy_from_slice(
+            &self.prev_page.unwrap_or(Self::NONE).to_le_bytes(),
+        );
+        reserved[8..12].copy_from_slice(
+            &self.next_page.unwrap_or(Self::NONE).to_le_bytes(),
+        );
+    }
+
+    fn decode_from(reserved: &[u8; 14]) -> Self {
+        let page_index = u32::from_le_bytes(reserved[0..4].try_into().expect("page index"));
+        let prev_raw = u32::from_le_bytes(reserved[4..8].try_into().expect("prev page"));
+        let next_raw = u32::from_le_bytes(reserved[8..12].try_into().expect("next page"));
+        Self {
+            page_index,
+            prev_page: (prev_raw != Self::NONE).then_some(prev_raw),
+            next_page: (next_raw != Self::NONE).then_some(next_raw),
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MarketHeader {
@@ -257,6 +299,30 @@ impl AskPage {
         &self.entries[..self.len()]
     }
 
+    pub fn links(&self) -> PageLinks {
+        PageLinks::decode_from(&self.reserved)
+    }
+
+    pub fn set_links(&mut self, links: PageLinks) {
+        links.encode_into(&mut self.reserved);
+    }
+
+    pub fn validate_next(&self, next: &Self) -> Result<(), StateError> {
+        let links = self.links();
+        let next_links = next.links();
+        if links.next_page != Some(next_links.page_index)
+            || next_links.prev_page != Some(links.page_index)
+        {
+            return Err(StateError::Corrupt);
+        }
+        if let (Some(left), Some(right)) = (self.as_slice().last(), next.as_slice().first()) {
+            if (left.price_x64, left.sequence) >= (right.price_x64, right.sequence) {
+                return Err(StateError::Corrupt);
+            }
+        }
+        Ok(())
+    }
+
     pub fn insert(&mut self, entry: AskEntry) -> Result<usize, StateError> {
         entry.validate()?;
         let len = self.len();
@@ -414,6 +480,30 @@ impl BoundaryPage {
         &self.entries[..self.len()]
     }
 
+    pub fn links(&self) -> PageLinks {
+        PageLinks::decode_from(&self.reserved)
+    }
+
+    pub fn set_links(&mut self, links: PageLinks) {
+        links.encode_into(&mut self.reserved);
+    }
+
+    pub fn validate_next(&self, next: &Self) -> Result<(), StateError> {
+        let links = self.links();
+        let next_links = next.links();
+        if links.next_page != Some(next_links.page_index)
+            || next_links.prev_page != Some(links.page_index)
+        {
+            return Err(StateError::Corrupt);
+        }
+        if let (Some(left), Some(right)) = (self.as_slice().last(), next.as_slice().first()) {
+            if left.sqrt_price_x64 >= right.sqrt_price_x64 {
+                return Err(StateError::Corrupt);
+            }
+        }
+        Ok(())
+    }
+
     pub fn insert(&mut self, entry: BoundaryEntry) -> Result<usize, StateError> {
         entry.validate()?;
         let len = self.len();
@@ -532,6 +622,49 @@ impl BoundaryPage {
         }
         Ok(())
     }
+}
+
+
+pub fn validate_ask_chain(pages: &[AskPage]) -> Result<(), StateError> {
+    for (index, page) in pages.iter().enumerate() {
+        page.validate_order()?;
+        let links = page.links();
+        if links.page_index != index as u32 {
+            return Err(StateError::Corrupt);
+        }
+        match index {
+            0 if links.prev_page.is_some() => return Err(StateError::Corrupt),
+            i if i + 1 == pages.len() && links.next_page.is_some() => {
+                return Err(StateError::Corrupt)
+            }
+            _ => {}
+        }
+    }
+    for pair in pages.windows(2) {
+        pair[0].validate_next(&pair[1])?;
+    }
+    Ok(())
+}
+
+pub fn validate_boundary_chain(pages: &[BoundaryPage]) -> Result<(), StateError> {
+    for (index, page) in pages.iter().enumerate() {
+        page.validate_order()?;
+        let links = page.links();
+        if links.page_index != index as u32 {
+            return Err(StateError::Corrupt);
+        }
+        match index {
+            0 if links.prev_page.is_some() => return Err(StateError::Corrupt),
+            i if i + 1 == pages.len() && links.next_page.is_some() => {
+                return Err(StateError::Corrupt)
+            }
+            _ => {}
+        }
+    }
+    for pair in pages.windows(2) {
+        pair[0].validate_next(&pair[1])?;
+    }
+    Ok(())
 }
 
 fn map_quote_error(_: QuoteError) -> StateError {
@@ -739,4 +872,60 @@ mod tests {
         header.next_sequence = u64::MAX;
         assert_eq!(header.allocate_sequence(), Err(StateError::Full));
     }
+    #[test]
+    fn ask_pages_validate_bidirectional_links_and_cross_page_order() {
+        let mut first = AskPage::default();
+        first.set_links(PageLinks::new(0, None, Some(1)));
+        first.insert(ask(Q64, 10, 1)).unwrap();
+
+        let mut second = AskPage::default();
+        second.set_links(PageLinks::new(1, Some(0), None));
+        second.insert(ask(Q64 + Q64 / 100, 10, 2)).unwrap();
+
+        assert_eq!(validate_ask_chain(&[first, second]), Ok(()));
+
+        second.set_links(PageLinks::new(1, None, None));
+        assert_eq!(validate_ask_chain(&[first, second]), Err(StateError::Corrupt));
+    }
+
+    #[test]
+    fn boundary_pages_reject_cross_page_price_overlap() {
+        let mut first = BoundaryPage::default();
+        first.set_links(PageLinks::new(0, None, Some(1)));
+        first
+            .insert(BoundaryEntry {
+                sqrt_price_x64: Q64 + 20,
+                liquidity_after: 1_000,
+            })
+            .unwrap();
+
+        let mut second = BoundaryPage::default();
+        second.set_links(PageLinks::new(1, Some(0), None));
+        second
+            .insert(BoundaryEntry {
+                sqrt_price_x64: Q64 + 10,
+                liquidity_after: 2_000,
+            })
+            .unwrap();
+
+        assert_eq!(
+            validate_boundary_chain(&[first, second]),
+            Err(StateError::Corrupt)
+        );
+    }
+
+    #[test]
+    fn page_links_round_trip_without_growing_layout() {
+        let mut page = AskPage::default();
+        let links = PageLinks::new(7, Some(3), Some(11));
+        page.set_links(links);
+        assert_eq!(page.links(), links);
+
+        let mut bytes = [0u8; ASK_PAGE_BYTES];
+        page.encode_into(&mut bytes).unwrap();
+        let decoded = AskPage::decode_from(&bytes).unwrap();
+        assert_eq!(decoded.links(), links);
+        assert_eq!(core::mem::size_of::<AskPage>(), ASK_PAGE_BYTES);
+    }
+
 }
