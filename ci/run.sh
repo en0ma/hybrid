@@ -22,16 +22,18 @@ if [[ ! -f fuzz/Cargo.toml ]]; then
   echo "fuzz/Cargo.toml is required once Hybrid contains Rust program code."
   exit 1
 fi
+FUZZ_RUST_TOOLCHAIN="${FUZZ_RUST_TOOLCHAIN:-nightly-2026-10-01}"
+rustup toolchain install "$FUZZ_RUST_TOOLCHAIN" --profile minimal --no-self-update
 if ! command -v cargo-fuzz >/dev/null 2>&1; then
   cargo install cargo-fuzz --locked
 fi
-mapfile -t targets < <(cd fuzz && cargo fuzz list)
+mapfile -t targets < <(cd fuzz && cargo +"$FUZZ_RUST_TOOLCHAIN" fuzz list)
 if [[ "${#targets[@]}" -eq 0 ]]; then
   echo "No fuzz targets found."
   exit 1
 fi
 for target in "${targets[@]}"; do
-  (cd fuzz && cargo fuzz run "$target" -- -max_total_time=30)
+  (cd fuzz && cargo +"$FUZZ_RUST_TOOLCHAIN" fuzz run "$target" -- -max_total_time=30)
 done
 
 if [[ ! -f ci/cu-check.sh ]]; then
