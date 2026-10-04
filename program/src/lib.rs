@@ -1,6 +1,6 @@
 use solana_program::{
-    account_info::AccountInfo, declare_id, entrypoint::ProgramResult,
-    program_error::ProgramError, pubkey::Pubkey,
+    account_info::AccountInfo, declare_id, entrypoint::ProgramResult, program_error::ProgramError,
+    pubkey::Pubkey,
 };
 
 declare_id!("US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx");
