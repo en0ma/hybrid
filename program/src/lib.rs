@@ -26,6 +26,22 @@ pub fn process_instruction(
                 .map(|_| ())
                 .map_err(|_| ProgramError::InvalidInstructionData)
         }
+        Some(2) => {
+            let market = hybrid_engine::HybridMarket {
+                passive: hybrid_engine::PassiveState {
+                    sqrt_price_x64: hybrid_engine::Q64,
+                    liquidity: 1_000_000,
+                },
+                best_ask: Some(hybrid_engine::LimitAsk {
+                    price_x64: hybrid_engine::Q64,
+                    sqrt_price_x64: hybrid_engine::Q64,
+                    base_qty: 5_000,
+                }),
+            };
+            hybrid_engine::quote_buy_exact_in(market, 10_000)
+                .map(|_| ())
+                .map_err(|_| ProgramError::InvalidInstructionData)
+        }
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
