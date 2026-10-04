@@ -15,8 +15,8 @@ cargo test --workspace --all-features
 command -v cargo-build-sbf >/dev/null 2>&1 || { echo "cargo-build-sbf missing"; exit 1; }
 command -v cargo-test-sbf >/dev/null 2>&1 || { echo "cargo-test-sbf missing"; exit 1; }
 
-cargo build-sbf --workspace
-cargo test-sbf --workspace
+cargo build-sbf
+cargo test-sbf
 
 if [[ ! -f fuzz/Cargo.toml ]]; then
   echo "fuzz/Cargo.toml is required once Hybrid contains Rust program code."
@@ -25,13 +25,13 @@ fi
 if ! command -v cargo-fuzz >/dev/null 2>&1; then
   cargo install cargo-fuzz --locked
 fi
-mapfile -t targets < <(cargo fuzz list --manifest-path fuzz/Cargo.toml)
+mapfile -t targets < <(cd fuzz && cargo fuzz list)
 if [[ "${#targets[@]}" -eq 0 ]]; then
   echo "No fuzz targets found."
   exit 1
 fi
 for target in "${targets[@]}"; do
-  cargo fuzz run "$target" --manifest-path fuzz/Cargo.toml -- -max_total_time=30
+  (cd fuzz && cargo fuzz run "$target" -- -max_total_time=30)
 done
 
 if [[ ! -f ci/cu-check.sh ]]; then
