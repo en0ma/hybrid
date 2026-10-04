@@ -1,0 +1,149 @@
+name: PR Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: pr-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+  MANIFEST_COMMIT: d04b7aa90b098ba64ebcdf398e9a24d89a9114d8
+  SURFPOOL_VERSION: "1.5.0"
+
+jobs:
+  review-and-head:
+    name: Review threads + exact head
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify PR is not draft
+        if: github.event.pull_request.draft
+        run: |
+          echo "::error::PR is draft."
+          exit 1
+
+      - name: Check unresolved review threads
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const query = `
+              query($owner:String!, $repo:String!, $number:Int!) {
+                repository(owner:$owner, name:$repo) {
+                  pullRequest(number:$number) {
+                    headRefOid
+                    reviewDecision
+                    reviewThreads(first:100) {
+                      nodes {
+                        isResolved
+                        path
+                        line
+                        comments(last:1) { nodes { author { login } body url } }
+                      }
+                    }
+                  }
+                }
+              }`;
+            const [owner, repo] = context.repo.repo ? [context.repo.owner, context.repo.repo] : process.env.GITHUB_REPOSITORY.split("/");
+            const pr = (await github.graphql(query, {
+              owner, repo, number: context.issue.number
+            })).repository.pullRequest;
+
+            if (pr.headRefOid !== process.env.PR_HEAD_SHA) {
+              core.setFailed(`Head moved before validation: expected ${process.env.PR_HEAD_SHA}, got ${pr.headRefOid}`);
+              return;
+            }
+
+            const unresolved = pr.reviewThreads.nodes.filter(t => !t.isResolved);
+            if (unresolved.length) {
+              core.summary.addHeading("Unresolved review threads");
+              for (const t of unresolved) {
+                const c = t.comments.nodes[0];
+                core.summary.addRaw(`- ${t.path || "(conversation)"}:${t.line || ""} — @${c?.author?.login || "unknown"} — ${c?.url || ""}\n`);
+              }
+              await core.summary.write();
+              core.setFailed(`${unresolved.length} review thread(s) remain unresolved. Validate each against the exact head, address actionable findings, then resolve them.`);
+            }
+
+  core-ci:
+    name: Tests / SBF / fuzz / CU
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PR_HEAD_SHA }}
+          fetch-depth: 0
+      - name: Assert exact checkout
+        run: test "$(git rev-parse HEAD)" = "$PR_HEAD_SHA"
+      - name: Run deterministic core CI
+        run: bash ci/run.sh
+
+  fork:
+    name: Mainnet fork
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PR_HEAD_SHA }}
+      - name: Run Surfpool mainnet-fork suite
+        env:
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+        run: bash ci/fork.sh
+
+  manifest:
+    name: Manifest baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PR_HEAD_SHA }}
+      - name: Build, test and compare against pinned Manifest
+        run: bash ci/manifest-compare.sh
+
+  merge-gate:
+    name: Merge gate
+    needs: [review-and-head, core-ci, fork, manifest]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every CI lane green
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          needs=json.loads(os.environ["NEEDS_JSON"])
+          bad={k:v["result"] for k,v in needs.items() if v["result"]!="success"}
+          if bad:
+              print("Blocking merge; non-green jobs:", bad)
+              sys.exit(1)
+          PY
+
+      - name: Re-verify exact PR head and review threads
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const query = `
+              query($owner:String!, $repo:String!, $number:Int!) {
+                repository(owner:$owner, name:$repo) {
+                  pullRequest(number:$number) {
+                    headRefOid
+                    reviewThreads(first:100) { nodes { isResolved } }
+                  }
+                }
+              }`;
+            const pr=(await github.graphql(query,{
+              owner:context.repo.owner,
+              repo:context.repo.repo,
+              number:context.issue.number
+            })).repository.pullRequest;
+            if (pr.headRefOid !== process.env.PR_HEAD_SHA) {
+              core.setFailed(`PR head changed during CI: validated ${process.env.PR_HEAD_SHA}, current ${pr.headRefOid}`);
+            }
+            const unresolved=pr.reviewThreads.nodes.filter(t=>!t.isResolved).length;
+            if (unresolved) core.setFailed(`${unresolved} review thread(s) are unresolved.`);
