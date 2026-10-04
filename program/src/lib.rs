@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)]
+
 use solana_program::{
     account_info::AccountInfo, declare_id, entrypoint::ProgramResult, program_error::ProgramError,
     pubkey::Pubkey,
