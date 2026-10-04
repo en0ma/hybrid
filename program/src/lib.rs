@@ -82,6 +82,63 @@ pub fn process_instruction(
             .map(|_| ())
             .map_err(|_| ProgramError::InvalidInstructionData)
         }
+
+        Some(4) => {
+            if _accounts.len() != 3 {
+                return Err(ProgramError::NotEnoughAccountKeys);
+            }
+
+            let market_data = _accounts[0]
+                .try_borrow_data()
+                .map_err(|_| ProgramError::AccountBorrowFailed)?;
+            let ask_data = _accounts[1]
+                .try_borrow_data()
+                .map_err(|_| ProgramError::AccountBorrowFailed)?;
+            let boundary_data = _accounts[2]
+                .try_borrow_data()
+                .map_err(|_| ProgramError::AccountBorrowFailed)?;
+
+            let market = hybrid_state::MarketHeader::decode_from(&market_data)
+                .map_err(|_| ProgramError::InvalidAccountData)?;
+            let asks_page = hybrid_state::AskPage::decode_from(&ask_data)
+                .map_err(|_| ProgramError::InvalidAccountData)?;
+            let boundaries_page = hybrid_state::BoundaryPage::decode_from(&boundary_data)
+                .map_err(|_| ProgramError::InvalidAccountData)?;
+
+            hybrid_state::validate_ask_chain(core::slice::from_ref(&asks_page))
+                .map_err(|_| ProgramError::InvalidAccountData)?;
+            hybrid_state::validate_boundary_chain(core::slice::from_ref(&boundaries_page))
+                .map_err(|_| ProgramError::InvalidAccountData)?;
+
+            let mut asks = [hybrid_engine::LimitAsk {
+                price_x64: 0,
+                sqrt_price_x64: 0,
+                base_qty: 0,
+            }; hybrid_state::ASKS_PER_PAGE];
+            for (index, entry) in asks_page.as_slice().iter().enumerate() {
+                asks[index] = entry.as_limit_ask();
+            }
+
+            let mut boundaries = [hybrid_engine::PassiveBoundary {
+                sqrt_price_x64: 0,
+                liquidity_after: 0,
+            }; hybrid_state::BOUNDARIES_PER_PAGE];
+            for (index, entry) in boundaries_page.as_slice().iter().enumerate() {
+                boundaries[index] = entry.as_passive_boundary();
+            }
+
+            hybrid_engine::quote_buy_exact_in_levels(
+                hybrid_engine::PassiveState {
+                    sqrt_price_x64: market.sqrt_price_x64,
+                    liquidity: market.liquidity,
+                },
+                &asks[..asks_page.len()],
+                &boundaries[..boundaries_page.len()],
+                20_000,
+            )
+            .map(|_| ())
+            .map_err(|_| ProgramError::InvalidInstructionData)
+        }
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
