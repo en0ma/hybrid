@@ -94,7 +94,7 @@ jobs:
             }
 
   core-ci:
-    name: Tests / SBF / fuzz / CU
+    name: Tests / SBF / fuzz / CU / bytecode
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
