@@ -363,7 +363,18 @@ impl AskPage {
                 return Err(StateError::Corrupt);
             }
         }
-        if self.entries[self.len()..].iter().any(|e| *e != AskEntry::EMPTY) {
+        for (index, entry) in slice.iter().enumerate() {
+            if slice[index + 1..]
+                .iter()
+                .any(|other| other.sequence == entry.sequence)
+            {
+                return Err(StateError::Corrupt);
+            }
+        }
+        if self.entries[self.len()..]
+            .iter()
+            .any(|e| *e != AskEntry::EMPTY)
+        {
             return Err(StateError::Corrupt);
         }
         Ok(())
@@ -540,15 +551,27 @@ fn put_u128(out: &mut [u8], offset: usize, value: u128) {
 }
 
 fn get_u16(input: &[u8], offset: usize) -> u16 {
-    u16::from_le_bytes(input[offset..offset + 2].try_into().expect("fixed u16 slice"))
+    u16::from_le_bytes(
+        input[offset..offset + 2]
+            .try_into()
+            .expect("fixed u16 slice"),
+    )
 }
 
 fn get_u32(input: &[u8], offset: usize) -> u32 {
-    u32::from_le_bytes(input[offset..offset + 4].try_into().expect("fixed u32 slice"))
+    u32::from_le_bytes(
+        input[offset..offset + 4]
+            .try_into()
+            .expect("fixed u32 slice"),
+    )
 }
 
 fn get_u64(input: &[u8], offset: usize) -> u64 {
-    u64::from_le_bytes(input[offset..offset + 8].try_into().expect("fixed u64 slice"))
+    u64::from_le_bytes(
+        input[offset..offset + 8]
+            .try_into()
+            .expect("fixed u64 slice"),
+    )
 }
 
 fn get_u128(input: &[u8], offset: usize) -> u128 {
@@ -582,7 +605,11 @@ mod tests {
     #[test]
     fn layouts_are_exact_and_small() {
         let layouts = [
-            ("market_header", core::mem::size_of::<MarketHeader>(), 128usize),
+            (
+                "market_header",
+                core::mem::size_of::<MarketHeader>(),
+                128usize,
+            ),
             ("ask_entry", core::mem::size_of::<AskEntry>(), 48usize),
             (
                 "boundary_entry",
@@ -652,6 +679,21 @@ mod tests {
     }
 
     #[test]
+    fn ask_page_decode_rejects_duplicate_sequences_across_prices() {
+        let mut page = AskPage::default();
+        page.insert(ask(Q64, 10, 1)).unwrap();
+        page.insert(ask(Q64 + Q64 / 100, 20, 2)).unwrap();
+
+        let mut bytes = [0u8; ASK_PAGE_BYTES];
+        page.encode_into(&mut bytes).unwrap();
+
+        let second_sequence_offset = PAGE_HEADER_BYTES + ASK_ENTRY_BYTES + 40;
+        put_u64(&mut bytes, second_sequence_offset, 1);
+
+        assert_eq!(AskPage::decode_from(&bytes), Err(StateError::Corrupt));
+    }
+
+    #[test]
     fn boundary_page_sorts_updates_removes_and_round_trips() {
         let mut page = BoundaryPage::default();
         page.insert(BoundaryEntry {
@@ -682,10 +724,7 @@ mod tests {
         for i in 0..ASKS_PER_PAGE {
             page.insert(ask(Q64, 1, (i + 1) as u64)).unwrap();
         }
-        assert_eq!(
-            page.insert(ask(Q64, 1, 100)),
-            Err(StateError::Full)
-        );
+        assert_eq!(page.insert(ask(Q64, 1, 100)), Err(StateError::Full));
     }
 
     #[test]
