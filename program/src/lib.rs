@@ -22,7 +22,7 @@ pub fn process_instruction(
         Some(1) => {
             let state = hybrid_engine::PassiveState {
                 sqrt_price_x64: hybrid_engine::Q64,
-                liquidity: 1_000_000u128 * hybrid_engine::Q64,
+                liquidity: 1_000_000,
             };
             hybrid_engine::quote_quote_in_for_base_out(state, 10_000)
                 .map(|_| ())
