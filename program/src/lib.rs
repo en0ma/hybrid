@@ -42,6 +42,46 @@ pub fn process_instruction(
                 .map(|_| ())
                 .map_err(|_| ProgramError::InvalidInstructionData)
         }
+        Some(3) => {
+            let step = hybrid_engine::Q64 / 200;
+            let ask_1_sqrt = hybrid_engine::Q64;
+            let ask_2_sqrt = hybrid_engine::Q64 + step * 2;
+            let asks = [
+                hybrid_engine::LimitAsk {
+                    price_x64: hybrid_engine::spot_price_x64(ask_1_sqrt)
+                        .map_err(|_| ProgramError::InvalidInstructionData)?,
+                    sqrt_price_x64: ask_1_sqrt,
+                    base_qty: 1_000,
+                },
+                hybrid_engine::LimitAsk {
+                    price_x64: hybrid_engine::spot_price_x64(ask_2_sqrt)
+                        .map_err(|_| ProgramError::InvalidInstructionData)?,
+                    sqrt_price_x64: ask_2_sqrt,
+                    base_qty: 2_000,
+                },
+            ];
+            let boundaries = [
+                hybrid_engine::PassiveBoundary {
+                    sqrt_price_x64: hybrid_engine::Q64 + step,
+                    liquidity_after: 1_500_000,
+                },
+                hybrid_engine::PassiveBoundary {
+                    sqrt_price_x64: hybrid_engine::Q64 + step * 3,
+                    liquidity_after: 2_000_000,
+                },
+            ];
+            hybrid_engine::quote_buy_exact_in_levels(
+                hybrid_engine::PassiveState {
+                    sqrt_price_x64: hybrid_engine::Q64,
+                    liquidity: 1_000_000,
+                },
+                &asks,
+                &boundaries,
+                20_000,
+            )
+            .map(|_| ())
+            .map_err(|_| ProgramError::InvalidInstructionData)
+        }
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }

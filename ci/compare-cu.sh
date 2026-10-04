@@ -31,6 +31,7 @@ PY
   measure noop measure_noop_cu
   measure passive_quote measure_passive_quote_cu
   measure hybrid_match measure_hybrid_match_cu
+  measure multilevel_match measure_multilevel_match_cu
 } > "$TMP/measurements.txt"
 
 python3 - "$TMP/measurements.txt" "$MANIFEST_REPO" <<'PY'

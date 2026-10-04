@@ -52,3 +52,10 @@ async fn measure_hybrid_match_cu() {
     println!("HYBRID_CU hybrid_match {units}");
     assert!(units > 0);
 }
+
+#[tokio::test]
+async fn measure_multilevel_match_cu() {
+    let units = units_for(vec![3]).await;
+    println!("HYBRID_CU multilevel_match {units}");
+    assert!(units > 0);
+}

@@ -313,6 +313,180 @@ pub fn quote_buy_exact_in(market: HybridMarket, quote_in: u64) -> Result<HybridQ
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PassiveBoundary {
+    pub sqrt_price_x64: u128,
+    pub liquidity_after: u128,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MultiLevelQuote {
+    pub amount_in: u64,
+    pub amount_out: u64,
+    pub active_base_out: u64,
+    pub passive_base_out: u64,
+    pub next_sqrt_price_x64: u128,
+    pub final_liquidity: u128,
+    pub fully_consumed_asks: u32,
+    pub crossed_boundaries: u32,
+}
+
+fn fill_active_ask(ask: LimitAsk, remaining_quote: u64) -> Result<(u64, u64, bool), QuoteError> {
+    validate_limit_ask(ask)?;
+    let base_fill = base_for_quote_at_price(remaining_quote, ask.price_x64)?.min(ask.base_qty);
+    if base_fill == 0 {
+        return Ok((0, 0, false));
+    }
+    let quote_used = quote_for_base_at_price(base_fill, ask.price_x64)?;
+    if quote_used > remaining_quote {
+        return Err(QuoteError::Overflow);
+    }
+    Ok((quote_used, base_fill, base_fill == ask.base_qty))
+}
+
+/// V0.2 allocation-free traversal across sorted explicit asks and passive
+/// liquidity boundaries.
+///
+/// Asks must be sorted by ascending price, then time priority within the same
+/// price. Boundaries must be strictly increasing by sqrt price. Explicit asks
+/// own equality: when passive marginal price reaches an ask, that resting order
+/// executes before passive liquidity may move above the price.
+pub fn quote_buy_exact_in_levels(
+    passive: PassiveState,
+    asks: &[LimitAsk],
+    boundaries: &[PassiveBoundary],
+    quote_in: u64,
+) -> Result<MultiLevelQuote, QuoteError> {
+    if passive.liquidity == 0 {
+        return Err(QuoteError::ZeroLiquidity);
+    }
+    if passive.sqrt_price_x64 == 0 {
+        return Err(QuoteError::InvalidPrice);
+    }
+
+    for ask in asks {
+        validate_limit_ask(*ask)?;
+    }
+    for pair in asks.windows(2) {
+        if pair[0].price_x64 > pair[1].price_x64 {
+            return Err(QuoteError::InvalidPrice);
+        }
+    }
+
+    let mut previous_boundary = passive.sqrt_price_x64;
+    for boundary in boundaries {
+        if boundary.sqrt_price_x64 <= previous_boundary || boundary.liquidity_after == 0 {
+            return Err(QuoteError::InvalidPrice);
+        }
+        previous_boundary = boundary.sqrt_price_x64;
+    }
+
+    let mut remaining_quote = quote_in;
+    let mut passive_state = passive;
+    let mut ask_index = 0usize;
+    let mut boundary_index = 0usize;
+    let mut active_base_out = 0u64;
+    let mut passive_base_out = 0u64;
+    let mut fully_consumed_asks = 0u32;
+    let mut crossed_boundaries = 0u32;
+
+    while remaining_quote > 0 {
+        let next_ask = asks.get(ask_index).copied();
+
+        if let Some(ask) = next_ask {
+            if ask.sqrt_price_x64 <= passive_state.sqrt_price_x64 {
+                if ask.base_qty == 0 {
+                    ask_index += 1;
+                    fully_consumed_asks = fully_consumed_asks
+                        .checked_add(1)
+                        .ok_or(QuoteError::Overflow)?;
+                    continue;
+                }
+
+                let (quote_used, base_fill, full) = fill_active_ask(ask, remaining_quote)?;
+                if base_fill == 0 {
+                    break;
+                }
+                remaining_quote -= quote_used;
+                active_base_out = active_base_out
+                    .checked_add(base_fill)
+                    .ok_or(QuoteError::Overflow)?;
+                if full {
+                    ask_index += 1;
+                    fully_consumed_asks = fully_consumed_asks
+                        .checked_add(1)
+                        .ok_or(QuoteError::Overflow)?;
+                    continue;
+                }
+                break;
+            }
+        }
+
+        let ask_target = next_ask.map(|a| a.sqrt_price_x64);
+        let boundary_target = boundaries.get(boundary_index).map(|b| b.sqrt_price_x64);
+
+        let target = match (ask_target, boundary_target) {
+            (Some(a), Some(b)) => a.min(b),
+            (Some(a), None) => a,
+            (None, Some(b)) => b,
+            (None, None) => {
+                let tail = quote_quote_in_for_base_out(passive_state, remaining_quote)?;
+                passive_base_out = passive_base_out
+                    .checked_add(tail.amount_out)
+                    .ok_or(QuoteError::Overflow)?;
+                passive_state.sqrt_price_x64 = tail.next_sqrt_price_x64;
+                remaining_quote = 0;
+                break;
+            }
+        };
+
+        let delta = target - passive_state.sqrt_price_x64;
+        let target_cost = mul_q64_ceil(passive_state.liquidity, delta)?;
+        if target_cost > u128::from(remaining_quote) {
+            let partial = quote_quote_in_for_base_out(passive_state, remaining_quote)?;
+            passive_base_out = passive_base_out
+                .checked_add(partial.amount_out)
+                .ok_or(QuoteError::Overflow)?;
+            passive_state.sqrt_price_x64 = partial.next_sqrt_price_x64;
+            remaining_quote = 0;
+            break;
+        }
+
+        let to_target = passive_to_target(passive_state, target)?;
+        remaining_quote -= to_target.amount_in;
+        passive_base_out = passive_base_out
+            .checked_add(to_target.amount_out)
+            .ok_or(QuoteError::Overflow)?;
+        passive_state.sqrt_price_x64 = target;
+
+        if ask_target == Some(target) {
+            continue;
+        }
+
+        if boundary_target == Some(target) {
+            let boundary = boundaries[boundary_index];
+            passive_state.liquidity = boundary.liquidity_after;
+            boundary_index += 1;
+            crossed_boundaries = crossed_boundaries
+                .checked_add(1)
+                .ok_or(QuoteError::Overflow)?;
+        }
+    }
+
+    Ok(MultiLevelQuote {
+        amount_in: quote_in - remaining_quote,
+        amount_out: active_base_out
+            .checked_add(passive_base_out)
+            .ok_or(QuoteError::Overflow)?,
+        active_base_out,
+        passive_base_out,
+        next_sqrt_price_x64: passive_state.sqrt_price_x64,
+        final_liquidity: passive_state.liquidity,
+        fully_consumed_asks,
+        crossed_boundaries,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,5 +673,156 @@ mod tests {
         assert_eq!(q.next_sqrt_price_x64, Q64 + 1);
         assert_eq!(q.active_base_out, 0);
         assert_eq!(q.remaining_active_base, 1);
+    }
+    #[test]
+    fn multilevel_consumes_equal_price_asks_in_slice_time_order() {
+        let asks = [
+            one_dollar_ask(100),
+            one_dollar_ask(200),
+            LimitAsk {
+                price_x64: spot_price_x64(Q64 + Q64 / 100).unwrap(),
+                sqrt_price_x64: Q64 + Q64 / 100,
+                base_qty: 500,
+            },
+        ];
+        let q = quote_buy_exact_in_levels(
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: 1_000_000,
+            },
+            &asks,
+            &[],
+            250,
+        )
+        .unwrap();
+        assert_eq!(q.active_base_out, 250);
+        assert_eq!(q.passive_base_out, 0);
+        assert_eq!(q.fully_consumed_asks, 1);
+    }
+
+    #[test]
+    fn multilevel_crosses_passive_boundary_before_higher_ask() {
+        let boundary_sqrt = Q64 + Q64 / 200;
+        let ask_sqrt = Q64 + Q64 / 100;
+        let asks = [LimitAsk {
+            price_x64: spot_price_x64(ask_sqrt).unwrap(),
+            sqrt_price_x64: ask_sqrt,
+            base_qty: 10_000,
+        }];
+        let boundaries = [PassiveBoundary {
+            sqrt_price_x64: boundary_sqrt,
+            liquidity_after: 2_000_000,
+        }];
+        let q = quote_buy_exact_in_levels(
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: 1_000_000,
+            },
+            &asks,
+            &boundaries,
+            30_000,
+        )
+        .unwrap();
+        assert_eq!(q.crossed_boundaries, 1);
+        assert!(q.passive_base_out > 0);
+        assert!(q.active_base_out > 0);
+        assert_eq!(q.final_liquidity, 2_000_000);
+    }
+
+    #[test]
+    fn active_wins_when_ask_and_boundary_share_price() {
+        let target = Q64 + Q64 / 100;
+        let asks = [LimitAsk {
+            price_x64: spot_price_x64(target).unwrap(),
+            sqrt_price_x64: target,
+            base_qty: 1_000,
+        }];
+        let boundaries = [PassiveBoundary {
+            sqrt_price_x64: target,
+            liquidity_after: 2_000_000,
+        }];
+        let q = quote_buy_exact_in_levels(
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: 1_000_000,
+            },
+            &asks,
+            &boundaries,
+            20_000,
+        )
+        .unwrap();
+        assert_eq!(q.fully_consumed_asks, 1);
+        assert_eq!(q.crossed_boundaries, 1);
+    }
+
+    #[test]
+    fn rejects_unsorted_asks_and_boundaries() {
+        let high = Q64 + Q64 / 100;
+        let low = Q64 + Q64 / 200;
+        let asks = [
+            LimitAsk {
+                price_x64: spot_price_x64(high).unwrap(),
+                sqrt_price_x64: high,
+                base_qty: 1,
+            },
+            LimitAsk {
+                price_x64: spot_price_x64(low).unwrap(),
+                sqrt_price_x64: low,
+                base_qty: 1,
+            },
+        ];
+        assert_eq!(
+            quote_buy_exact_in_levels(
+                PassiveState {
+                    sqrt_price_x64: Q64,
+                    liquidity: 1_000_000,
+                },
+                &asks,
+                &[],
+                1_000,
+            ),
+            Err(QuoteError::InvalidPrice)
+        );
+
+        let boundaries = [
+            PassiveBoundary {
+                sqrt_price_x64: high,
+                liquidity_after: 1_000_000,
+            },
+            PassiveBoundary {
+                sqrt_price_x64: low,
+                liquidity_after: 1_000_000,
+            },
+        ];
+        assert_eq!(
+            quote_buy_exact_in_levels(
+                PassiveState {
+                    sqrt_price_x64: Q64,
+                    liquidity: 1_000_000,
+                },
+                &[],
+                &boundaries,
+                1_000,
+            ),
+            Err(QuoteError::InvalidPrice)
+        );
+    }
+    #[test]
+    fn multilevel_skips_zero_quantity_ask_and_continues() {
+        let asks = [one_dollar_ask(0), one_dollar_ask(100)];
+        let q = quote_buy_exact_in_levels(
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: 1_000_000,
+            },
+            &asks,
+            &[],
+            50,
+        )
+        .unwrap();
+        assert_eq!(q.amount_in, 50);
+        assert_eq!(q.active_base_out, 50);
+        assert_eq!(q.passive_base_out, 0);
+        assert_eq!(q.fully_consumed_asks, 1);
     }
 }
