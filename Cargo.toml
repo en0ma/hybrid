@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/engine", "program"]
+members = ["crates/engine", "crates/state", "program"]
 exclude = ["fuzz"]
 resolver = "2"
 
