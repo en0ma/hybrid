@@ -809,10 +809,7 @@ mod tests {
     }
     #[test]
     fn multilevel_skips_zero_quantity_ask_and_continues() {
-        let asks = [
-            one_dollar_ask(0),
-            one_dollar_ask(100),
-        ];
+        let asks = [one_dollar_ask(0), one_dollar_ask(100)];
         let q = quote_buy_exact_in_levels(
             PassiveState {
                 sqrt_price_x64: Q64,
@@ -828,5 +825,4 @@ mod tests {
         assert_eq!(q.passive_base_out, 0);
         assert_eq!(q.fully_consumed_asks, 1);
     }
-
 }
