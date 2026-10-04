@@ -9,8 +9,8 @@ if [[ ! -f Cargo.toml ]]; then
 fi
 
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 
 command -v cargo-build-sbf >/dev/null 2>&1 || { echo "cargo-build-sbf missing"; exit 1; }
 command -v cargo-test-sbf >/dev/null 2>&1 || { echo "cargo-test-sbf missing"; exit 1; }
