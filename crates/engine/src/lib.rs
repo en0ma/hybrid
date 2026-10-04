@@ -86,7 +86,10 @@ mod tests {
 
     #[test]
     fn zero_liquidity_rejected() {
-        let state = PassiveState { sqrt_price_x64: Q64, liquidity: 0 };
+        let state = PassiveState {
+            sqrt_price_x64: Q64,
+            liquidity: 0,
+        };
         assert_eq!(
             quote_quote_in_for_base_out(state, 1),
             Err(QuoteError::ZeroLiquidity)
