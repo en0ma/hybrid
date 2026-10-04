@@ -845,8 +845,8 @@ mod tests {
         };
 
         let with_tombstone =
-            quote_buy_exact_in_levels(passive, &[tombstone, live], &[], 37).unwrap();
-        let without_tombstone = quote_buy_exact_in_levels(passive, &[live], &[], 37).unwrap();
+            quote_buy_exact_in_levels(passive, &[tombstone, live], &[], 60).unwrap();
+        let without_tombstone = quote_buy_exact_in_levels(passive, &[live], &[], 60).unwrap();
 
         assert_eq!(with_tombstone.amount_in, without_tombstone.amount_in);
         assert_eq!(with_tombstone.amount_out, without_tombstone.amount_out);
