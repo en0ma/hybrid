@@ -45,3 +45,10 @@ async fn measure_passive_quote_cu() {
     println!("HYBRID_CU passive_quote {units}");
     assert!(units > 0);
 }
+
+#[tokio::test]
+async fn measure_hybrid_match_cu() {
+    let units = units_for(vec![2]).await;
+    println!("HYBRID_CU hybrid_match {units}");
+    assert!(units > 0);
+}
