@@ -979,9 +979,7 @@ mod tests {
 
         let mut last_page = AskPage::default();
         last_page.set_links(PageLinks::new(2, Some(1), None));
-        last_page
-            .insert(ask(Q64 + Q64 / 100, 10, 2))
-            .unwrap();
+        last_page.insert(ask(Q64 + Q64 / 100, 10, 2)).unwrap();
 
         assert_eq!(
             validate_ask_chain(&[first, middle, last_page]),
