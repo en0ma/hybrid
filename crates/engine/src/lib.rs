@@ -95,9 +95,19 @@ pub fn validate_limit_ask(order: LimitAsk) -> Result<(), QuoteError> {
         return Err(QuoteError::InvalidPrice);
     }
 
-    // The cached square root may round down by one Q64 price atom.
+    // Require the canonical floor square root: s^2 <= price < (s+1)^2.
+    // Comparing the squared Q64 prices avoids assuming a fixed error bound,
+    // which is incorrect as price magnitude grows.
     let cached = spot_price_x64(order.sqrt_price_x64)?;
-    if cached > order.price_x64 || order.price_x64 - cached > 1 {
+    if cached > order.price_x64 {
+        return Err(QuoteError::InvalidCachedSqrtPrice);
+    }
+    let next_sqrt = order
+        .sqrt_price_x64
+        .checked_add(1)
+        .ok_or(QuoteError::InvalidCachedSqrtPrice)?;
+    let next_price = spot_price_x64(next_sqrt)?;
+    if next_price <= order.price_x64 {
         return Err(QuoteError::InvalidCachedSqrtPrice);
     }
     Ok(())
@@ -232,8 +242,13 @@ pub fn quote_buy_exact_in(market: HybridMarket, quote_in: u64) -> Result<HybridQ
     // Passive is strictly better below the ask. Move it up to the ask, but not
     // farther; exact equality belongs to the resting explicit order.
     if passive_state.sqrt_price_x64 < ask.sqrt_price_x64 && remaining_quote > 0 {
-        let to_ask = passive_to_target(passive_state, ask.sqrt_price_x64)?;
-        if to_ask.amount_in >= remaining_quote {
+        let delta = ask.sqrt_price_x64 - passive_state.sqrt_price_x64;
+        let boundary_cost = mul_q64_ceil(passive_state.liquidity, delta)?;
+
+        // Compare reachability in u128 before converting the boundary cost to
+        // u64. A distant boundary can cost more than u64::MAX while a small
+        // taker input is still perfectly valid.
+        if boundary_cost > u128::from(remaining_quote) {
             let passive = quote_quote_in_for_base_out(passive_state, remaining_quote)?;
             return Ok(HybridQuote {
                 amount_in: quote_in,
@@ -245,6 +260,9 @@ pub fn quote_buy_exact_in(market: HybridMarket, quote_in: u64) -> Result<HybridQ
             });
         }
 
+        // Equality deliberately lands exactly on the active-order boundary.
+        // The resting explicit order owns execution priority at that price.
+        let to_ask = passive_to_target(passive_state, ask.sqrt_price_x64)?;
         remaining_quote -= to_ask.amount_in;
         passive_base_out = passive_base_out
             .checked_add(to_ask.amount_out)
@@ -254,19 +272,19 @@ pub fn quote_buy_exact_in(market: HybridMarket, quote_in: u64) -> Result<HybridQ
 
     // Active wins at equal or better price.
     if remaining_quote > 0 && ask.base_qty > 0 {
-        let quote_for_all = quote_for_base_at_price(ask.base_qty, ask.price_x64)?;
-        let base_fill = if remaining_quote >= quote_for_all {
-            ask.base_qty
-        } else {
-            base_for_quote_at_price(remaining_quote, ask.price_x64)?.min(ask.base_qty)
-        };
+        // Compute affordability from the taker's bounded u64 input first.
+        // This avoids materializing the full notional of a very large ask,
+        // which may exceed u64 even though a small partial fill is valid.
+        let affordable =
+            base_for_quote_at_price(remaining_quote, ask.price_x64)?.min(ask.base_qty);
 
-        if base_fill > 0 {
-            let quote_used = quote_for_base_at_price(base_fill, ask.price_x64)?;
-            remaining_quote = remaining_quote.saturating_sub(quote_used);
-            ask.base_qty -= base_fill;
+        if affordable > 0 {
+            let quote_used = quote_for_base_at_price(affordable, ask.price_x64)?;
+            debug_assert!(quote_used <= remaining_quote);
+            remaining_quote -= quote_used;
+            ask.base_qty -= affordable;
             active_base_out = active_base_out
-                .checked_add(base_fill)
+                .checked_add(affordable)
                 .ok_or(QuoteError::Overflow)?;
         }
     }
@@ -279,6 +297,7 @@ pub fn quote_buy_exact_in(market: HybridMarket, quote_in: u64) -> Result<HybridQ
             .checked_add(passive.amount_out)
             .ok_or(QuoteError::Overflow)?;
         passive_state.sqrt_price_x64 = passive.next_sqrt_price_x64;
+        remaining_quote = 0;
     }
 
     let amount_out = active_base_out
@@ -397,5 +416,89 @@ mod tests {
             validate_limit_ask(ask),
             Err(QuoteError::InvalidCachedSqrtPrice)
         );
+    }
+
+    #[test]
+    fn passive_tail_is_counted_as_consumed_input() {
+        let market = HybridMarket {
+            passive: PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: 1_000_000,
+            },
+            best_ask: Some(one_dollar_ask(100)),
+        };
+        let q = quote_buy_exact_in(market, 1_000).unwrap();
+        assert_eq!(q.amount_in, 1_000);
+        assert_eq!(q.remaining_active_base, 0);
+        assert!(q.passive_base_out > 0);
+    }
+
+    #[test]
+    fn huge_ask_allows_small_partial_fill() {
+        let sqrt_two_x64 = 26_087_635_650_665_564_436u128;
+        let price_two_x64 = spot_price_x64(sqrt_two_x64).unwrap();
+        let market = HybridMarket {
+            passive: PassiveState {
+                sqrt_price_x64: sqrt_two_x64,
+                liquidity: 1_000_000,
+            },
+            best_ask: Some(LimitAsk {
+                price_x64: price_two_x64,
+                sqrt_price_x64: sqrt_two_x64,
+                base_qty: u64::MAX,
+            }),
+        };
+        let q = quote_buy_exact_in(market, 100).unwrap();
+        assert!(q.active_base_out > 0);
+        assert!(q.active_base_out < 100);
+    }
+
+    #[test]
+    fn unreachable_boundary_does_not_overflow_small_trade() {
+        let market = HybridMarket {
+            passive: PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: Q64,
+            },
+            best_ask: Some(LimitAsk {
+                price_x64: 4 * Q64,
+                sqrt_price_x64: 2 * Q64,
+                base_qty: 1,
+            }),
+        };
+        let q = quote_buy_exact_in(market, 1).unwrap();
+        assert_eq!(q.amount_in, 1);
+        assert_eq!(q.active_base_out, 0);
+        assert!(q.next_sqrt_price_x64 < 2 * Q64);
+    }
+
+    #[test]
+    fn canonical_cached_sqrt_accepts_multi_atom_squared_gap() {
+        let ask = LimitAsk {
+            price_x64: 4 * Q64 - 1,
+            sqrt_price_x64: 2 * Q64 - 1,
+            base_qty: 1,
+        };
+        assert_eq!(validate_limit_ask(ask), Ok(()));
+        assert!(ask.price_x64 - spot_price_x64(ask.sqrt_price_x64).unwrap() > 1);
+    }
+
+    #[test]
+    fn exact_boundary_payment_does_not_cross_active_ask() {
+        let market = HybridMarket {
+            passive: PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: 3,
+            },
+            best_ask: Some(LimitAsk {
+                price_x64: spot_price_x64(Q64 + 1).unwrap(),
+                sqrt_price_x64: Q64 + 1,
+                base_qty: 1,
+            }),
+        };
+        let q = quote_buy_exact_in(market, 1).unwrap();
+        assert_eq!(q.next_sqrt_price_x64, Q64 + 1);
+        assert_eq!(q.active_base_out, 0);
+        assert_eq!(q.remaining_active_base, 1);
     }
 }
