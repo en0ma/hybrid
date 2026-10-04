@@ -391,18 +391,17 @@ pub fn quote_buy_exact_in_levels(
     let mut crossed_boundaries = 0u32;
 
     while remaining_quote > 0 {
+        while ask_index < asks.len() && asks[ask_index].base_qty == 0 {
+            ask_index += 1;
+            fully_consumed_asks = fully_consumed_asks
+                .checked_add(1)
+                .ok_or(QuoteError::Overflow)?;
+        }
+
         let next_ask = asks.get(ask_index).copied();
 
         if let Some(ask) = next_ask {
             if ask.sqrt_price_x64 <= passive_state.sqrt_price_x64 {
-                if ask.base_qty == 0 {
-                    ask_index += 1;
-                    fully_consumed_asks = fully_consumed_asks
-                        .checked_add(1)
-                        .ok_or(QuoteError::Overflow)?;
-                    continue;
-                }
-
                 let (quote_used, base_fill, full) = fill_active_ask(ask, remaining_quote)?;
                 if base_fill == 0 {
                     break;
@@ -824,5 +823,56 @@ mod tests {
         assert_eq!(q.active_base_out, 50);
         assert_eq!(q.passive_base_out, 0);
         assert_eq!(q.fully_consumed_asks, 1);
+    }
+
+    #[test]
+    fn future_zero_quantity_ask_does_not_segment_passive_quote() {
+        let tombstone_sqrt = Q64 + Q64 / 20_000;
+        let live_sqrt = Q64 + Q64 / 1_000;
+        let tombstone = LimitAsk {
+            price_x64: spot_price_x64(tombstone_sqrt).unwrap(),
+            sqrt_price_x64: tombstone_sqrt,
+            base_qty: 0,
+        };
+        let live = LimitAsk {
+            price_x64: spot_price_x64(live_sqrt).unwrap(),
+            sqrt_price_x64: live_sqrt,
+            base_qty: 1_000,
+        };
+        let passive = PassiveState {
+            sqrt_price_x64: Q64,
+            liquidity: 1_000_003,
+        };
+
+        let with_tombstone =
+            quote_buy_exact_in_levels(passive, &[tombstone, live], &[], 37).unwrap();
+        let without_tombstone = quote_buy_exact_in_levels(passive, &[live], &[], 37).unwrap();
+
+        assert_eq!(with_tombstone.amount_in, without_tombstone.amount_in);
+        assert_eq!(with_tombstone.amount_out, without_tombstone.amount_out);
+        assert_eq!(
+            with_tombstone.active_base_out,
+            without_tombstone.active_base_out
+        );
+        assert_eq!(
+            with_tombstone.passive_base_out,
+            without_tombstone.passive_base_out
+        );
+        assert_eq!(
+            with_tombstone.next_sqrt_price_x64,
+            without_tombstone.next_sqrt_price_x64
+        );
+        assert_eq!(
+            with_tombstone.final_liquidity,
+            without_tombstone.final_liquidity
+        );
+        assert_eq!(
+            with_tombstone.crossed_boundaries,
+            without_tombstone.crossed_boundaries
+        );
+        assert_eq!(
+            with_tombstone.fully_consumed_asks,
+            without_tombstone.fully_consumed_asks + 1
+        );
     }
 }
