@@ -8,19 +8,19 @@ rm -rf "$ROOT"
 git clone --filter=blob:none https://github.com/Bonasa-Tech/manifest.git "$ROOT"
 git -C "$ROOT" checkout --detach "$PIN"
 
-echo "Manifest baseline: $(git -C "$ROOT" rev-parse HEAD)"
+ACTUAL="$(git -C "$ROOT" rev-parse HEAD)"
+test "$ACTUAL" = "$PIN"
+echo "Manifest baseline: $ACTUAL"
 
-# Publicly reproducible correctness baseline. Manifest's production replay CU
-# harness is private, so Hybrid owns its own apples-to-apples CU scenarios.
 cargo test --manifest-path "$ROOT/Cargo.toml" -p manifest-dex --lib
+cargo build-sbf --manifest-path "$ROOT/programs/manifest/Cargo.toml"
 
-if command -v cargo-build-sbf >/dev/null 2>&1; then
-  cargo build-sbf --manifest-path "$ROOT/programs/manifest/Cargo.toml"
-fi
-
-if [[ -x ci/compare-cu.sh ]]; then
-  MANIFEST_REPO="$ROOT" ci/compare-cu.sh
+if [[ -f Cargo.toml ]]; then
+  if [[ ! -f ci/compare-cu.sh ]]; then
+    echo "ci/compare-cu.sh is required once Hybrid contains Rust program code."
+    exit 1
+  fi
+  MANIFEST_REPO="$ROOT" MANIFEST_COMMIT="$PIN" bash ci/compare-cu.sh
 else
-  echo "Manifest correctness/build baseline passed."
-  echo "CU comparison becomes mandatory when ci/compare-cu.sh is added with Hybrid's first executable program."
+  echo "Hybrid program not present yet; pinned Manifest correctness/build baseline passed."
 fi
