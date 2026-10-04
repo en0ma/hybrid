@@ -16,6 +16,7 @@ env:
   PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
   MANIFEST_COMMIT: d04b7aa90b098ba64ebcdf398e9a24d89a9114d8
   SURFPOOL_VERSION: "1.5.0"
+  SOLANA_VERSION: "v4.3.0"
 
 jobs:
   review-and-head:
@@ -81,7 +82,9 @@ jobs:
       - name: Assert exact checkout
         run: test "$(git rev-parse HEAD)" = "$PR_HEAD_SHA"
       - name: Run deterministic core CI
-        run: bash ci/run.sh
+        run: |
+          source ci/install-solana.sh
+          bash ci/run.sh
 
   fork:
     name: Mainnet fork
@@ -103,7 +106,9 @@ jobs:
         with:
           ref: ${{ env.PR_HEAD_SHA }}
       - name: Build, test and compare against pinned Manifest
-        run: bash ci/manifest-compare.sh
+        run: |
+          source ci/install-solana.sh
+          bash ci/manifest-compare.sh
 
   merge-gate:
     name: Merge gate
