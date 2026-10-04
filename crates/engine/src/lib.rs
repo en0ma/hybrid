@@ -313,7 +313,6 @@ pub fn quote_buy_exact_in(market: HybridMarket, quote_in: u64) -> Result<HybridQ
     })
 }
 
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PassiveBoundary {
     pub sqrt_price_x64: u128,
@@ -332,10 +331,7 @@ pub struct MultiLevelQuote {
     pub crossed_boundaries: u32,
 }
 
-fn fill_active_ask(
-    ask: LimitAsk,
-    remaining_quote: u64,
-) -> Result<(u64, u64, bool), QuoteError> {
+fn fill_active_ask(ask: LimitAsk, remaining_quote: u64) -> Result<(u64, u64, bool), QuoteError> {
     validate_limit_ask(ask)?;
     let base_fill = base_for_quote_at_price(remaining_quote, ask.price_x64)?.min(ask.base_qty);
     if base_fill == 0 {
@@ -399,6 +395,14 @@ pub fn quote_buy_exact_in_levels(
 
         if let Some(ask) = next_ask {
             if ask.sqrt_price_x64 <= passive_state.sqrt_price_x64 {
+                if ask.base_qty == 0 {
+                    ask_index += 1;
+                    fully_consumed_asks = fully_consumed_asks
+                        .checked_add(1)
+                        .ok_or(QuoteError::Overflow)?;
+                    continue;
+                }
+
                 let (quote_used, base_fill, full) = fill_active_ask(ask, remaining_quote)?;
                 if base_fill == 0 {
                     break;
@@ -802,6 +806,27 @@ mod tests {
             ),
             Err(QuoteError::InvalidPrice)
         );
+    }
+    #[test]
+    fn multilevel_skips_zero_quantity_ask_and_continues() {
+        let asks = [
+            one_dollar_ask(0),
+            one_dollar_ask(100),
+        ];
+        let q = quote_buy_exact_in_levels(
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: 1_000_000,
+            },
+            &asks,
+            &[],
+            50,
+        )
+        .unwrap();
+        assert_eq!(q.amount_in, 50);
+        assert_eq!(q.active_base_out, 50);
+        assert_eq!(q.passive_base_out, 0);
+        assert_eq!(q.fully_consumed_asks, 1);
     }
 
 }
