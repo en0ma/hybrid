@@ -30,6 +30,7 @@ PY
   measure passive_quote measure_passive_quote_cu
   measure hybrid_match measure_hybrid_match_cu
   measure multilevel_match measure_multilevel_match_cu
+  measure state_backed_match measure_state_backed_match_cu
 } > "$TMP/measurements.txt"
 
 python3 - "$TMP/measurements.txt" ci/cu-budgets.json <<'PY'
@@ -37,7 +38,7 @@ import json, pathlib, sys
 rows={}
 for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
     parts=line.split()
-    if len(parts)==2 and parts[0] in {"noop","passive_quote","hybrid_match","multilevel_match"} and parts[1].isdigit():
+    if len(parts)==2 and parts[0] in {"noop","passive_quote","hybrid_match","multilevel_match","state_backed_match"} and parts[1].isdigit():
         rows[parts[0]]=int(parts[1])
 budgets=json.load(open(sys.argv[2]))
 missing=set(budgets)-set(rows)
