@@ -16,6 +16,13 @@ command -v cargo-build-sbf >/dev/null 2>&1 || { echo "cargo-build-sbf missing"; 
 command -v cargo-test-sbf >/dev/null 2>&1 || { echo "cargo-test-sbf missing"; exit 1; }
 
 cargo build-sbf --manifest-path program/Cargo.toml
+
+if [[ ! -f ci/bytecode-check.sh || ! -f ci/bytecode-budgets.json ]]; then
+  echo "Bytecode budget files are required once Hybrid contains Rust program code."
+  exit 1
+fi
+bash ci/bytecode-check.sh
+
 cargo test-sbf --manifest-path program/Cargo.toml --features test-sbf
 
 if [[ ! -f fuzz/Cargo.toml ]]; then
