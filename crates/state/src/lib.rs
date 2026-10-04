@@ -342,8 +342,10 @@ impl AskPage {
         if len > ASKS_PER_PAGE {
             return Err(StateError::Corrupt);
         }
-        let mut page = Self::default();
-        page.len = len as u16;
+        let mut page = Self {
+            len: len as u16,
+            ..Self::default()
+        };
         page.reserved.copy_from_slice(&input[2..16]);
         for index in 0..ASKS_PER_PAGE {
             let start = PAGE_HEADER_BYTES + index * ASK_ENTRY_BYTES;
