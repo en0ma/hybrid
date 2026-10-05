@@ -9,7 +9,7 @@ use hybrid_state::{
 use solana_account::Account;
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
-use solana_program::{pubkey::Pubkey, system_program};
+use solana_program::pubkey::Pubkey;
 use solana_program_test::ProgramTest;
 use solana_signer::Signer;
 use solana_transaction::Transaction;
@@ -66,8 +66,8 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
     let mut program_test = ProgramTest::new("hybrid_program", ID, None);
     program_test.add_account(market_key, account(market_data, ID));
     program_test.add_account(ask_key, account(ask_data, ID));
-    program_test.add_account(maker.pubkey(), account(Vec::new(), system_program::ID));
-    program_test.add_account(other.pubkey(), account(Vec::new(), system_program::ID));
+    program_test.add_account(maker.pubkey(), account(Vec::new(), solana_system_interface::program::ID));
+    program_test.add_account(other.pubkey(), account(Vec::new(), solana_system_interface::program::ID));
 
     let mut context = program_test.start_with_context().await;
 
@@ -77,7 +77,7 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
             AccountMeta::new_readonly(market_key, false),
             AccountMeta::new(owner_key, false),
             AccountMeta::new(context.payer.pubkey(), true),
-            AccountMeta::new_readonly(system_program::ID, false),
+            AccountMeta::new_readonly(solana_system_interface::program::ID, false),
         ],
         data: vec![8],
     };
@@ -242,7 +242,7 @@ async fn place_rejects_wrong_sidecar_pda_and_missing_signature() {
     program_test.add_account(market_key, account(market_data, ID));
     program_test.add_account(ask_key, account(ask_data, ID));
     program_test.add_account(wrong_owner_key, account(owner_data, ID));
-    program_test.add_account(maker.pubkey(), account(Vec::new(), system_program::ID));
+    program_test.add_account(maker.pubkey(), account(Vec::new(), solana_system_interface::program::ID));
     let mut context = program_test.start_with_context().await;
 
     let wrong_pda = Instruction {
