@@ -193,12 +193,9 @@ fn passive_base_delta(
 
     let end_quotient = start_quotient / end_sqrt_x64;
     let end_remainder = start_quotient % end_sqrt_x64;
-    let whole = end_quotient
-        .checked_mul(Q64)
-        .ok_or(QuoteError::Overflow)?;
+    let whole = end_quotient.checked_mul(Q64).ok_or(QuoteError::Overflow)?;
 
-    let (fraction_quotient, fraction_remainder) =
-        div_shift_64(end_remainder, end_sqrt_x64)?;
+    let (fraction_quotient, fraction_remainder) = div_shift_64(end_remainder, end_sqrt_x64)?;
     let carried_quotient = fraction_x64 / end_sqrt_x64;
     let carried_remainder = fraction_x64 % end_sqrt_x64;
     let carry = if carried_remainder >= end_sqrt_x64 - fraction_remainder {
