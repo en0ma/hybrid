@@ -83,66 +83,69 @@ pub fn process_instruction(
             .map_err(|_| ProgramError::InvalidInstructionData)
         }
 
-        Some(4) => {
-            if _accounts.len() != 3 {
-                return Err(ProgramError::NotEnoughAccountKeys);
-            }
-
-            let market_data = _accounts[0]
-                .try_borrow_data()
-                .map_err(|_| ProgramError::AccountBorrowFailed)?;
-            let ask_data = _accounts[1]
-                .try_borrow_data()
-                .map_err(|_| ProgramError::AccountBorrowFailed)?;
-            let boundary_data = _accounts[2]
-                .try_borrow_data()
-                .map_err(|_| ProgramError::AccountBorrowFailed)?;
-
-            let market = hybrid_state::MarketHeader::decode_from(&market_data)
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-            let asks_page = hybrid_state::AskPage::decode_from(&ask_data)
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-            let boundaries_page = hybrid_state::BoundaryPage::decode_from(&boundary_data)
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-
-            hybrid_state::validate_ask_chain(core::slice::from_ref(&asks_page))
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-            hybrid_state::validate_boundary_chain(core::slice::from_ref(&boundaries_page))
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-
-            let mut asks = [hybrid_engine::LimitAsk {
-                price_x64: 0,
-                sqrt_price_x64: 0,
-                base_qty: 0,
-            }; hybrid_state::ASKS_PER_PAGE];
-            for (index, entry) in asks_page.as_slice().iter().enumerate() {
-                asks[index] = entry.as_limit_ask();
-            }
-
-            let mut boundaries = [hybrid_engine::PassiveBoundary {
-                sqrt_price_x64: 0,
-                liquidity_after: 0,
-            }; hybrid_state::BOUNDARIES_PER_PAGE];
-            for (index, entry) in boundaries_page.as_slice().iter().enumerate() {
-                boundaries[index] = entry.as_passive_boundary();
-            }
-
-            hybrid_engine::quote_buy_exact_in_levels(
-                hybrid_engine::PassiveState {
-                    sqrt_price_x64: market.sqrt_price_x64,
-                    liquidity: market.liquidity,
-                },
-                &asks[..asks_page.len()],
-                &boundaries[..boundaries_page.len()],
-                20_000,
-            )
-            .map(|_| ())
-            .map_err(|_| ProgramError::InvalidInstructionData)
-        }
-
+        Some(4) => process_state_backed_match(_accounts),
         Some(5) => process_multipage_state_backed_match(_program_id, _accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
+}
+
+
+
+fn process_state_backed_match(accounts: &[AccountInfo]) -> ProgramResult {
+    if accounts.len() != 3 {
+                    return Err(ProgramError::NotEnoughAccountKeys);
+                }
+    
+                let market_data = accounts[0]
+                    .try_borrow_data()
+                    .map_err(|_| ProgramError::AccountBorrowFailed)?;
+                let ask_data = accounts[1]
+                    .try_borrow_data()
+                    .map_err(|_| ProgramError::AccountBorrowFailed)?;
+                let boundary_data = accounts[2]
+                    .try_borrow_data()
+                    .map_err(|_| ProgramError::AccountBorrowFailed)?;
+    
+                let market = hybrid_state::MarketHeader::decode_from(&market_data)
+                    .map_err(|_| ProgramError::InvalidAccountData)?;
+                let asks_page = hybrid_state::AskPage::decode_from(&ask_data)
+                    .map_err(|_| ProgramError::InvalidAccountData)?;
+                let boundaries_page = hybrid_state::BoundaryPage::decode_from(&boundary_data)
+                    .map_err(|_| ProgramError::InvalidAccountData)?;
+    
+                hybrid_state::validate_ask_chain(core::slice::from_ref(&asks_page))
+                    .map_err(|_| ProgramError::InvalidAccountData)?;
+                hybrid_state::validate_boundary_chain(core::slice::from_ref(&boundaries_page))
+                    .map_err(|_| ProgramError::InvalidAccountData)?;
+    
+                let mut asks = [hybrid_engine::LimitAsk {
+                    price_x64: 0,
+                    sqrt_price_x64: 0,
+                    base_qty: 0,
+                }; hybrid_state::ASKS_PER_PAGE];
+                for (index, entry) in asks_page.as_slice().iter().enumerate() {
+                    asks[index] = entry.as_limit_ask();
+                }
+    
+                let mut boundaries = [hybrid_engine::PassiveBoundary {
+                    sqrt_price_x64: 0,
+                    liquidity_after: 0,
+                }; hybrid_state::BOUNDARIES_PER_PAGE];
+                for (index, entry) in boundaries_page.as_slice().iter().enumerate() {
+                    boundaries[index] = entry.as_passive_boundary();
+                }
+    
+                hybrid_engine::quote_buy_exact_in_levels(
+                    hybrid_engine::PassiveState {
+                        sqrt_price_x64: market.sqrt_price_x64,
+                        liquidity: market.liquidity,
+                    },
+                    &asks[..asks_page.len()],
+                    &boundaries[..boundaries_page.len()],
+                    20_000,
+                )
+                .map(|_| ())
+                .map_err(|_| ProgramError::InvalidInstructionData)
 }
 
 fn process_multipage_state_backed_match(
@@ -216,6 +219,13 @@ fn process_multipage_state_backed_match(
         ask_pages.push(page);
     }
     hybrid_state::validate_ask_chain(&ask_pages).map_err(|_| ProgramError::InvalidAccountData)?;
+    let ask_count = ask_pages
+        .iter()
+        .map(hybrid_state::AskPage::len)
+        .sum::<usize>();
+    if ask_count > hybrid_state::ASKS_PER_PAGE {
+        return Err(ProgramError::InvalidInstructionData);
+    }
 
     let mut boundary_pages = Vec::with_capacity(boundary_page_count);
     for account in &accounts[boundary_start..] {
@@ -228,11 +238,14 @@ fn process_multipage_state_backed_match(
     }
     hybrid_state::validate_boundary_chain(&boundary_pages)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-
-    let ask_count = ask_pages
+    let boundary_count = boundary_pages
         .iter()
-        .map(hybrid_state::AskPage::len)
+        .map(hybrid_state::BoundaryPage::len)
         .sum::<usize>();
+    if boundary_count > hybrid_state::BOUNDARIES_PER_PAGE {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
     let mut asks = Vec::with_capacity(ask_count);
     for page in &ask_pages {
         asks.extend(
@@ -243,10 +256,6 @@ fn process_multipage_state_backed_match(
         );
     }
 
-    let boundary_count = boundary_pages
-        .iter()
-        .map(hybrid_state::BoundaryPage::len)
-        .sum::<usize>();
     let mut boundaries = Vec::with_capacity(boundary_count);
     for page in &boundary_pages {
         boundaries.extend(
