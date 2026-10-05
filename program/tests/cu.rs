@@ -3,12 +3,13 @@
 use hybrid_engine::{spot_price_x64, Q64};
 use hybrid_program::ID;
 use hybrid_state::{
-    AskEntry, AskPage, BoundaryEntry, BoundaryPage, MarketHeader, PageLinks, ASK_PAGE_BYTES,
-    BOUNDARY_PAGE_BYTES, MARKET_HEADER_BYTES,
+    AskEntry, AskOwnerPage, AskPage, BoundaryEntry, BoundaryPage, MarketHeader, PageLinks,
+    ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES, BOUNDARY_PAGE_BYTES, MARKET_HEADER_BYTES,
 };
 use solana_account::Account;
 use solana_instruction::{AccountMeta, Instruction};
-use solana_program::pubkey::Pubkey;
+use solana_keypair::Keypair;
+use solana_program::{pubkey::Pubkey, system_program};
 use solana_program_test::ProgramTest;
 use solana_signer::Signer;
 use solana_transaction::Transaction;
@@ -279,5 +280,129 @@ async fn units_for_multipage_state_backed_quote() -> u64 {
 async fn measure_multipage_state_backed_match_cu() {
     let units = units_for_multipage_state_backed_quote().await;
     println!("HYBRID_CU multipage_state_backed_match {units}");
+    assert!(units > 0);
+}
+
+async fn units_for_active_order_mutation(cancel: bool) -> u64 {
+    let market_key = Pubkey::new_unique();
+    let (ask_key, _) = Pubkey::find_program_address(
+        &[b"ask-page", market_key.as_ref(), &0u32.to_le_bytes()],
+        &ID,
+    );
+    let (owner_key, _) = Pubkey::find_program_address(
+        &[b"ask-owner-page", market_key.as_ref(), &0u32.to_le_bytes()],
+        &ID,
+    );
+    let maker = Keypair::new();
+
+    let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    let mut asks = AskPage::default();
+    asks.set_links(PageLinks::new(0, None, None));
+    let mut owners = AskOwnerPage::default();
+    owners.set_links(PageLinks::new(0, None, None));
+
+    if cancel {
+        market.ask_count = 1;
+        market.next_sequence = 2;
+        hybrid_state::insert_owned_ask(
+            &mut asks,
+            &mut owners,
+            AskEntry {
+                price_x64: Q64,
+                sqrt_price_x64: Q64,
+                base_qty: 1_000,
+                sequence: 1,
+            },
+            maker.pubkey().to_bytes(),
+        )
+        .unwrap();
+    }
+
+    let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
+    let mut ask_data = vec![0u8; ASK_PAGE_BYTES];
+    let mut owner_data = vec![0u8; ASK_OWNER_PAGE_BYTES];
+    market.encode_into(&mut market_data).unwrap();
+    asks.encode_into(&mut ask_data).unwrap();
+    owners.encode_into(&mut owner_data).unwrap();
+
+    let mut program_test = ProgramTest::new("hybrid_program", ID, None);
+    for (key, data) in [
+        (market_key, market_data),
+        (ask_key, ask_data),
+        (owner_key, owner_data),
+    ] {
+        program_test.add_account(
+            key,
+            Account {
+                lamports: 1_000_000,
+                data,
+                owner: ID,
+                executable: false,
+                rent_epoch: 0,
+            },
+        );
+    }
+    program_test.add_account(
+        maker.pubkey(),
+        Account {
+            lamports: 1_000_000,
+            data: Vec::new(),
+            owner: system_program::ID,
+            executable: false,
+            rent_epoch: 0,
+        },
+    );
+
+    let mut data = if cancel {
+        let mut bytes = vec![7];
+        bytes.extend_from_slice(&1u64.to_le_bytes());
+        bytes
+    } else {
+        let mut bytes = vec![6];
+        bytes.extend_from_slice(&Q64.to_le_bytes());
+        bytes.extend_from_slice(&Q64.to_le_bytes());
+        bytes.extend_from_slice(&1_000u64.to_le_bytes());
+        bytes
+    };
+
+    let mut context = program_test.start_with_context().await;
+    let ix = Instruction {
+        program_id: ID,
+        accounts: vec![
+            AccountMeta::new(market_key, false),
+            AccountMeta::new(ask_key, false),
+            AccountMeta::new(owner_key, false),
+            AccountMeta::new_readonly(maker.pubkey(), true),
+        ],
+        data: core::mem::take(&mut data),
+    };
+    let blockhash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &maker],
+        blockhash,
+    );
+    let simulation = context.banks_client.simulate_transaction(tx).await.unwrap();
+    if let Some(Err(err)) = simulation.result {
+        panic!("simulation failed: {err:?}");
+    }
+    simulation
+        .simulation_details
+        .expect("simulation details")
+        .units_consumed
+}
+
+#[tokio::test]
+async fn measure_place_ask_cu() {
+    let units = units_for_active_order_mutation(false).await;
+    println!("HYBRID_CU place_ask {units}");
+    assert!(units > 0);
+}
+
+#[tokio::test]
+async fn measure_cancel_ask_cu() {
+    let units = units_for_active_order_mutation(true).await;
+    println!("HYBRID_CU cancel_ask {units}");
     assert!(units > 0);
 }
