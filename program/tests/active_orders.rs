@@ -98,7 +98,12 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
         .unwrap();
     assert_eq!(initialized_owner.owner, ID);
     assert_eq!(initialized_owner.data.len(), ASK_OWNER_PAGE_BYTES);
-    assert_eq!(AskOwnerPage::decode_from(&initialized_owner.data).unwrap().len(), 0);
+    assert_eq!(
+        AskOwnerPage::decode_from(&initialized_owner.data)
+            .unwrap()
+            .len(),
+        0
+    );
 
     let common = |maker_key, signer| Instruction {
         program_id: ID,
@@ -201,7 +206,12 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(AskOwnerPage::decode_from(&stored_owners.data).unwrap().len(), 0);
+    assert_eq!(
+        AskOwnerPage::decode_from(&stored_owners.data)
+            .unwrap()
+            .len(),
+        0
+    );
 }
 
 #[tokio::test]
