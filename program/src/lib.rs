@@ -1,8 +1,8 @@
 #![allow(unexpected_cfgs)]
 
 use solana_program::{
-    account_info::AccountInfo, declare_id, entrypoint::ProgramResult, program_error::ProgramError,
-    pubkey::Pubkey,
+    account_info::AccountInfo, declare_id, entrypoint::ProgramResult, program::invoke_signed,
+    program_error::ProgramError, pubkey::Pubkey, rent::Rent, sysvar::Sysvar,
 };
 
 declare_id!("US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx");
@@ -87,6 +87,7 @@ pub fn process_instruction(
         Some(5) => process_multipage_state_backed_match(_program_id, _accounts, data),
         Some(6) => process_place_ask(_program_id, _accounts, data),
         Some(7) => process_cancel_ask(_program_id, _accounts, data),
+        Some(8) => process_init_ask_owner_page(_program_id, _accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
@@ -496,4 +497,80 @@ fn process_cancel_ask(
         .ok_or(ProgramError::InvalidAccountData)?;
 
     store_active_order_state(accounts, &market, &ask_pages[0], &owner_pages[0])
+}
+
+#[inline(never)]
+fn process_init_ask_owner_page(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if data.len() != 1 || accounts.len() != 4 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let market = &accounts[0];
+    let owner_page = &accounts[1];
+    let payer = &accounts[2];
+    let system_program = &accounts[3];
+
+    if market.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if !payer.is_signer || !payer.is_writable || !owner_page.is_writable {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if *system_program.key != solana_system_interface::program::ID {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    let market_data = market
+        .try_borrow_data()
+        .map_err(|_| ProgramError::AccountBorrowFailed)?;
+    let market_header = hybrid_state::MarketHeader::decode_from(&market_data)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    drop(market_data);
+    if market_header.ask_count != 0 {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    let index_bytes = 0u32.to_le_bytes();
+    let (expected, bump) = Pubkey::find_program_address(
+        &[b"ask-owner-page", market.key.as_ref(), &index_bytes],
+        program_id,
+    );
+    if *owner_page.key != expected {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    if owner_page.lamports() != 0 || !owner_page.data_is_empty() {
+        return Err(ProgramError::AccountAlreadyInitialized);
+    }
+
+    let rent = Rent::get()?;
+    let lamports = rent.minimum_balance(hybrid_state::ASK_OWNER_PAGE_BYTES);
+    let create = solana_system_interface::instruction::create_account(
+        payer.key,
+        owner_page.key,
+        lamports,
+        hybrid_state::ASK_OWNER_PAGE_BYTES as u64,
+        program_id,
+    );
+    invoke_signed(
+        &create,
+        &[payer.clone(), owner_page.clone(), system_program.clone()],
+        &[&[
+            b"ask-owner-page",
+            market.key.as_ref(),
+            &index_bytes,
+            &[bump],
+        ]],
+    )?;
+
+    let mut page = hybrid_state::AskOwnerPage::default();
+    page.set_links(hybrid_state::PageLinks::new(0, None, None));
+    let mut owner_data = owner_page
+        .try_borrow_mut_data()
+        .map_err(|_| ProgramError::AccountBorrowFailed)?;
+    page.encode_into(&mut owner_data)
+        .map_err(|_| ProgramError::InvalidAccountData)
 }
