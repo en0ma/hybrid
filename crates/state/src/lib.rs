@@ -923,6 +923,7 @@ const _: [(); MARKET_HEADER_BYTES] = [(); core::mem::size_of::<MarketHeader>()];
 const _: [(); ASK_ENTRY_BYTES] = [(); core::mem::size_of::<AskEntry>()];
 const _: [(); BOUNDARY_ENTRY_BYTES] = [(); core::mem::size_of::<BoundaryEntry>()];
 const _: [(); ASK_PAGE_BYTES] = [(); core::mem::size_of::<AskPage>()];
+const _: [(); ASK_OWNER_PAGE_BYTES] = [(); core::mem::size_of::<AskOwnerPage>()];
 const _: [(); BOUNDARY_PAGE_BYTES] = [(); core::mem::size_of::<BoundaryPage>()];
 
 #[cfg(test)]
@@ -1033,6 +1034,11 @@ mod tests {
                 32usize,
             ),
             ("ask_page", core::mem::size_of::<AskPage>(), 1_552usize),
+            (
+                "ask_owner_page",
+                core::mem::size_of::<AskOwnerPage>(),
+                1_040usize,
+            ),
             (
                 "boundary_page",
                 core::mem::size_of::<BoundaryPage>(),
