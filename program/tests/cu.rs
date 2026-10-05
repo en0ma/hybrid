@@ -9,7 +9,7 @@ use hybrid_state::{
 use solana_account::Account;
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
-use solana_program::{pubkey::Pubkey, system_program};
+use solana_program::pubkey::Pubkey;
 use solana_program_test::ProgramTest;
 use solana_signer::Signer;
 use solana_transaction::Transaction;
@@ -347,7 +347,7 @@ async fn units_for_active_order_mutation(cancel: bool) -> u64 {
         Account {
             lamports: 1_000_000,
             data: Vec::new(),
-            owner: system_program::ID,
+            owner: solana_system_interface::program::ID,
             executable: false,
             rent_epoch: 0,
         },
