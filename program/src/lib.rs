@@ -89,7 +89,6 @@ pub fn process_instruction(
     }
 }
 
-
 fn process_state_backed_match(accounts: &[AccountInfo]) -> ProgramResult {
     if accounts.len() != 3 {
         return Err(ProgramError::NotEnoughAccountKeys);
