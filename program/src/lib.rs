@@ -85,6 +85,8 @@ pub fn process_instruction(
 
         Some(4) => process_state_backed_match(_accounts),
         Some(5) => process_multipage_state_backed_match(_program_id, _accounts, data),
+        Some(6) => process_place_ask(_program_id, _accounts, data),
+        Some(7) => process_cancel_ask(_program_id, _accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
@@ -147,6 +149,20 @@ fn decode_and_push_ask_page(
         .map_err(|_| ProgramError::AccountBorrowFailed)?;
     let page =
         hybrid_state::AskPage::decode_from(&data).map_err(|_| ProgramError::InvalidAccountData)?;
+    pages.push(page);
+    Ok(())
+}
+
+#[inline(never)]
+fn decode_and_push_ask_owner_page(
+    account: &AccountInfo,
+    pages: &mut Vec<hybrid_state::AskOwnerPage>,
+) -> ProgramResult {
+    let data = account
+        .try_borrow_data()
+        .map_err(|_| ProgramError::AccountBorrowFailed)?;
+    let page = hybrid_state::AskOwnerPage::decode_from(&data)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
     pages.push(page);
     Ok(())
 }
@@ -285,4 +301,199 @@ fn process_multipage_state_backed_match(
     )
     .map(|_| ())
     .map_err(|_| ProgramError::InvalidInstructionData)
+}
+
+fn require_active_order_accounts(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+) -> Result<[u8; 32], ProgramError> {
+    if accounts.len() != 4 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    if !accounts[3].is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if accounts[..3].iter().any(|account| account.owner != program_id) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if accounts[..3].iter().any(|account| !account.is_writable) {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    let market_key = accounts[0].key;
+    let page_index = 0u32.to_le_bytes();
+    let (expected_ask, _) =
+        Pubkey::find_program_address(&[b"ask-page", market_key.as_ref(), &page_index], program_id);
+    if *accounts[1].key != expected_ask {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let (expected_owner, _) = Pubkey::find_program_address(
+        &[b"ask-owner-page", market_key.as_ref(), &page_index],
+        program_id,
+    );
+    if *accounts[2].key != expected_owner {
+        return Err(ProgramError::InvalidSeeds);
+    }
+
+    Ok(accounts[3].key.to_bytes())
+}
+
+#[inline(never)]
+fn load_active_order_state(
+    accounts: &[AccountInfo],
+) -> Result<
+    (
+        hybrid_state::MarketHeader,
+        Vec<hybrid_state::AskPage>,
+        Vec<hybrid_state::AskOwnerPage>,
+    ),
+    ProgramError,
+> {
+    let market_data = accounts[0]
+        .try_borrow_data()
+        .map_err(|_| ProgramError::AccountBorrowFailed)?;
+    let market = hybrid_state::MarketHeader::decode_from(&market_data)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    drop(market_data);
+
+    let mut ask_pages = Vec::with_capacity(1);
+    decode_and_push_ask_page(&accounts[1], &mut ask_pages)?;
+    hybrid_state::validate_ask_chain(&ask_pages).map_err(|_| ProgramError::InvalidAccountData)?;
+
+    let mut owner_pages = Vec::with_capacity(1);
+    decode_and_push_ask_owner_page(&accounts[2], &mut owner_pages)?;
+    owner_pages[0]
+        .validate_parallel(&ask_pages[0])
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+
+    if usize::try_from(market.ask_count).map_err(|_| ProgramError::InvalidAccountData)?
+        != ask_pages[0].len()
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    Ok((market, ask_pages, owner_pages))
+}
+
+fn store_active_order_state(
+    accounts: &[AccountInfo],
+    market: &hybrid_state::MarketHeader,
+    asks: &hybrid_state::AskPage,
+    owners: &hybrid_state::AskOwnerPage,
+) -> ProgramResult {
+    {
+        let mut data = accounts[0]
+            .try_borrow_mut_data()
+            .map_err(|_| ProgramError::AccountBorrowFailed)?;
+        market
+            .encode_into(&mut data)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+    }
+    {
+        let mut data = accounts[1]
+            .try_borrow_mut_data()
+            .map_err(|_| ProgramError::AccountBorrowFailed)?;
+        asks.encode_into(&mut data)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+    }
+    {
+        let mut data = accounts[2]
+            .try_borrow_mut_data()
+            .map_err(|_| ProgramError::AccountBorrowFailed)?;
+        owners
+            .encode_into(&mut data)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn process_place_ask(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if data.len() != 41 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let owner = require_active_order_accounts(program_id, accounts)?;
+    let price_x64 = u128::from_le_bytes(
+        data[1..17]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidInstructionData)?,
+    );
+    let sqrt_price_x64 = u128::from_le_bytes(
+        data[17..33]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidInstructionData)?,
+    );
+    let base_qty = u64::from_le_bytes(
+        data[33..41]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidInstructionData)?,
+    );
+
+    let (mut market, mut ask_pages, mut owner_pages) = load_active_order_state(accounts)?;
+    let sequence = market.next_sequence;
+    if sequence == 0 || base_qty == 0 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let next_sequence = sequence
+        .checked_add(1)
+        .ok_or(ProgramError::InvalidInstructionData)?;
+    let next_count = market
+        .ask_count
+        .checked_add(1)
+        .ok_or(ProgramError::InvalidInstructionData)?;
+
+    hybrid_state::insert_owned_ask(
+        &mut ask_pages[0],
+        &mut owner_pages[0],
+        hybrid_state::AskEntry {
+            price_x64,
+            sqrt_price_x64,
+            base_qty,
+            sequence,
+        },
+        owner,
+    )
+    .map_err(|_| ProgramError::InvalidInstructionData)?;
+
+    market.next_sequence = next_sequence;
+    market.ask_count = next_count;
+    store_active_order_state(accounts, &market, &ask_pages[0], &owner_pages[0])
+}
+
+#[inline(never)]
+fn process_cancel_ask(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if data.len() != 9 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let owner = require_active_order_accounts(program_id, accounts)?;
+    let sequence = u64::from_le_bytes(
+        data[1..9]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidInstructionData)?,
+    );
+    if sequence == 0 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let (mut market, mut ask_pages, mut owner_pages) = load_active_order_state(accounts)?;
+    hybrid_state::cancel_owned_ask(&mut ask_pages[0], &mut owner_pages[0], sequence, owner)
+        .map_err(|error| match error {
+            hybrid_state::StateError::Unauthorized => ProgramError::InvalidArgument,
+            hybrid_state::StateError::NotFound => ProgramError::InvalidInstructionData,
+            _ => ProgramError::InvalidAccountData,
+        })?;
+    market.ask_count = market
+        .ask_count
+        .checked_sub(1)
+        .ok_or(ProgramError::InvalidAccountData)?;
+
+    store_active_order_state(accounts, &market, &ask_pages[0], &owner_pages[0])
 }
