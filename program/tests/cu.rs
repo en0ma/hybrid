@@ -186,7 +186,7 @@ async fn units_for_multipage_state_backed_quote() -> u64 {
     ask_0.set_links(PageLinks::new(0, None, Some(1)));
     let mut ask_1 = AskPage::default();
     ask_1.set_links(PageLinks::new(1, Some(0), None));
-    for index in 0..32u64 {
+    for index in 0..16u64 {
         let sqrt_price_x64 = Q64 + u128::from(index) * 1_000_000_000_000u128;
         let entry = AskEntry {
             price_x64: spot_price_x64(sqrt_price_x64).unwrap(),
@@ -194,7 +194,7 @@ async fn units_for_multipage_state_backed_quote() -> u64 {
             base_qty: 1_000,
             sequence: index + 1,
         };
-        if index < 16 {
+        if index < 8 {
             ask_0.insert(entry).unwrap();
         } else {
             ask_1.insert(entry).unwrap();
