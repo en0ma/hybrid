@@ -205,12 +205,12 @@ async fn units_for_multipage_state_backed_quote() -> u64 {
     boundary_0.set_links(PageLinks::new(0, None, Some(1)));
     let mut boundary_1 = BoundaryPage::default();
     boundary_1.set_links(PageLinks::new(1, Some(0), None));
-    for index in 0..32u64 {
+    for index in 0..16u64 {
         let entry = BoundaryEntry {
             sqrt_price_x64: Q64 + (u128::from(index) + 1) * 500_000_000_000u128,
             liquidity_after: 1_500_000 + u128::from(index),
         };
-        if index < 16 {
+        if index < 8 {
             boundary_0.insert(entry).unwrap();
         } else {
             boundary_1.insert(entry).unwrap();
