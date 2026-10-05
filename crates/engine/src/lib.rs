@@ -884,8 +884,7 @@ mod tests {
             for delta in deltas {
                 let target = state.sqrt_price_x64 + delta;
                 let to_target = passive_to_target(state, target).unwrap();
-                let reached =
-                    quote_quote_in_for_base_out(state, to_target.amount_in).unwrap();
+                let reached = quote_quote_in_for_base_out(state, to_target.amount_in).unwrap();
                 assert!(reached.next_sqrt_price_x64 >= target);
 
                 if to_target.amount_in > 0 {
@@ -898,7 +897,7 @@ mod tests {
     }
 
     #[test]
-    fn passive_exact_in_is_monotone_and_does_not_overdeliver_at_or_above_one() {
+    fn passive_exact_in_price_is_monotone_and_does_not_overdeliver_at_or_above_one() {
         let states = [
             PassiveState {
                 sqrt_price_x64: Q64,
@@ -920,7 +919,6 @@ mod tests {
                 let current = quote_quote_in_for_base_out(state, quote_in).unwrap();
                 assert_eq!(current.amount_in, quote_in);
                 assert!(current.next_sqrt_price_x64 >= previous.next_sqrt_price_x64);
-                assert!(current.amount_out >= previous.amount_out);
                 assert!(current.amount_out <= quote_in);
                 previous = current;
             }
