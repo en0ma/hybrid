@@ -2,6 +2,7 @@ name: PR Gate
 
 on:
   pull_request:
+    branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
   pull_request_review:
     types: [submitted, edited, dismissed]
@@ -25,6 +26,7 @@ env:
 jobs:
   review-and-head:
     name: Review threads + exact head
+    if: github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     steps:
       - name: Verify PR is not draft
@@ -95,6 +97,7 @@ jobs:
 
   core-ci:
     name: Tests / state / SBF / fuzz / CU / bytecode
+    if: github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -110,6 +113,7 @@ jobs:
 
   fork:
     name: Mainnet fork
+    if: github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -120,6 +124,7 @@ jobs:
 
   manifest:
     name: Manifest baseline
+    if: github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -133,7 +138,7 @@ jobs:
   merge-gate:
     name: Merge gate
     needs: [review-and-head, core-ci, fork, manifest]
-    if: always()
+    if: always() && github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     steps:
       - name: Require every CI lane green

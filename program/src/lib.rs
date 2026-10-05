@@ -98,32 +98,26 @@ fn process_state_backed_match(accounts: &[AccountInfo]) -> ProgramResult {
     let market_data = accounts[0]
         .try_borrow_data()
         .map_err(|_| ProgramError::AccountBorrowFailed)?;
-    let ask_data = accounts[1]
-        .try_borrow_data()
-        .map_err(|_| ProgramError::AccountBorrowFailed)?;
-    let boundary_data = accounts[2]
-        .try_borrow_data()
-        .map_err(|_| ProgramError::AccountBorrowFailed)?;
-
     let market = hybrid_state::MarketHeader::decode_from(&market_data)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    let asks_page = hybrid_state::AskPage::decode_from(&ask_data)
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    let boundaries_page = hybrid_state::BoundaryPage::decode_from(&boundary_data)
+    drop(market_data);
+
+    let mut ask_pages = Vec::with_capacity(1);
+    decode_and_push_ask_page(&accounts[1], &mut ask_pages)?;
+    hybrid_state::validate_ask_chain(&ask_pages).map_err(|_| ProgramError::InvalidAccountData)?;
+
+    let mut boundary_pages = Vec::with_capacity(1);
+    decode_and_push_boundary_page(&accounts[2], &mut boundary_pages)?;
+    hybrid_state::validate_boundary_chain(&boundary_pages)
         .map_err(|_| ProgramError::InvalidAccountData)?;
 
-    hybrid_state::validate_ask_chain(core::slice::from_ref(&asks_page))
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    hybrid_state::validate_boundary_chain(core::slice::from_ref(&boundaries_page))
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-
-    let asks = asks_page
+    let asks = ask_pages[0]
         .as_slice()
         .iter()
         .copied()
         .map(hybrid_state::AskEntry::as_limit_ask)
         .collect::<Vec<_>>();
-    let boundaries = boundaries_page
+    let boundaries = boundary_pages[0]
         .as_slice()
         .iter()
         .copied()

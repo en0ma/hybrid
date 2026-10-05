@@ -22,6 +22,7 @@ fuzz_target!(|data: (u64, u64, u64, u64)| {
         if let Some(next_input) = amount_in.checked_add(1) {
             if let Ok(next) = quote_quote_in_for_base_out(state, next_input) {
                 assert!(next.next_sqrt_price_x64 >= q.next_sqrt_price_x64);
+                assert!(next.amount_out >= q.amount_out);
             }
         }
     }

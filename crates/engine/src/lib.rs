@@ -144,6 +144,35 @@ pub fn quote_quote_in_for_base_out(
     })
 }
 
+/// Divide `remainder * 2^64` by `denominator` without a wider integer.
+///
+/// The precondition `remainder < denominator` keeps every doubled remainder
+/// representable. The quotient is strictly smaller than `2^64`.
+fn div_shift_64(remainder: u128, denominator: u128) -> Result<(u128, u128), QuoteError> {
+    if denominator == 0 || remainder >= denominator {
+        return Err(QuoteError::Overflow);
+    }
+
+    if remainder <= u128::from(u64::MAX) {
+        let numerator = remainder << 64;
+        return Ok((numerator / denominator, numerator % denominator));
+    }
+
+    let mut quotient = 0u128;
+    let mut rem = remainder;
+    for _ in 0..64 {
+        quotient <<= 1;
+        let complement = denominator - rem;
+        if rem >= complement {
+            rem -= complement;
+            quotient |= 1;
+        } else {
+            rem += rem;
+        }
+    }
+    Ok((quotient, rem))
+}
+
 fn passive_base_delta(
     liquidity: u128,
     start_sqrt_x64: u128,
@@ -152,14 +181,46 @@ fn passive_base_delta(
     if start_sqrt_x64 == 0 || end_sqrt_x64 < start_sqrt_x64 {
         return Err(QuoteError::InvalidPrice);
     }
-    liquidity
+
+    // Exact target:
+    // floor(liquidity * delta * Q64 / start / end)
+    //
+    // Dividing by start before multiplying by Q64 would normally lose the
+    // start-division remainder. Carry that remainder through the Q64 scaling
+    // explicitly so the result has the same single-floor semantics without a
+    // 256-bit intermediate.
+    let scaled_delta = liquidity
         .checked_mul(end_sqrt_x64 - start_sqrt_x64)
-        .ok_or(QuoteError::Overflow)?
-        .checked_div(start_sqrt_x64)
-        .ok_or(QuoteError::Overflow)?
-        .checked_mul(Q64)
-        .ok_or(QuoteError::Overflow)?
-        .checked_div(end_sqrt_x64)
+        .ok_or(QuoteError::Overflow)?;
+    let start_quotient = scaled_delta / start_sqrt_x64;
+    let start_remainder = scaled_delta % start_sqrt_x64;
+    let (fraction_x64, _) = div_shift_64(start_remainder, start_sqrt_x64)?;
+
+    if start_quotient <= u128::from(u64::MAX) {
+        let scaled = start_quotient
+            .checked_mul(Q64)
+            .and_then(|value| value.checked_add(fraction_x64))
+            .ok_or(QuoteError::Overflow)?;
+        return Ok(scaled / end_sqrt_x64);
+    }
+
+    let end_quotient = start_quotient / end_sqrt_x64;
+    let end_remainder = start_quotient % end_sqrt_x64;
+    let whole = end_quotient.checked_mul(Q64).ok_or(QuoteError::Overflow)?;
+
+    let (fraction_quotient, fraction_remainder) = div_shift_64(end_remainder, end_sqrt_x64)?;
+    let carried_quotient = fraction_x64 / end_sqrt_x64;
+    let carried_remainder = fraction_x64 % end_sqrt_x64;
+    let carry = if carried_remainder >= end_sqrt_x64 - fraction_remainder {
+        1
+    } else {
+        0
+    };
+
+    whole
+        .checked_add(fraction_quotient)
+        .and_then(|value| value.checked_add(carried_quotient))
+        .and_then(|value| value.checked_add(carry))
         .ok_or(QuoteError::Overflow)
 }
 
@@ -897,7 +958,7 @@ mod tests {
     }
 
     #[test]
-    fn passive_exact_in_price_is_monotone_and_does_not_overdeliver_at_or_above_one() {
+    fn passive_exact_in_is_monotone_and_does_not_overdeliver_at_or_above_one() {
         let states = [
             PassiveState {
                 sqrt_price_x64: Q64,
@@ -919,10 +980,24 @@ mod tests {
                 let current = quote_quote_in_for_base_out(state, quote_in).unwrap();
                 assert_eq!(current.amount_in, quote_in);
                 assert!(current.next_sqrt_price_x64 >= previous.next_sqrt_price_x64);
+                assert!(current.amount_out >= previous.amount_out);
                 assert!(current.amount_out <= quote_in);
                 previous = current;
             }
         }
+    }
+
+    #[test]
+    fn passive_output_is_monotone_at_review_counterexample() {
+        let state = PassiveState {
+            sqrt_price_x64: (u128::from((1u64 << 48) - 1)) << 32,
+            liquidity: 1u128 << 64,
+        };
+        let lower = quote_quote_in_for_base_out(state, 1u64 << 32).unwrap();
+        let higher = quote_quote_in_for_base_out(state, (1u64 << 32) + 1).unwrap();
+
+        assert!(higher.next_sqrt_price_x64 >= lower.next_sqrt_price_x64);
+        assert!(higher.amount_out >= lower.amount_out);
     }
 
     #[test]

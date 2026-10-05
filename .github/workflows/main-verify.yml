@@ -1,31 +1,34 @@
 name: Main Verification
 
 on:
-  push:
+  pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
-  group: main-verify
-  cancel-in-progress: false
+  group: main-verify-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 env:
+  PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
   MANIFEST_COMMIT: d04b7aa90b098ba64ebcdf398e9a24d89a9114d8
   SURFPOOL_VERSION: "1.5.0"
   SOLANA_VERSION: "v4.3.0"
 
 jobs:
   verify:
-    name: Fresh main exact-head verification
+    name: PR exact-head verification
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
-      - name: Assert fresh main head
-        run: test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          ref: ${{ env.PR_HEAD_SHA }}
+          fetch-depth: 0
+      - name: Assert exact PR head
+        run: test "$(git rev-parse HEAD)" = "$PR_HEAD_SHA"
       - name: Core CI
         run: |
           source ci/install-solana.sh
