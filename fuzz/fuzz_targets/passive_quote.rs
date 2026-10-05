@@ -18,6 +18,13 @@ fuzz_target!(|data: (u64, u64, u64, u64)| {
     if let Ok(q) = quote_quote_in_for_base_out(state, amount_in) {
         assert!(q.next_sqrt_price_x64 >= state.sqrt_price_x64);
         assert_eq!(q.amount_in, amount_in);
+
+        if let Some(next_input) = amount_in.checked_add(1) {
+            if let Ok(next) = quote_quote_in_for_base_out(state, next_input) {
+                assert!(next.next_sqrt_price_x64 >= q.next_sqrt_price_x64);
+                assert!(next.amount_out >= q.amount_out);
+            }
+        }
     }
 
     if let Ok(price_x64) = spot_price_x64(sqrt) {
@@ -75,7 +82,6 @@ fuzz_target!(|data: (u64, u64, u64, u64)| {
         assert!(q.fully_consumed_asks <= asks.len() as u32);
         assert!(q.crossed_boundaries <= boundaries.len() as u32);
     }
-
 
     let tombstone_sqrt = Q64 + 1 + u128::from(sqrt_hi % 10_000);
     let live_sqrt = tombstone_sqrt.saturating_add(step.max(1));
