@@ -826,6 +826,106 @@ mod tests {
     }
 
     #[test]
+    fn spot_price_is_monotone_near_q64() {
+        let mut previous = spot_price_x64(Q64).unwrap();
+        for offset in 1..=10_000u128 {
+            let current = spot_price_x64(Q64 + offset).unwrap();
+            assert!(current >= previous);
+            previous = current;
+        }
+    }
+
+    #[test]
+    fn active_affordability_rounding_is_maximal() {
+        let prices = [
+            Q64,
+            Q64 + Q64 / 10_000,
+            Q64 + Q64 / 100,
+            2 * Q64,
+            4 * Q64 - 1,
+        ];
+        let quotes = [0u64, 1, 2, 3, 10, 100, 1_000, 1_000_000];
+
+        for price_x64 in prices {
+            for quote in quotes {
+                let base = base_for_quote_at_price(quote, price_x64).unwrap();
+                let used = quote_for_base_at_price(base, price_x64).unwrap();
+                assert!(used <= quote);
+
+                if base < u64::MAX {
+                    let next = base + 1;
+                    if let Ok(next_cost) = quote_for_base_at_price(next, price_x64) {
+                        assert!(next_cost > quote);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn passive_target_cost_is_minimal_integer_input() {
+        let states = [
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: 1,
+            },
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: 3,
+            },
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: 1_000_003,
+            },
+        ];
+        let deltas = [1u128, 2, 17, Q64 / 20_000, Q64 / 1_000];
+
+        for state in states {
+            for delta in deltas {
+                let target = state.sqrt_price_x64 + delta;
+                let to_target = passive_to_target(state, target).unwrap();
+                let reached = quote_quote_in_for_base_out(state, to_target.amount_in).unwrap();
+                assert!(reached.next_sqrt_price_x64 >= target);
+
+                if to_target.amount_in > 0 {
+                    let below =
+                        quote_quote_in_for_base_out(state, to_target.amount_in - 1).unwrap();
+                    assert!(below.next_sqrt_price_x64 < target);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn passive_exact_in_price_is_monotone_and_does_not_overdeliver_at_or_above_one() {
+        let states = [
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: 1,
+            },
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: 1_000_003,
+            },
+            PassiveState {
+                sqrt_price_x64: Q64 + Q64 / 100,
+                liquidity: 2_000_000,
+            },
+        ];
+
+        for state in states {
+            let mut previous = quote_quote_in_for_base_out(state, 0).unwrap();
+            for quote_in in 1..=10_000u64 {
+                let current = quote_quote_in_for_base_out(state, quote_in).unwrap();
+                assert_eq!(current.amount_in, quote_in);
+                assert!(current.next_sqrt_price_x64 >= previous.next_sqrt_price_x64);
+                assert!(current.amount_out <= quote_in);
+                previous = current;
+            }
+        }
+    }
+
+    #[test]
     fn future_zero_quantity_ask_does_not_segment_passive_quote() {
         let tombstone_sqrt = Q64 + Q64 / 20_000;
         let live_sqrt = Q64 + Q64 / 1_000;
