@@ -4,6 +4,8 @@ Hybrid is a Solana-native hybrid order-book protocol: explicit CLOB orders plus 
 
 ## V0 active-order lifecycle
 
+Before the first maker order is placed, opcode `8` creates the page-0 owner-sidecar PDA. The payer funds rent, the program signs for the PDA, and the new account is assigned to Hybrid and initialized with page-0 links.
+
 Hybrid keeps price-time matching data and maker ownership data in separate pages.
 
 - `AskPage` stays on the matcher hot path.
@@ -59,3 +61,18 @@ This is a bounded V0 mutation path.
 - Bid-side active orders are not implemented yet.
 - Token custody and maker deposit accounting are not implemented yet.
 - Matching remains read-only in the current state-backed probe instructions.
+
+### Initialize ask owner page
+
+Opcode: `8`
+
+Instruction data is exactly one byte.
+
+Accounts:
+
+1. read-only Hybrid-owned market account
+2. writable page-0 ask-owner PDA to create
+3. writable payer signer
+4. system program
+
+Initialization is allowed only while `MarketHeader.ask_count == 0`. This prevents creating an empty ownership sidecar after live asks already exist.
