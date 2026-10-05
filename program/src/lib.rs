@@ -314,7 +314,10 @@ fn require_active_order_accounts(
     if !accounts[3].is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
-    if accounts[..3].iter().any(|account| account.owner != program_id) {
+    if accounts[..3]
+        .iter()
+        .any(|account| account.owner != program_id)
+    {
         return Err(ProgramError::IncorrectProgramId);
     }
     if accounts[..3].iter().any(|account| !account.is_writable) {
@@ -409,11 +412,7 @@ fn store_active_order_state(
 }
 
 #[inline(never)]
-fn process_place_ask(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    data: &[u8],
-) -> ProgramResult {
+fn process_place_ask(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     if data.len() != 41 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -466,11 +465,7 @@ fn process_place_ask(
 }
 
 #[inline(never)]
-fn process_cancel_ask(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    data: &[u8],
-) -> ProgramResult {
+fn process_cancel_ask(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     if data.len() != 9 {
         return Err(ProgramError::InvalidInstructionData);
     }
