@@ -63,19 +63,43 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
     let mut ask_data = vec![0u8; ASK_PAGE_BYTES];
     asks.encode_into(&mut ask_data).unwrap();
 
-    let mut owners = AskOwnerPage::default();
-    owners.set_links(PageLinks::new(0, None, None));
-    let mut owner_data = vec![0u8; ASK_OWNER_PAGE_BYTES];
-    owners.encode_into(&mut owner_data).unwrap();
-
     let mut program_test = ProgramTest::new("hybrid_program", ID, None);
     program_test.add_account(market_key, account(market_data, ID));
     program_test.add_account(ask_key, account(ask_data, ID));
-    program_test.add_account(owner_key, account(owner_data, ID));
     program_test.add_account(maker.pubkey(), account(Vec::new(), system_program::ID));
     program_test.add_account(other.pubkey(), account(Vec::new(), system_program::ID));
 
     let mut context = program_test.start_with_context().await;
+
+    let init = Instruction {
+        program_id: ID,
+        accounts: vec![
+            AccountMeta::new_readonly(market_key, false),
+            AccountMeta::new(owner_key, false),
+            AccountMeta::new(context.payer.pubkey(), true),
+            AccountMeta::new_readonly(system_program::ID, false),
+        ],
+        data: vec![8],
+    };
+    let blockhash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[init],
+        Some(&context.payer.pubkey()),
+        &[&context.payer],
+        blockhash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let initialized_owner = context
+        .banks_client
+        .get_account(owner_key)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(initialized_owner.owner, ID);
+    assert_eq!(initialized_owner.data.len(), ASK_OWNER_PAGE_BYTES);
+    assert_eq!(AskOwnerPage::decode_from(&initialized_owner.data).unwrap().len(), 0);
+
     let common = |maker_key, signer| Instruction {
         program_id: ID,
         accounts: vec![
