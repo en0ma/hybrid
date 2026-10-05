@@ -117,34 +117,58 @@ fn process_state_backed_match(accounts: &[AccountInfo]) -> ProgramResult {
     hybrid_state::validate_boundary_chain(core::slice::from_ref(&boundaries_page))
         .map_err(|_| ProgramError::InvalidAccountData)?;
 
-    let mut asks = [hybrid_engine::LimitAsk {
-        price_x64: 0,
-        sqrt_price_x64: 0,
-        base_qty: 0,
-    }; hybrid_state::ASKS_PER_PAGE];
-    for (index, entry) in asks_page.as_slice().iter().enumerate() {
-        asks[index] = entry.as_limit_ask();
-    }
-
-    let mut boundaries = [hybrid_engine::PassiveBoundary {
-        sqrt_price_x64: 0,
-        liquidity_after: 0,
-    }; hybrid_state::BOUNDARIES_PER_PAGE];
-    for (index, entry) in boundaries_page.as_slice().iter().enumerate() {
-        boundaries[index] = entry.as_passive_boundary();
-    }
+    let asks = asks_page
+        .as_slice()
+        .iter()
+        .copied()
+        .map(hybrid_state::AskEntry::as_limit_ask)
+        .collect::<Vec<_>>();
+    let boundaries = boundaries_page
+        .as_slice()
+        .iter()
+        .copied()
+        .map(hybrid_state::BoundaryEntry::as_passive_boundary)
+        .collect::<Vec<_>>();
 
     hybrid_engine::quote_buy_exact_in_levels(
         hybrid_engine::PassiveState {
             sqrt_price_x64: market.sqrt_price_x64,
             liquidity: market.liquidity,
         },
-        &asks[..asks_page.len()],
-        &boundaries[..boundaries_page.len()],
+        &asks,
+        &boundaries,
         20_000,
     )
     .map(|_| ())
     .map_err(|_| ProgramError::InvalidInstructionData)
+}
+
+#[inline(never)]
+fn decode_and_push_ask_page(
+    account: &AccountInfo,
+    pages: &mut Vec<hybrid_state::AskPage>,
+) -> ProgramResult {
+    let data = account
+        .try_borrow_data()
+        .map_err(|_| ProgramError::AccountBorrowFailed)?;
+    let page = hybrid_state::AskPage::decode_from(&data)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    pages.push(page);
+    Ok(())
+}
+
+#[inline(never)]
+fn decode_and_push_boundary_page(
+    account: &AccountInfo,
+    pages: &mut Vec<hybrid_state::BoundaryPage>,
+) -> ProgramResult {
+    let data = account
+        .try_borrow_data()
+        .map_err(|_| ProgramError::AccountBorrowFailed)?;
+    let page = hybrid_state::BoundaryPage::decode_from(&data)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    pages.push(page);
+    Ok(())
 }
 
 #[inline(never)]
@@ -211,12 +235,7 @@ fn process_multipage_state_backed_match(
 
     let mut ask_pages = Vec::with_capacity(ask_page_count);
     for account in &accounts[1..1 + ask_page_count] {
-        let data = account
-            .try_borrow_data()
-            .map_err(|_| ProgramError::AccountBorrowFailed)?;
-        let page = hybrid_state::AskPage::decode_from(&data)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-        ask_pages.push(page);
+        decode_and_push_ask_page(account, &mut ask_pages)?;
     }
     hybrid_state::validate_ask_chain(&ask_pages).map_err(|_| ProgramError::InvalidAccountData)?;
     let ask_count = ask_pages
@@ -229,12 +248,7 @@ fn process_multipage_state_backed_match(
 
     let mut boundary_pages = Vec::with_capacity(boundary_page_count);
     for account in &accounts[boundary_start..] {
-        let data = account
-            .try_borrow_data()
-            .map_err(|_| ProgramError::AccountBorrowFailed)?;
-        let page = hybrid_state::BoundaryPage::decode_from(&data)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-        boundary_pages.push(page);
+        decode_and_push_boundary_page(account, &mut boundary_pages)?;
     }
     hybrid_state::validate_boundary_chain(&boundary_pages)
         .map_err(|_| ProgramError::InvalidAccountData)?;
