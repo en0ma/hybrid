@@ -153,6 +153,11 @@ fn div_shift_64(remainder: u128, denominator: u128) -> Result<(u128, u128), Quot
         return Err(QuoteError::Overflow);
     }
 
+    if remainder <= u128::from(u64::MAX) {
+        let numerator = remainder << 64;
+        return Ok((numerator / denominator, numerator % denominator));
+    }
+
     let mut quotient = 0u128;
     let mut rem = remainder;
     for _ in 0..64 {
@@ -190,6 +195,14 @@ fn passive_base_delta(
     let start_quotient = scaled_delta / start_sqrt_x64;
     let start_remainder = scaled_delta % start_sqrt_x64;
     let (fraction_x64, _) = div_shift_64(start_remainder, start_sqrt_x64)?;
+
+    if start_quotient <= u128::from(u64::MAX) {
+        let scaled = start_quotient
+            .checked_mul(Q64)
+            .and_then(|value| value.checked_add(fraction_x64))
+            .ok_or(QuoteError::Overflow)?;
+        return Ok(scaled / end_sqrt_x64);
+    }
 
     let end_quotient = start_quotient / end_sqrt_x64;
     let end_remainder = start_quotient % end_sqrt_x64;
