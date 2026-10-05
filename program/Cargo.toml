@@ -16,6 +16,7 @@ test-sbf = []
 hybrid-engine.workspace = true
 hybrid-state.workspace = true
 solana-program.workspace = true
+solana-system-interface.workspace = true
 
 [dev-dependencies]
 solana-program-test.workspace = true
