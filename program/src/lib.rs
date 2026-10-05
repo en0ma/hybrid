@@ -89,6 +89,7 @@ pub fn process_instruction(
     }
 }
 
+#[inline(never)]
 fn process_state_backed_match(accounts: &[AccountInfo]) -> ProgramResult {
     if accounts.len() != 3 {
         return Err(ProgramError::NotEnoughAccountKeys);
@@ -146,6 +147,7 @@ fn process_state_backed_match(accounts: &[AccountInfo]) -> ProgramResult {
     .map_err(|_| ProgramError::InvalidInstructionData)
 }
 
+#[inline(never)]
 fn process_multipage_state_backed_match(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -221,7 +223,7 @@ fn process_multipage_state_backed_match(
         .iter()
         .map(hybrid_state::AskPage::len)
         .sum::<usize>();
-    if ask_count > hybrid_state::ASKS_PER_PAGE {
+    if ask_count > hybrid_state::ASKS_PER_PAGE / 2 {
         return Err(ProgramError::InvalidInstructionData);
     }
 
@@ -240,7 +242,7 @@ fn process_multipage_state_backed_match(
         .iter()
         .map(hybrid_state::BoundaryPage::len)
         .sum::<usize>();
-    if boundary_count > hybrid_state::BOUNDARIES_PER_PAGE {
+    if boundary_count > hybrid_state::BOUNDARIES_PER_PAGE / 2 {
         return Err(ProgramError::InvalidInstructionData);
     }
 
