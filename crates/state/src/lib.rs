@@ -491,7 +491,11 @@ impl AskOwnerPage {
         if self.len != asks.len || self.links() != asks.links() {
             return Err(StateError::Corrupt);
         }
-        if self.as_slice().iter().any(|owner| *owner == [0; ASK_OWNER_BYTES]) {
+        if self
+            .as_slice()
+            .iter()
+            .any(|owner| *owner == [0; ASK_OWNER_BYTES])
+        {
             return Err(StateError::InvalidOwner);
         }
         if self.owners[self.len()..]
@@ -593,7 +597,11 @@ pub fn insert_owned_ask(
     }
 
     entry.validate()?;
-    if asks.as_slice().iter().any(|existing| existing.sequence == entry.sequence) {
+    if asks
+        .as_slice()
+        .iter()
+        .any(|existing| existing.sequence == entry.sequence)
+    {
         return Err(StateError::DuplicateSequence);
     }
 
