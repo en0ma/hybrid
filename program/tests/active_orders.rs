@@ -47,10 +47,8 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
         &[b"ask-page", market_key.as_ref(), &0u32.to_le_bytes()],
         &ID,
     );
-    let (owner_key, _) = Pubkey::find_program_address(
-        &[b"ask-owner-page", market_key.as_ref(), &0u32.to_le_bytes()],
-        &ID,
-    );
+    let owner_page = Keypair::new();
+    let owner_key = owner_page.pubkey();
     let maker = Keypair::new();
     let other = Keypair::new();
 
@@ -71,21 +69,24 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
 
     let mut context = program_test.start_with_context().await;
 
-    let init = Instruction {
-        program_id: ID,
+    let mut create_data = Vec::with_capacity(52);
+    create_data.extend_from_slice(&0u32.to_le_bytes());
+    create_data.extend_from_slice(&10_000_000u64.to_le_bytes());
+    create_data.extend_from_slice(&(ASK_OWNER_PAGE_BYTES as u64).to_le_bytes());
+    create_data.extend_from_slice(ID.as_ref());
+    let create_owner_page = Instruction {
+        program_id: Pubkey::default(),
         accounts: vec![
-            AccountMeta::new_readonly(market_key, false),
-            AccountMeta::new(owner_key, false),
             AccountMeta::new(context.payer.pubkey(), true),
-            AccountMeta::new_readonly(Pubkey::default(), false),
+            AccountMeta::new(owner_key, true),
         ],
-        data: vec![8],
+        data: create_data,
     };
     let blockhash = context.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
-        &[init],
+        &[create_owner_page],
         Some(&context.payer.pubkey()),
-        &[&context.payer],
+        &[&context.payer, &owner_page],
         blockhash,
     );
     context.banks_client.process_transaction(tx).await.unwrap();
@@ -140,6 +141,7 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
     let market = MarketHeader::decode_from(&stored_market.data).unwrap();
     assert_eq!(market.ask_count, 1);
     assert_eq!(market.next_sequence, 2);
+    assert_eq!(market.reserved2, owner_key.to_bytes());
 
     let stored_asks = context
         .banks_client
@@ -215,16 +217,18 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
 }
 
 #[tokio::test]
-async fn place_rejects_wrong_sidecar_pda_and_missing_signature() {
+async fn place_rejects_replacement_sidecar_and_missing_signature() {
     let market_key = Pubkey::new_unique();
     let (ask_key, _) = Pubkey::find_program_address(
         &[b"ask-page", market_key.as_ref(), &0u32.to_le_bytes()],
         &ID,
     );
+    let bound_owner_key = Pubkey::new_unique();
     let wrong_owner_key = Pubkey::new_unique();
     let maker = Keypair::new();
 
-    let market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    market.reserved2 = bound_owner_key.to_bytes();
     let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
     market.encode_into(&mut market_data).unwrap();
 
@@ -241,11 +245,12 @@ async fn place_rejects_wrong_sidecar_pda_and_missing_signature() {
     let mut program_test = ProgramTest::new("hybrid_program", ID, None);
     program_test.add_account(market_key, account(market_data, ID));
     program_test.add_account(ask_key, account(ask_data, ID));
+    program_test.add_account(bound_owner_key, account(owner_data.clone(), ID));
     program_test.add_account(wrong_owner_key, account(owner_data, ID));
     program_test.add_account(maker.pubkey(), account(Vec::new(), Pubkey::default()));
     let mut context = program_test.start_with_context().await;
 
-    let wrong_pda = Instruction {
+    let replacement_sidecar = Instruction {
         program_id: ID,
         accounts: vec![
             AccountMeta::new(market_key, false),
@@ -257,7 +262,7 @@ async fn place_rejects_wrong_sidecar_pda_and_missing_signature() {
     };
     let blockhash = context.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
-        &[wrong_pda],
+        &[replacement_sidecar],
         Some(&context.payer.pubkey()),
         &[&context.payer, &maker],
         blockhash,
@@ -269,7 +274,7 @@ async fn place_rejects_wrong_sidecar_pda_and_missing_signature() {
         accounts: vec![
             AccountMeta::new(market_key, false),
             AccountMeta::new(ask_key, false),
-            AccountMeta::new(wrong_owner_key, false),
+            AccountMeta::new(bound_owner_key, false),
             AccountMeta::new_readonly(maker.pubkey(), false),
         ],
         data: place_data(Q64, Q64, 10),
