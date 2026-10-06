@@ -4,7 +4,7 @@ Hybrid is a Solana-native hybrid order-book protocol: explicit CLOB orders plus 
 
 ## V0 active-order lifecycle
 
-Before the first maker order is placed, opcode `8` creates the page-0 owner-sidecar PDA. The payer funds rent, the program signs for the PDA, and the new account is assigned to Hybrid and initialized with page-0 links.
+Before the first maker order is placed, the client creates a normal account owned by Hybrid with exactly `ASK_OWNER_PAGE_BYTES` bytes. On the first placement, Hybrid binds that account public key into the market header's existing 32-byte reserved field.
 
 Hybrid keeps price-time matching data and maker ownership data in separate pages.
 
@@ -31,12 +31,12 @@ Accounts:
 
 1. writable market account, owned by Hybrid
 2. writable ask-page PDA
-3. writable ask-owner-page PDA
+3. writable Hybrid-owned ask-owner sidecar account
 4. maker signer
 
 The ask-page PDA uses `["ask-page", market, page_index_le]`.
 
-The owner-page PDA uses `["ask-owner-page", market, page_index_le]`.
+The owner sidecar does not use a PDA. A client creates the account with the System Program and sets Hybrid as the owner. The first successful placement binds its public key to the market. Later placement and cancellation instructions require the same bound account.
 
 The program allocates the order sequence from `MarketHeader.next_sequence`, inserts by price-time priority, increments `ask_count`, and persists both pages.
 
@@ -62,17 +62,3 @@ This is a bounded V0 mutation path.
 - Token custody and maker deposit accounting are not implemented yet.
 - Matching remains read-only in the current state-backed probe instructions.
 
-### Initialize ask owner page
-
-Opcode: `8`
-
-Instruction data is exactly one byte.
-
-Accounts:
-
-1. read-only Hybrid-owned market account
-2. writable page-0 ask-owner PDA to create
-3. writable payer signer
-4. system program
-
-Initialization is allowed only while `MarketHeader.ask_count == 0`. This prevents creating an empty ownership sidecar after live asks already exist.
