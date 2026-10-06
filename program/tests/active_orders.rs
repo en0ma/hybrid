@@ -305,7 +305,6 @@ async fn place_rejects_replacement_sidecar_and_missing_signature() {
     assert!(context.banks_client.process_transaction(tx).await.is_err());
 }
 
-
 #[tokio::test]
 async fn bid_place_cancel_preserves_descending_book_and_owner_binding() {
     let market_key = Pubkey::new_unique();
