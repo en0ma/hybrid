@@ -146,8 +146,8 @@ fn decode_and_push_ask_page(
     let data = account
         .try_borrow_data()
         .map_err(|_| ProgramError::AccountBorrowFailed)?;
-    let page = hybrid_state::AskPage::decode_from(&data)
-        .map_err(|_| ProgramError::InvalidAccountData)?;
+    let page =
+        hybrid_state::AskPage::decode_from(&data).map_err(|_| ProgramError::InvalidAccountData)?;
     pages.push(page);
     Ok(())
 }
