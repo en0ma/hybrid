@@ -366,8 +366,8 @@ fn process_active_order(
     let ask_data = accounts[1]
         .try_borrow_data()
         .map_err(|_| ProgramError::AccountBorrowFailed)?;
-    let page =
-        hybrid_state::AskPage::decode_from(&ask_data).map_err(|_| ProgramError::InvalidAccountData)?;
+    let page = hybrid_state::AskPage::decode_from(&ask_data)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
     drop(ask_data);
     let links = page.links();
     if links.page_index != 0 || links.prev_page.is_some() || links.next_page.is_some() {
