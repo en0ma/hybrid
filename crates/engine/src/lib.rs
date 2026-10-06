@@ -392,6 +392,22 @@ pub struct MultiLevelQuote {
     pub crossed_boundaries: u32,
 }
 
+pub const MAX_ACTIVE_FILLS: usize = 16;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ActiveFill {
+    pub ask_index: u16,
+    pub base_qty: u64,
+    pub quote_qty: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BuyExecutionPlan {
+    pub quote: MultiLevelQuote,
+    pub fill_count: u8,
+    pub fills: [ActiveFill; MAX_ACTIVE_FILLS],
+}
+
 fn fill_active_ask(ask: LimitAsk, remaining_quote: u64) -> Result<(u64, u64, bool), QuoteError> {
     validate_limit_ask(ask)?;
     let base_fill = base_for_quote_at_price(remaining_quote, ask.price_x64)?.min(ask.base_qty);
@@ -412,12 +428,13 @@ fn fill_active_ask(ask: LimitAsk, remaining_quote: u64) -> Result<(u64, u64, boo
 /// price. Boundaries must be strictly increasing by sqrt price. Explicit asks
 /// own equality: when passive marginal price reaches an ask, that resting order
 /// executes before passive liquidity may move above the price.
-pub fn quote_buy_exact_in_levels(
+fn match_buy_exact_in_levels(
     passive: PassiveState,
     asks: &[LimitAsk],
     boundaries: &[PassiveBoundary],
     quote_in: u64,
-) -> Result<MultiLevelQuote, QuoteError> {
+    mut fills: Option<&mut [ActiveFill; MAX_ACTIVE_FILLS]>,
+) -> Result<(MultiLevelQuote, usize), QuoteError> {
     if passive.liquidity == 0 {
         return Err(QuoteError::ZeroLiquidity);
     }
@@ -450,6 +467,7 @@ pub fn quote_buy_exact_in_levels(
     let mut passive_base_out = 0u64;
     let mut fully_consumed_asks = 0u32;
     let mut crossed_boundaries = 0u32;
+    let mut fill_count = 0usize;
 
     while remaining_quote > 0 {
         while ask_index < asks.len() && asks[ask_index].base_qty == 0 {
@@ -463,9 +481,21 @@ pub fn quote_buy_exact_in_levels(
 
         if let Some(ask) = next_ask {
             if ask.sqrt_price_x64 <= passive_state.sqrt_price_x64 {
+                let active_index = ask_index;
                 let (quote_used, base_fill, full) = fill_active_ask(ask, remaining_quote)?;
                 if base_fill == 0 {
                     break;
+                }
+                if let Some(plan) = fills.as_deref_mut() {
+                    if fill_count >= MAX_ACTIVE_FILLS {
+                        return Err(QuoteError::Overflow);
+                    }
+                    plan[fill_count] = ActiveFill {
+                        ask_index: u16::try_from(active_index).map_err(|_| QuoteError::Overflow)?,
+                        base_qty: base_fill,
+                        quote_qty: quote_used,
+                    };
+                    fill_count += 1;
                 }
                 remaining_quote -= quote_used;
                 active_base_out = active_base_out
@@ -533,17 +563,45 @@ pub fn quote_buy_exact_in_levels(
         }
     }
 
-    Ok(MultiLevelQuote {
-        amount_in: quote_in - remaining_quote,
-        amount_out: active_base_out
-            .checked_add(passive_base_out)
-            .ok_or(QuoteError::Overflow)?,
-        active_base_out,
-        passive_base_out,
-        next_sqrt_price_x64: passive_state.sqrt_price_x64,
-        final_liquidity: passive_state.liquidity,
-        fully_consumed_asks,
-        crossed_boundaries,
+    Ok((
+        MultiLevelQuote {
+            amount_in: quote_in - remaining_quote,
+            amount_out: active_base_out
+                .checked_add(passive_base_out)
+                .ok_or(QuoteError::Overflow)?,
+            active_base_out,
+            passive_base_out,
+            next_sqrt_price_x64: passive_state.sqrt_price_x64,
+            final_liquidity: passive_state.liquidity,
+            fully_consumed_asks,
+            crossed_boundaries,
+        },
+        fill_count,
+    ))
+}
+
+pub fn quote_buy_exact_in_levels(
+    passive: PassiveState,
+    asks: &[LimitAsk],
+    boundaries: &[PassiveBoundary],
+    quote_in: u64,
+) -> Result<MultiLevelQuote, QuoteError> {
+    match_buy_exact_in_levels(passive, asks, boundaries, quote_in, None).map(|(quote, _)| quote)
+}
+
+pub fn plan_buy_exact_in_levels(
+    passive: PassiveState,
+    asks: &[LimitAsk],
+    boundaries: &[PassiveBoundary],
+    quote_in: u64,
+) -> Result<BuyExecutionPlan, QuoteError> {
+    let mut fills = [ActiveFill::default(); MAX_ACTIVE_FILLS];
+    let (quote, fill_count) =
+        match_buy_exact_in_levels(passive, asks, boundaries, quote_in, Some(&mut fills))?;
+    Ok(BuyExecutionPlan {
+        quote,
+        fill_count: u8::try_from(fill_count).map_err(|_| QuoteError::Overflow)?,
+        fills,
     })
 }
 
@@ -734,6 +792,55 @@ mod tests {
         assert_eq!(q.active_base_out, 0);
         assert_eq!(q.remaining_active_base, 1);
     }
+    #[test]
+    fn execution_plan_matches_quote_and_records_active_fills() {
+        let asks = [
+            one_dollar_ask(100),
+            one_dollar_ask(200),
+            LimitAsk {
+                price_x64: spot_price_x64(Q64 + Q64 / 100).unwrap(),
+                sqrt_price_x64: Q64 + Q64 / 100,
+                base_qty: 500,
+            },
+        ];
+        let passive = PassiveState {
+            sqrt_price_x64: Q64,
+            liquidity: 1_000_000,
+        };
+        let quote = quote_buy_exact_in_levels(passive, &asks, &[], 250).unwrap();
+        let plan = plan_buy_exact_in_levels(passive, &asks, &[], 250).unwrap();
+
+        assert_eq!(plan.quote, quote);
+        assert_eq!(plan.fill_count, 2);
+        assert_eq!(
+            &plan.fills[..usize::from(plan.fill_count)],
+            &[
+                ActiveFill {
+                    ask_index: 0,
+                    base_qty: 100,
+                    quote_qty: 100,
+                },
+                ActiveFill {
+                    ask_index: 1,
+                    base_qty: 150,
+                    quote_qty: 150,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn execution_plan_keeps_passive_only_trade_fill_free() {
+        let passive = PassiveState {
+            sqrt_price_x64: Q64,
+            liquidity: 1_000_000,
+        };
+        let plan = plan_buy_exact_in_levels(passive, &[], &[], 500).unwrap();
+        assert_eq!(plan.fill_count, 0);
+        assert_eq!(plan.quote.active_base_out, 0);
+        assert!(plan.quote.passive_base_out > 0);
+    }
+
     #[test]
     fn multilevel_consumes_equal_price_asks_in_slice_time_order() {
         let asks = [
