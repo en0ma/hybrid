@@ -440,8 +440,7 @@ fn process_active_order(
                     .try_borrow_mut_data()
                     .map_err(|_| ProgramError::AccountBorrowFailed)?;
                 insert_slot(&mut ask_data, index, old_len, hybrid_state::ASK_ENTRY_BYTES);
-                let start =
-                    hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_ENTRY_BYTES;
+                let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_ENTRY_BYTES;
                 ask_data[start..start + 16].copy_from_slice(&entry.price_x64.to_le_bytes());
                 ask_data[start + 16..start + 32]
                     .copy_from_slice(&entry.sqrt_price_x64.to_le_bytes());
@@ -453,8 +452,7 @@ fn process_active_order(
                     .try_borrow_mut_data()
                     .map_err(|_| ProgramError::AccountBorrowFailed)?;
                 insert_slot(&mut owners, index, old_len, hybrid_state::ASK_OWNER_BYTES);
-                let start =
-                    hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_OWNER_BYTES;
+                let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_OWNER_BYTES;
                 owners[start..start + hybrid_state::ASK_OWNER_BYTES]
                     .copy_from_slice(accounts[3].key.as_ref());
             }
