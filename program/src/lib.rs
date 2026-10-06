@@ -327,12 +327,7 @@ fn remove_owner_bytes(data: &mut [u8], index: usize, old_len: usize) {
     data[..2].copy_from_slice(&((old_len - 1) as u16).to_le_bytes());
 }
 
-fn insert_ask_bytes(
-    data: &mut [u8],
-    index: usize,
-    old_len: usize,
-    entry: hybrid_state::AskEntry,
-) {
+fn insert_ask_bytes(data: &mut [u8], index: usize, old_len: usize, entry: hybrid_state::AskEntry) {
     let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_ENTRY_BYTES;
     let end = hybrid_state::PAGE_HEADER_BYTES + old_len * hybrid_state::ASK_ENTRY_BYTES;
     data.copy_within(start..end, start + hybrid_state::ASK_ENTRY_BYTES);
@@ -512,8 +507,7 @@ fn process_active_order(
                 let owners = accounts[2]
                     .try_borrow_data()
                     .map_err(|_| ProgramError::AccountBorrowFailed)?;
-                let start =
-                    hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_OWNER_BYTES;
+                let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_OWNER_BYTES;
                 if owners[start..start + hybrid_state::ASK_OWNER_BYTES]
                     != accounts[3].key.to_bytes()
                 {
