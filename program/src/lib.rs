@@ -416,8 +416,7 @@ fn remove_ask_bytes(data: &mut [u8], index: usize, old_len: usize) {
     let source = start + hybrid_state::ASK_ENTRY_BYTES;
     let end = hybrid_state::PAGE_HEADER_BYTES + old_len * hybrid_state::ASK_ENTRY_BYTES;
     data.copy_within(source..end, start);
-    let tail =
-        hybrid_state::PAGE_HEADER_BYTES + (old_len - 1) * hybrid_state::ASK_ENTRY_BYTES;
+    let tail = hybrid_state::PAGE_HEADER_BYTES + (old_len - 1) * hybrid_state::ASK_ENTRY_BYTES;
     data[tail..tail + hybrid_state::ASK_ENTRY_BYTES].fill(0);
     data[..2].copy_from_slice(&((old_len - 1) as u16).to_le_bytes());
 }
