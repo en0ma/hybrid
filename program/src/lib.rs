@@ -317,8 +317,7 @@ fn remove_slot(data: &mut [u8], index: usize, old_len: usize, width: usize) {
 
 #[inline(never)]
 fn load_active_ask_page(account: &AccountInfo) -> Result<Box<hybrid_state::AskPage>, ProgramError> {
-    let data = account
-        .try_borrow_data()?;
+    let data = account.try_borrow_data()?;
     let page =
         hybrid_state::AskPage::decode_from(&data).map_err(|_| ProgramError::InvalidAccountData)?;
     Ok(Box::new(page))
@@ -355,8 +354,7 @@ fn process_active_order(
         return Err(ProgramError::InvalidSeeds);
     }
 
-    let market_data = accounts[0]
-        .try_borrow_data()?;
+    let market_data = accounts[0].try_borrow_data()?;
     let market = hybrid_state::MarketHeader::decode_from(&market_data)
         .map_err(|_| ProgramError::InvalidAccountData)?;
     drop(market_data);
@@ -367,8 +365,7 @@ fn process_active_order(
         return Err(ProgramError::InvalidAccountData);
     }
 
-    let owner_data = accounts[2]
-        .try_borrow_data()?;
+    let owner_data = accounts[2].try_borrow_data()?;
     validate_owner_page_bytes(&owner_data, &page)?;
     drop(owner_data);
 
@@ -437,8 +434,7 @@ fn process_active_order(
             let old_len = page.len();
 
             {
-                let mut ask_data = accounts[1]
-                    .try_borrow_mut_data()?;
+                let mut ask_data = accounts[1].try_borrow_mut_data()?;
                 insert_slot(&mut ask_data, index, old_len, hybrid_state::ASK_ENTRY_BYTES);
                 let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_ENTRY_BYTES;
                 ask_data[start..start + 16].copy_from_slice(&entry.price_x64.to_le_bytes());
@@ -448,16 +444,14 @@ fn process_active_order(
                 ask_data[start + 40..start + 48].copy_from_slice(&entry.sequence.to_le_bytes());
             }
             {
-                let mut owners = accounts[2]
-                    .try_borrow_mut_data()?;
+                let mut owners = accounts[2].try_borrow_mut_data()?;
                 insert_slot(&mut owners, index, old_len, hybrid_state::ASK_OWNER_BYTES);
                 let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_OWNER_BYTES;
                 owners[start..start + hybrid_state::ASK_OWNER_BYTES]
                     .copy_from_slice(accounts[3].key.as_ref());
             }
             {
-                let mut market_bytes = accounts[0]
-                    .try_borrow_mut_data()?;
+                let mut market_bytes = accounts[0].try_borrow_mut_data()?;
                 market_bytes[12..16].copy_from_slice(&next_count.to_le_bytes());
                 market_bytes[32..40].copy_from_slice(&next_sequence.to_le_bytes());
                 if market.reserved2 == [0; 32] {
@@ -503,18 +497,15 @@ fn process_active_order(
             let old_len = page.len();
 
             {
-                let mut ask_data = accounts[1]
-                    .try_borrow_mut_data()?;
+                let mut ask_data = accounts[1].try_borrow_mut_data()?;
                 remove_slot(&mut ask_data, index, old_len, hybrid_state::ASK_ENTRY_BYTES);
             }
             {
-                let mut owners = accounts[2]
-                    .try_borrow_mut_data()?;
+                let mut owners = accounts[2].try_borrow_mut_data()?;
                 remove_slot(&mut owners, index, old_len, hybrid_state::ASK_OWNER_BYTES);
             }
             {
-                let mut market_bytes = accounts[0]
-                    .try_borrow_mut_data()?;
+                let mut market_bytes = accounts[0].try_borrow_mut_data()?;
                 market_bytes[12..16].copy_from_slice(&next_count.to_le_bytes());
             }
             Ok(())
