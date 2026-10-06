@@ -461,8 +461,7 @@ fn process_place_ask(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8])
         base_qty,
         sequence,
     };
-    entry
-        .validate()
+    hybrid_engine::validate_limit_ask(entry.as_limit_ask())
         .map_err(|_| ProgramError::InvalidInstructionData)?;
 
     let page = &ask_pages[0];
