@@ -24,8 +24,6 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tools-version = "v1.57"
 
 [profile.release]
-strip = "symbols"
-
-[profile.release.package.hybrid-program]
 opt-level = "z"
+strip = "symbols"
 codegen-units = 1
