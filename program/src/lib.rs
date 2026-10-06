@@ -316,6 +316,16 @@ fn remove_slot(data: &mut [u8], index: usize, old_len: usize, width: usize) {
 }
 
 #[inline(never)]
+fn load_active_ask_page(account: &AccountInfo) -> Result<Box<hybrid_state::AskPage>, ProgramError> {
+    let data = account
+        .try_borrow_data()
+        .map_err(|_| ProgramError::AccountBorrowFailed)?;
+    let page =
+        hybrid_state::AskPage::decode_from(&data).map_err(|_| ProgramError::InvalidAccountData)?;
+    Ok(Box::new(page))
+}
+
+#[inline(never)]
 fn process_active_order(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -353,12 +363,7 @@ fn process_active_order(
         .map_err(|_| ProgramError::InvalidAccountData)?;
     drop(market_data);
 
-    let ask_data = accounts[1]
-        .try_borrow_data()
-        .map_err(|_| ProgramError::AccountBorrowFailed)?;
-    let page = hybrid_state::AskPage::decode_from(&ask_data)
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    drop(ask_data);
+    let page = load_active_ask_page(&accounts[1])?;
     let links = page.links();
     if links.page_index != 0 || links.prev_page.is_some() || links.next_page.is_some() {
         return Err(ProgramError::InvalidAccountData);
