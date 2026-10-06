@@ -25,3 +25,6 @@ tools-version = "v1.57"
 
 [profile.release]
 strip = "symbols"
+
+[profile.release.package.hybrid-program]
+opt-level = "z"
