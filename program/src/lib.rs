@@ -367,8 +367,9 @@ fn process_active_order(
     }
 
     let owner_data = accounts[2].try_borrow_data()?;
-    let owner_page_uninitialized =
-        market.reserved2 == [0; 32] && market.ask_count == 0 && owner_data.iter().all(|byte| *byte == 0);
+    let owner_page_uninitialized = market.reserved2 == [0; 32]
+        && market.ask_count == 0
+        && owner_data.iter().all(|byte| *byte == 0);
     if !owner_page_uninitialized {
         validate_owner_page_bytes(&owner_data, &page)?;
     }
