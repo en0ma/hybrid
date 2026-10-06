@@ -475,6 +475,10 @@ impl AskOwnerPage {
         usize::from(self.len)
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub fn links(&self) -> PageLinks {
         PageLinks::decode_from(&self.reserved)
     }
@@ -491,11 +495,7 @@ impl AskOwnerPage {
         if self.len != asks.len || self.links() != asks.links() {
             return Err(StateError::Corrupt);
         }
-        if self
-            .as_slice()
-            .iter()
-            .any(|owner| *owner == [0; ASK_OWNER_BYTES])
-        {
+        if self.as_slice().contains(&[0; ASK_OWNER_BYTES]) {
             return Err(StateError::InvalidOwner);
         }
         if self.owners[self.len()..]
