@@ -290,11 +290,7 @@ fn process_multipage_state_backed_match(
     .map_err(|_| ProgramError::InvalidInstructionData)
 }
 
-fn validate_owner_page_header(
-    data: &[u8],
-    len: usize,
-    reserved: &[u8; 14],
-) -> ProgramResult {
+fn validate_owner_page_header(data: &[u8], len: usize, reserved: &[u8; 14]) -> ProgramResult {
     if data.len() != hybrid_state::ASK_OWNER_PAGE_BYTES {
         return Err(ProgramError::InvalidAccountData);
     }
@@ -653,8 +649,7 @@ fn process_active_bid_order(
                     return Err(ProgramError::InvalidInstructionData);
                 }
                 if existing.price_x64 < entry.price_x64
-                    || (existing.price_x64 == entry.price_x64
-                        && existing.sequence > entry.sequence)
+                    || (existing.price_x64 == entry.price_x64 && existing.sequence > entry.sequence)
                 {
                     break;
                 }
@@ -796,4 +791,3 @@ fn process_state_backed_plan(accounts: &[AccountInfo]) -> ProgramResult {
     .map(|_| ())
     .map_err(|_| ProgramError::InvalidInstructionData)
 }
-
