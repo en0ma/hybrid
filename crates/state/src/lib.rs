@@ -669,7 +669,6 @@ pub fn cancel_owned_ask(
     Ok(removed)
 }
 
-
 pub type BidEntry = AskEntry;
 
 #[repr(C)]
@@ -838,8 +837,7 @@ impl BidPage {
         }
         for pair in slice.windows(2) {
             if pair[0].price_x64 < pair[1].price_x64
-                || (pair[0].price_x64 == pair[1].price_x64
-                    && pair[0].sequence >= pair[1].sequence)
+                || (pair[0].price_x64 == pair[1].price_x64 && pair[0].sequence >= pair[1].sequence)
             {
                 return Err(StateError::Corrupt);
             }
