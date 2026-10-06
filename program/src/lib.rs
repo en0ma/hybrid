@@ -1,8 +1,9 @@
 #![allow(unexpected_cfgs)]
 
 use solana_program::{
-    account_info::AccountInfo, declare_id, entrypoint::ProgramResult, program::invoke_signed,
-    program_error::ProgramError, pubkey::Pubkey, rent::Rent, sysvar::Sysvar,
+    account_info::AccountInfo, declare_id, entrypoint::ProgramResult,
+    instruction::{AccountMeta, Instruction}, program::invoke_signed, program_error::ProgramError,
+    pubkey::Pubkey, rent::Rent, sysvar::Sysvar,
 };
 
 declare_id!("US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx");
@@ -150,20 +151,6 @@ fn decode_and_push_ask_page(
         .map_err(|_| ProgramError::AccountBorrowFailed)?;
     let page =
         hybrid_state::AskPage::decode_from(&data).map_err(|_| ProgramError::InvalidAccountData)?;
-    pages.push(page);
-    Ok(())
-}
-
-#[inline(never)]
-fn decode_and_push_ask_owner_page(
-    account: &AccountInfo,
-    pages: &mut Vec<hybrid_state::AskOwnerPage>,
-) -> ProgramResult {
-    let data = account
-        .try_borrow_data()
-        .map_err(|_| ProgramError::AccountBorrowFailed)?;
-    let page = hybrid_state::AskOwnerPage::decode_from(&data)
-        .map_err(|_| ProgramError::InvalidAccountData)?;
     pages.push(page);
     Ok(())
 }
@@ -342,17 +329,53 @@ fn require_active_order_accounts(
     Ok(accounts[3].key.to_bytes())
 }
 
+fn validate_owner_page_bytes(
+    data: &[u8],
+    asks: &hybrid_state::AskPage,
+) -> ProgramResult {
+    if data.len() != hybrid_state::ASK_OWNER_PAGE_BYTES {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let len = usize::from(u16::from_le_bytes([data[0], data[1]]));
+    if len != asks.len() || data[2..16] != asks.reserved {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    for index in 0..hybrid_state::ASKS_PER_PAGE {
+        let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_OWNER_BYTES;
+        let zero = data[start..start + hybrid_state::ASK_OWNER_BYTES]
+            .iter()
+            .all(|byte| *byte == 0);
+        if (index < len && zero) || (index >= len && !zero) {
+            return Err(ProgramError::InvalidAccountData);
+        }
+    }
+    Ok(())
+}
+
+fn insert_owner_bytes(data: &mut [u8], index: usize, old_len: usize, owner: [u8; 32]) {
+    let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_OWNER_BYTES;
+    let end = hybrid_state::PAGE_HEADER_BYTES + old_len * hybrid_state::ASK_OWNER_BYTES;
+    data.copy_within(start..end, start + hybrid_state::ASK_OWNER_BYTES);
+    data[start..start + hybrid_state::ASK_OWNER_BYTES].copy_from_slice(&owner);
+    data[..2].copy_from_slice(&((old_len + 1) as u16).to_le_bytes());
+}
+
+fn remove_owner_bytes(data: &mut [u8], index: usize, old_len: usize) {
+    let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_OWNER_BYTES;
+    let source = start + hybrid_state::ASK_OWNER_BYTES;
+    let end = hybrid_state::PAGE_HEADER_BYTES + old_len * hybrid_state::ASK_OWNER_BYTES;
+    data.copy_within(source..end, start);
+    let tail = hybrid_state::PAGE_HEADER_BYTES
+        + (old_len - 1) * hybrid_state::ASK_OWNER_BYTES;
+    data[tail..tail + hybrid_state::ASK_OWNER_BYTES].fill(0);
+    data[..2].copy_from_slice(&((old_len - 1) as u16).to_le_bytes());
+}
+
 #[inline(never)]
 fn load_active_order_state(
     accounts: &[AccountInfo],
-) -> Result<
-    (
-        hybrid_state::MarketHeader,
-        Vec<hybrid_state::AskPage>,
-        Vec<hybrid_state::AskOwnerPage>,
-    ),
-    ProgramError,
-> {
+) -> Result<(hybrid_state::MarketHeader, Vec<hybrid_state::AskPage>), ProgramError> {
     let market_data = accounts[0]
         .try_borrow_data()
         .map_err(|_| ProgramError::AccountBorrowFailed)?;
@@ -364,11 +387,11 @@ fn load_active_order_state(
     decode_and_push_ask_page(&accounts[1], &mut ask_pages)?;
     hybrid_state::validate_ask_chain(&ask_pages).map_err(|_| ProgramError::InvalidAccountData)?;
 
-    let mut owner_pages = Vec::with_capacity(1);
-    decode_and_push_ask_owner_page(&accounts[2], &mut owner_pages)?;
-    owner_pages[0]
-        .validate_parallel(&ask_pages[0])
-        .map_err(|_| ProgramError::InvalidAccountData)?;
+    let owner_data = accounts[2]
+        .try_borrow_data()
+        .map_err(|_| ProgramError::AccountBorrowFailed)?;
+    validate_owner_page_bytes(&owner_data, &ask_pages[0])?;
+    drop(owner_data);
 
     if usize::try_from(market.ask_count).map_err(|_| ProgramError::InvalidAccountData)?
         != ask_pages[0].len()
@@ -376,14 +399,13 @@ fn load_active_order_state(
         return Err(ProgramError::InvalidAccountData);
     }
 
-    Ok((market, ask_pages, owner_pages))
+    Ok((market, ask_pages))
 }
 
 fn store_active_order_state(
     accounts: &[AccountInfo],
     market: &hybrid_state::MarketHeader,
     asks: &hybrid_state::AskPage,
-    owners: &hybrid_state::AskOwnerPage,
 ) -> ProgramResult {
     {
         let mut data = accounts[0]
@@ -398,14 +420,6 @@ fn store_active_order_state(
             .try_borrow_mut_data()
             .map_err(|_| ProgramError::AccountBorrowFailed)?;
         asks.encode_into(&mut data)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-    }
-    {
-        let mut data = accounts[2]
-            .try_borrow_mut_data()
-            .map_err(|_| ProgramError::AccountBorrowFailed)?;
-        owners
-            .encode_into(&mut data)
             .map_err(|_| ProgramError::InvalidAccountData)?;
     }
     Ok(())
@@ -433,7 +447,7 @@ fn process_place_ask(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8])
             .map_err(|_| ProgramError::InvalidInstructionData)?,
     );
 
-    let (mut market, mut ask_pages, mut owner_pages) = load_active_order_state(accounts)?;
+    let (mut market, mut ask_pages) = load_active_order_state(accounts)?;
     let sequence = market.next_sequence;
     if sequence == 0 || base_qty == 0 {
         return Err(ProgramError::InvalidInstructionData);
@@ -446,22 +460,26 @@ fn process_place_ask(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8])
         .checked_add(1)
         .ok_or(ProgramError::InvalidInstructionData)?;
 
-    hybrid_state::insert_owned_ask(
-        &mut ask_pages[0],
-        &mut owner_pages[0],
-        hybrid_state::AskEntry {
+    let old_len = ask_pages[0].len();
+    let index = ask_pages[0]
+        .insert(hybrid_state::AskEntry {
             price_x64,
             sqrt_price_x64,
             base_qty,
             sequence,
-        },
-        owner,
-    )
-    .map_err(|_| ProgramError::InvalidInstructionData)?;
+        })
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+    {
+        let mut owner_data = accounts[2]
+            .try_borrow_mut_data()
+            .map_err(|_| ProgramError::AccountBorrowFailed)?;
+        insert_owner_bytes(&mut owner_data, index, old_len, owner);
+        validate_owner_page_bytes(&owner_data, &ask_pages[0])?;
+    }
 
     market.next_sequence = next_sequence;
     market.ask_count = next_count;
-    store_active_order_state(accounts, &market, &ask_pages[0], &owner_pages[0])
+    store_active_order_state(accounts, &market, &ask_pages[0])
 }
 
 #[inline(never)]
@@ -479,19 +497,39 @@ fn process_cancel_ask(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
         return Err(ProgramError::InvalidInstructionData);
     }
 
-    let (mut market, mut ask_pages, mut owner_pages) = load_active_order_state(accounts)?;
-    hybrid_state::cancel_owned_ask(&mut ask_pages[0], &mut owner_pages[0], sequence, owner)
-        .map_err(|error| match error {
-            hybrid_state::StateError::Unauthorized => ProgramError::InvalidArgument,
-            hybrid_state::StateError::NotFound => ProgramError::InvalidInstructionData,
-            _ => ProgramError::InvalidAccountData,
-        })?;
+    let (mut market, mut ask_pages) = load_active_order_state(accounts)?;
+    let index = ask_pages[0]
+        .as_slice()
+        .iter()
+        .position(|entry| entry.sequence == sequence)
+        .ok_or(ProgramError::InvalidInstructionData)?;
+    {
+        let owner_data = accounts[2]
+            .try_borrow_data()
+            .map_err(|_| ProgramError::AccountBorrowFailed)?;
+        let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_OWNER_BYTES;
+        if owner_data[start..start + hybrid_state::ASK_OWNER_BYTES] != owner {
+            return Err(ProgramError::InvalidArgument);
+        }
+    }
+
+    let old_len = ask_pages[0].len();
+    ask_pages[0]
+        .remove_by_sequence(sequence)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+    {
+        let mut owner_data = accounts[2]
+            .try_borrow_mut_data()
+            .map_err(|_| ProgramError::AccountBorrowFailed)?;
+        remove_owner_bytes(&mut owner_data, index, old_len);
+        validate_owner_page_bytes(&owner_data, &ask_pages[0])?;
+    }
+
     market.ask_count = market
         .ask_count
         .checked_sub(1)
         .ok_or(ProgramError::InvalidAccountData)?;
-
-    store_active_order_state(accounts, &market, &ask_pages[0], &owner_pages[0])
+    store_active_order_state(accounts, &market, &ask_pages[0])
 }
 
 #[inline(never)]
@@ -515,7 +553,7 @@ fn process_init_ask_owner_page(
     if !payer.is_signer || !payer.is_writable || !owner_page.is_writable {
         return Err(ProgramError::MissingRequiredSignature);
     }
-    if *system_program.key != solana_system_interface::program::ID {
+    if *system_program.key != Pubkey::default() {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -543,13 +581,19 @@ fn process_init_ask_owner_page(
 
     let rent = Rent::get()?;
     let lamports = rent.minimum_balance(hybrid_state::ASK_OWNER_PAGE_BYTES);
-    let create = solana_system_interface::instruction::create_account(
-        payer.key,
-        owner_page.key,
-        lamports,
-        hybrid_state::ASK_OWNER_PAGE_BYTES as u64,
-        program_id,
-    );
+    let mut create_data = Vec::with_capacity(52);
+    create_data.extend_from_slice(&0u32.to_le_bytes());
+    create_data.extend_from_slice(&lamports.to_le_bytes());
+    create_data.extend_from_slice(&(hybrid_state::ASK_OWNER_PAGE_BYTES as u64).to_le_bytes());
+    create_data.extend_from_slice(program_id.as_ref());
+    let create = Instruction {
+        program_id: Pubkey::default(),
+        accounts: vec![
+            AccountMeta::new(*payer.key, true),
+            AccountMeta::new(*owner_page.key, true),
+        ],
+        data: create_data,
+    };
     invoke_signed(
         &create,
         &[payer.clone(), owner_page.clone(), system_program.clone()],
@@ -561,11 +605,13 @@ fn process_init_ask_owner_page(
         ]],
     )?;
 
-    let mut page = hybrid_state::AskOwnerPage::default();
-    page.set_links(hybrid_state::PageLinks::new(0, None, None));
-    let mut owner_data = owner_page
-        .try_borrow_mut_data()
+    let owner_data = owner_page
+        .try_borrow_data()
         .map_err(|_| ProgramError::AccountBorrowFailed)?;
-    page.encode_into(&mut owner_data)
-        .map_err(|_| ProgramError::InvalidAccountData)
+    if owner_data.len() != hybrid_state::ASK_OWNER_PAGE_BYTES
+        || owner_data.iter().any(|byte| *byte != 0)
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    Ok(())
 }
