@@ -28,3 +28,4 @@ strip = "symbols"
 
 [profile.release.package.hybrid-program]
 opt-level = "z"
+codegen-units = 1
