@@ -289,13 +289,11 @@ async fn units_for_active_order_mutation(cancel: bool) -> u64 {
         &[b"ask-page", market_key.as_ref(), &0u32.to_le_bytes()],
         &ID,
     );
-    let (owner_key, _) = Pubkey::find_program_address(
-        &[b"ask-owner-page", market_key.as_ref(), &0u32.to_le_bytes()],
-        &ID,
-    );
+    let owner_key = Pubkey::new_unique();
     let maker = Keypair::new();
 
     let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    market.reserved2 = owner_key.to_bytes();
     let mut asks = AskPage::default();
     asks.set_links(PageLinks::new(0, None, None));
     let mut owners = AskOwnerPage::default();
