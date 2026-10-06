@@ -309,42 +309,19 @@ fn validate_owner_page_bytes(data: &[u8], asks: &hybrid_state::AskPage) -> Progr
     Ok(())
 }
 
-fn insert_owner_bytes(data: &mut [u8], index: usize, old_len: usize, owner: [u8; 32]) {
-    let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_OWNER_BYTES;
-    let end = hybrid_state::PAGE_HEADER_BYTES + old_len * hybrid_state::ASK_OWNER_BYTES;
-    data.copy_within(start..end, start + hybrid_state::ASK_OWNER_BYTES);
-    data[start..start + hybrid_state::ASK_OWNER_BYTES].copy_from_slice(&owner);
+fn insert_slot(data: &mut [u8], index: usize, old_len: usize, width: usize) {
+    let start = hybrid_state::PAGE_HEADER_BYTES + index * width;
+    let end = hybrid_state::PAGE_HEADER_BYTES + old_len * width;
+    data.copy_within(start..end, start + width);
     data[..2].copy_from_slice(&((old_len + 1) as u16).to_le_bytes());
 }
 
-fn remove_owner_bytes(data: &mut [u8], index: usize, old_len: usize) {
-    let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_OWNER_BYTES;
-    let source = start + hybrid_state::ASK_OWNER_BYTES;
-    let end = hybrid_state::PAGE_HEADER_BYTES + old_len * hybrid_state::ASK_OWNER_BYTES;
-    data.copy_within(source..end, start);
-    let tail = hybrid_state::PAGE_HEADER_BYTES + (old_len - 1) * hybrid_state::ASK_OWNER_BYTES;
-    data[tail..tail + hybrid_state::ASK_OWNER_BYTES].fill(0);
-    data[..2].copy_from_slice(&((old_len - 1) as u16).to_le_bytes());
-}
-
-fn insert_ask_bytes(data: &mut [u8], index: usize, old_len: usize, entry: hybrid_state::AskEntry) {
-    let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_ENTRY_BYTES;
-    let end = hybrid_state::PAGE_HEADER_BYTES + old_len * hybrid_state::ASK_ENTRY_BYTES;
-    data.copy_within(start..end, start + hybrid_state::ASK_ENTRY_BYTES);
-    data[start..start + 16].copy_from_slice(&entry.price_x64.to_le_bytes());
-    data[start + 16..start + 32].copy_from_slice(&entry.sqrt_price_x64.to_le_bytes());
-    data[start + 32..start + 40].copy_from_slice(&entry.base_qty.to_le_bytes());
-    data[start + 40..start + 48].copy_from_slice(&entry.sequence.to_le_bytes());
-    data[..2].copy_from_slice(&((old_len + 1) as u16).to_le_bytes());
-}
-
-fn remove_ask_bytes(data: &mut [u8], index: usize, old_len: usize) {
-    let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_ENTRY_BYTES;
-    let source = start + hybrid_state::ASK_ENTRY_BYTES;
-    let end = hybrid_state::PAGE_HEADER_BYTES + old_len * hybrid_state::ASK_ENTRY_BYTES;
-    data.copy_within(source..end, start);
-    let tail = hybrid_state::PAGE_HEADER_BYTES + (old_len - 1) * hybrid_state::ASK_ENTRY_BYTES;
-    data[tail..tail + hybrid_state::ASK_ENTRY_BYTES].fill(0);
+fn remove_slot(data: &mut [u8], index: usize, old_len: usize, width: usize) {
+    let start = hybrid_state::PAGE_HEADER_BYTES + index * width;
+    let end = hybrid_state::PAGE_HEADER_BYTES + old_len * width;
+    data.copy_within(start + width..end, start);
+    let tail = hybrid_state::PAGE_HEADER_BYTES + (old_len - 1) * width;
+    data[tail..tail + width].fill(0);
     data[..2].copy_from_slice(&((old_len - 1) as u16).to_le_bytes());
 }
 
@@ -386,15 +363,21 @@ fn process_active_order(
         .map_err(|_| ProgramError::InvalidAccountData)?;
     drop(market_data);
 
-    let mut ask_pages = Vec::with_capacity(1);
-    decode_and_push_ask_page(&accounts[1], &mut ask_pages)?;
-    hybrid_state::validate_ask_chain(&ask_pages).map_err(|_| ProgramError::InvalidAccountData)?;
-    let page = &ask_pages[0];
+    let ask_data = accounts[1]
+        .try_borrow_data()
+        .map_err(|_| ProgramError::AccountBorrowFailed)?;
+    let page =
+        hybrid_state::AskPage::decode_from(&ask_data).map_err(|_| ProgramError::InvalidAccountData)?;
+    drop(ask_data);
+    let links = page.links();
+    if links.page_index != 0 || links.prev_page.is_some() || links.next_page.is_some() {
+        return Err(ProgramError::InvalidAccountData);
+    }
 
     let owner_data = accounts[2]
         .try_borrow_data()
         .map_err(|_| ProgramError::AccountBorrowFailed)?;
-    validate_owner_page_bytes(&owner_data, page)?;
+    validate_owner_page_bytes(&owner_data, &page)?;
     drop(owner_data);
 
     if market.ask_count as usize != page.len() {
@@ -466,13 +449,24 @@ fn process_active_order(
                 let mut ask_data = accounts[1]
                     .try_borrow_mut_data()
                     .map_err(|_| ProgramError::AccountBorrowFailed)?;
-                insert_ask_bytes(&mut ask_data, index, old_len, entry);
+                insert_slot(&mut ask_data, index, old_len, hybrid_state::ASK_ENTRY_BYTES);
+                let start =
+                    hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_ENTRY_BYTES;
+                ask_data[start..start + 16].copy_from_slice(&entry.price_x64.to_le_bytes());
+                ask_data[start + 16..start + 32]
+                    .copy_from_slice(&entry.sqrt_price_x64.to_le_bytes());
+                ask_data[start + 32..start + 40].copy_from_slice(&entry.base_qty.to_le_bytes());
+                ask_data[start + 40..start + 48].copy_from_slice(&entry.sequence.to_le_bytes());
             }
             {
                 let mut owners = accounts[2]
                     .try_borrow_mut_data()
                     .map_err(|_| ProgramError::AccountBorrowFailed)?;
-                insert_owner_bytes(&mut owners, index, old_len, accounts[3].key.to_bytes());
+                insert_slot(&mut owners, index, old_len, hybrid_state::ASK_OWNER_BYTES);
+                let start =
+                    hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_OWNER_BYTES;
+                owners[start..start + hybrid_state::ASK_OWNER_BYTES]
+                    .copy_from_slice(accounts[3].key.as_ref());
             }
             {
                 let mut market_bytes = accounts[0]
@@ -524,13 +518,13 @@ fn process_active_order(
                 let mut ask_data = accounts[1]
                     .try_borrow_mut_data()
                     .map_err(|_| ProgramError::AccountBorrowFailed)?;
-                remove_ask_bytes(&mut ask_data, index, old_len);
+                remove_slot(&mut ask_data, index, old_len, hybrid_state::ASK_ENTRY_BYTES);
             }
             {
                 let mut owners = accounts[2]
                     .try_borrow_mut_data()
                     .map_err(|_| ProgramError::AccountBorrowFailed)?;
-                remove_owner_bytes(&mut owners, index, old_len);
+                remove_slot(&mut owners, index, old_len, hybrid_state::ASK_OWNER_BYTES);
             }
             {
                 let mut market_bytes = accounts[0]
