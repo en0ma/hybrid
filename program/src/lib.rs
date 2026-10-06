@@ -367,7 +367,11 @@ fn process_active_order(
     }
 
     let owner_data = accounts[2].try_borrow_data()?;
-    validate_owner_page_bytes(&owner_data, &page)?;
+    let owner_page_uninitialized =
+        market.reserved2 == [0; 32] && market.ask_count == 0 && owner_data.iter().all(|byte| *byte == 0);
+    if !owner_page_uninitialized {
+        validate_owner_page_bytes(&owner_data, &page)?;
+    }
     drop(owner_data);
 
     if market.ask_count as usize != page.len() {
@@ -446,6 +450,9 @@ fn process_active_order(
             }
             {
                 let mut owners = accounts[2].try_borrow_mut_data()?;
+                if owner_page_uninitialized {
+                    owners[2..16].copy_from_slice(&page.reserved);
+                }
                 insert_slot(&mut owners, index, old_len, hybrid_state::ASK_OWNER_BYTES);
                 let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_OWNER_BYTES;
                 owners[start..start + hybrid_state::ASK_OWNER_BYTES]
