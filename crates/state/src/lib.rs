@@ -9,6 +9,8 @@ pub const PAGE_HEADER_BYTES: usize = 16;
 pub const ASKS_PER_PAGE: usize = 32;
 pub const BOUNDARIES_PER_PAGE: usize = 32;
 pub const ASK_PAGE_BYTES: usize = PAGE_HEADER_BYTES + ASKS_PER_PAGE * ASK_ENTRY_BYTES;
+pub const ASK_OWNER_BYTES: usize = 32;
+pub const ASK_OWNER_PAGE_BYTES: usize = PAGE_HEADER_BYTES + ASKS_PER_PAGE * ASK_OWNER_BYTES;
 pub const BOUNDARY_PAGE_BYTES: usize =
     PAGE_HEADER_BYTES + BOUNDARIES_PER_PAGE * BOUNDARY_ENTRY_BYTES;
 
@@ -23,6 +25,8 @@ pub enum StateError {
     NotFound,
     InvalidAsk,
     InvalidBoundary,
+    InvalidOwner,
+    Unauthorized,
     BufferSize,
     Corrupt,
 }
@@ -399,7 +403,7 @@ impl AskPage {
         Ok(())
     }
 
-    pub fn decode_from(input: &[u8]) -> Result<Self, StateError> {
+    pub fn decode_into(input: &[u8], page: &mut Self) -> Result<(), StateError> {
         if input.len() != ASK_PAGE_BYTES {
             return Err(StateError::BufferSize);
         }
@@ -407,16 +411,18 @@ impl AskPage {
         if len > ASKS_PER_PAGE {
             return Err(StateError::Corrupt);
         }
-        let mut page = Self {
-            len: len as u16,
-            ..Self::default()
-        };
+        page.len = len as u16;
         page.reserved.copy_from_slice(&input[2..16]);
         for index in 0..ASKS_PER_PAGE {
             let start = PAGE_HEADER_BYTES + index * ASK_ENTRY_BYTES;
             page.entries[index] = AskEntry::decode_from(&input[start..start + ASK_ENTRY_BYTES]);
         }
-        page.validate_order()?;
+        page.validate_order()
+    }
+
+    pub fn decode_from(input: &[u8]) -> Result<Self, StateError> {
+        let mut page = Self::default();
+        Self::decode_into(input, &mut page)?;
         Ok(page)
     }
 
@@ -446,6 +452,196 @@ impl AskPage {
         }
         Ok(())
     }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AskOwnerPage {
+    pub len: u16,
+    pub reserved: [u8; 14],
+    pub owners: [[u8; ASK_OWNER_BYTES]; ASKS_PER_PAGE],
+}
+
+impl Default for AskOwnerPage {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            reserved: [0; 14],
+            owners: [[0; ASK_OWNER_BYTES]; ASKS_PER_PAGE],
+        }
+    }
+}
+
+impl AskOwnerPage {
+    pub fn len(&self) -> usize {
+        usize::from(self.len)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn links(&self) -> PageLinks {
+        PageLinks::decode_from(&self.reserved)
+    }
+
+    pub fn set_links(&mut self, links: PageLinks) {
+        links.encode_into(&mut self.reserved);
+    }
+
+    pub fn as_slice(&self) -> &[[u8; ASK_OWNER_BYTES]] {
+        &self.owners[..self.len()]
+    }
+
+    pub fn validate_parallel(&self, asks: &AskPage) -> Result<(), StateError> {
+        if self.len != asks.len || self.links() != asks.links() {
+            return Err(StateError::Corrupt);
+        }
+        if self.as_slice().contains(&[0; ASK_OWNER_BYTES]) {
+            return Err(StateError::InvalidOwner);
+        }
+        if self.owners[self.len()..]
+            .iter()
+            .any(|owner| *owner != [0; ASK_OWNER_BYTES])
+        {
+            return Err(StateError::Corrupt);
+        }
+        Ok(())
+    }
+
+    fn insert_at(&mut self, index: usize, owner: [u8; ASK_OWNER_BYTES]) -> Result<(), StateError> {
+        if owner == [0; ASK_OWNER_BYTES] {
+            return Err(StateError::InvalidOwner);
+        }
+        let len = self.len();
+        if len >= ASKS_PER_PAGE || index > len {
+            return Err(StateError::Full);
+        }
+        let mut cursor = len;
+        while cursor > index {
+            self.owners[cursor] = self.owners[cursor - 1];
+            cursor -= 1;
+        }
+        self.owners[index] = owner;
+        self.len = self.len.checked_add(1).ok_or(StateError::Full)?;
+        Ok(())
+    }
+
+    fn remove_at(&mut self, index: usize) -> Result<[u8; ASK_OWNER_BYTES], StateError> {
+        let len = self.len();
+        if index >= len {
+            return Err(StateError::NotFound);
+        }
+        let removed = self.owners[index];
+        let mut cursor = index;
+        while cursor + 1 < len {
+            self.owners[cursor] = self.owners[cursor + 1];
+            cursor += 1;
+        }
+        self.owners[len - 1] = [0; ASK_OWNER_BYTES];
+        self.len -= 1;
+        Ok(removed)
+    }
+
+    pub fn encode_into(&self, out: &mut [u8]) -> Result<(), StateError> {
+        if out.len() != ASK_OWNER_PAGE_BYTES || self.len() > ASKS_PER_PAGE {
+            return Err(StateError::BufferSize);
+        }
+        out.fill(0);
+        put_u16(out, 0, self.len);
+        out[2..16].copy_from_slice(&self.reserved);
+        for (index, owner) in self.owners.iter().enumerate() {
+            let start = PAGE_HEADER_BYTES + index * ASK_OWNER_BYTES;
+            out[start..start + ASK_OWNER_BYTES].copy_from_slice(owner);
+        }
+        Ok(())
+    }
+
+    pub fn decode_from(input: &[u8]) -> Result<Self, StateError> {
+        if input.len() != ASK_OWNER_PAGE_BYTES {
+            return Err(StateError::BufferSize);
+        }
+        let len = usize::from(get_u16(input, 0));
+        if len > ASKS_PER_PAGE {
+            return Err(StateError::Corrupt);
+        }
+        let mut page = Self {
+            len: len as u16,
+            ..Self::default()
+        };
+        page.reserved.copy_from_slice(&input[2..16]);
+        for index in 0..ASKS_PER_PAGE {
+            let start = PAGE_HEADER_BYTES + index * ASK_OWNER_BYTES;
+            page.owners[index].copy_from_slice(&input[start..start + ASK_OWNER_BYTES]);
+        }
+        if page.owners[page.len()..]
+            .iter()
+            .any(|owner| *owner != [0; ASK_OWNER_BYTES])
+        {
+            return Err(StateError::Corrupt);
+        }
+        Ok(page)
+    }
+}
+
+pub fn insert_owned_ask(
+    asks: &mut AskPage,
+    owners: &mut AskOwnerPage,
+    entry: AskEntry,
+    owner: [u8; ASK_OWNER_BYTES],
+) -> Result<usize, StateError> {
+    owners.validate_parallel(asks)?;
+    if owner == [0; ASK_OWNER_BYTES] {
+        return Err(StateError::InvalidOwner);
+    }
+    if asks.len() >= ASKS_PER_PAGE {
+        return Err(StateError::Full);
+    }
+
+    entry.validate()?;
+    if asks
+        .as_slice()
+        .iter()
+        .any(|existing| existing.sequence == entry.sequence)
+    {
+        return Err(StateError::DuplicateSequence);
+    }
+
+    let mut index = 0usize;
+    while index < asks.len()
+        && (asks.entries[index].price_x64, asks.entries[index].sequence)
+            < (entry.price_x64, entry.sequence)
+    {
+        index += 1;
+    }
+
+    owners.insert_at(index, owner)?;
+    let inserted = asks.insert(entry)?;
+    debug_assert_eq!(inserted, index);
+    owners.validate_parallel(asks)?;
+    Ok(index)
+}
+
+pub fn cancel_owned_ask(
+    asks: &mut AskPage,
+    owners: &mut AskOwnerPage,
+    sequence: u64,
+    owner: [u8; ASK_OWNER_BYTES],
+) -> Result<AskEntry, StateError> {
+    owners.validate_parallel(asks)?;
+    let index = asks
+        .as_slice()
+        .iter()
+        .position(|entry| entry.sequence == sequence)
+        .ok_or(StateError::NotFound)?;
+    if owners.owners[index] != owner {
+        return Err(StateError::Unauthorized);
+    }
+
+    let removed = asks.remove_by_sequence(sequence)?;
+    owners.remove_at(index)?;
+    owners.validate_parallel(asks)?;
+    Ok(removed)
 }
 
 #[repr(C)]
@@ -737,6 +933,7 @@ const _: [(); MARKET_HEADER_BYTES] = [(); core::mem::size_of::<MarketHeader>()];
 const _: [(); ASK_ENTRY_BYTES] = [(); core::mem::size_of::<AskEntry>()];
 const _: [(); BOUNDARY_ENTRY_BYTES] = [(); core::mem::size_of::<BoundaryEntry>()];
 const _: [(); ASK_PAGE_BYTES] = [(); core::mem::size_of::<AskPage>()];
+const _: [(); ASK_OWNER_PAGE_BYTES] = [(); core::mem::size_of::<AskOwnerPage>()];
 const _: [(); BOUNDARY_PAGE_BYTES] = [(); core::mem::size_of::<BoundaryPage>()];
 
 #[cfg(test)]
@@ -754,6 +951,85 @@ mod tests {
     }
 
     #[test]
+    fn owned_ask_insert_and_cancel_preserve_parallel_order() {
+        let mut asks = AskPage::default();
+        asks.set_links(PageLinks::new(0, None, None));
+        let mut owners = AskOwnerPage::default();
+        owners.set_links(PageLinks::new(0, None, None));
+
+        let owner_a = [1u8; ASK_OWNER_BYTES];
+        let owner_b = [2u8; ASK_OWNER_BYTES];
+        let higher_sqrt = hybrid_engine::Q64 + hybrid_engine::Q64 / 100;
+
+        insert_owned_ask(
+            &mut asks,
+            &mut owners,
+            AskEntry {
+                price_x64: hybrid_engine::spot_price_x64(higher_sqrt).unwrap(),
+                sqrt_price_x64: higher_sqrt,
+                base_qty: 20,
+                sequence: 2,
+            },
+            owner_b,
+        )
+        .unwrap();
+        insert_owned_ask(
+            &mut asks,
+            &mut owners,
+            AskEntry {
+                price_x64: hybrid_engine::Q64,
+                sqrt_price_x64: hybrid_engine::Q64,
+                base_qty: 10,
+                sequence: 1,
+            },
+            owner_a,
+        )
+        .unwrap();
+
+        assert_eq!(asks.as_slice()[0].sequence, 1);
+        assert_eq!(owners.as_slice()[0], owner_a);
+        assert_eq!(asks.as_slice()[1].sequence, 2);
+        assert_eq!(owners.as_slice()[1], owner_b);
+
+        assert_eq!(
+            cancel_owned_ask(&mut asks, &mut owners, 1, owner_b),
+            Err(StateError::Unauthorized)
+        );
+        let removed = cancel_owned_ask(&mut asks, &mut owners, 1, owner_a).unwrap();
+        assert_eq!(removed.sequence, 1);
+        assert_eq!(asks.as_slice()[0].sequence, 2);
+        assert_eq!(owners.as_slice()[0], owner_b);
+    }
+
+    #[test]
+    fn owner_page_round_trips_and_rejects_desync() {
+        let mut asks = AskPage::default();
+        asks.set_links(PageLinks::new(0, None, None));
+        let mut owners = AskOwnerPage::default();
+        owners.set_links(PageLinks::new(0, None, None));
+
+        insert_owned_ask(
+            &mut asks,
+            &mut owners,
+            AskEntry {
+                price_x64: hybrid_engine::Q64,
+                sqrt_price_x64: hybrid_engine::Q64,
+                base_qty: 10,
+                sequence: 1,
+            },
+            [9u8; ASK_OWNER_BYTES],
+        )
+        .unwrap();
+
+        let mut bytes = [0u8; ASK_OWNER_PAGE_BYTES];
+        owners.encode_into(&mut bytes).unwrap();
+        assert_eq!(AskOwnerPage::decode_from(&bytes).unwrap(), owners);
+
+        owners.len = 0;
+        assert_eq!(owners.validate_parallel(&asks), Err(StateError::Corrupt));
+    }
+
+    #[test]
     fn layouts_are_exact_and_small() {
         let layouts = [
             (
@@ -768,6 +1044,11 @@ mod tests {
                 32usize,
             ),
             ("ask_page", core::mem::size_of::<AskPage>(), 1_552usize),
+            (
+                "ask_owner_page",
+                core::mem::size_of::<AskOwnerPage>(),
+                1_040usize,
+            ),
             (
                 "boundary_page",
                 core::mem::size_of::<BoundaryPage>(),
