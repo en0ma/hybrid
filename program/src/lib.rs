@@ -146,9 +146,9 @@ fn decode_and_push_ask_page(
     let data = account
         .try_borrow_data()
         .map_err(|_| ProgramError::AccountBorrowFailed)?;
-    let page =
-        hybrid_state::AskPage::decode_from(&data).map_err(|_| ProgramError::InvalidAccountData)?;
-    pages.push(page);
+    pages.push(hybrid_state::AskPage::default());
+    hybrid_state::AskPage::decode_into(&data, pages.last_mut().unwrap())
+        .map_err(|_| ProgramError::InvalidAccountData)?;
     Ok(())
 }
 
@@ -318,9 +318,10 @@ fn remove_slot(data: &mut [u8], index: usize, old_len: usize, width: usize) {
 #[inline(never)]
 fn load_active_ask_page(account: &AccountInfo) -> Result<Box<hybrid_state::AskPage>, ProgramError> {
     let data = account.try_borrow_data()?;
-    let page =
-        hybrid_state::AskPage::decode_from(&data).map_err(|_| ProgramError::InvalidAccountData)?;
-    Ok(Box::new(page))
+    let mut page = Box::new(hybrid_state::AskPage::default());
+    hybrid_state::AskPage::decode_into(&data, &mut page)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    Ok(page)
 }
 
 #[inline(never)]
