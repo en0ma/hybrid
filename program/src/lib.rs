@@ -296,16 +296,6 @@ fn validate_owner_page_bytes(data: &[u8], asks: &hybrid_state::AskPage) -> Progr
     if len != asks.len() || data[2..16] != asks.reserved {
         return Err(ProgramError::InvalidAccountData);
     }
-
-    for index in 0..hybrid_state::ASKS_PER_PAGE {
-        let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::ASK_OWNER_BYTES;
-        let zero = data[start..start + hybrid_state::ASK_OWNER_BYTES]
-            .iter()
-            .all(|byte| *byte == 0);
-        if (index < len && zero) || (index >= len && !zero) {
-            return Err(ProgramError::InvalidAccountData);
-        }
-    }
     Ok(())
 }
 
