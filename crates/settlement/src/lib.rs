@@ -2,6 +2,8 @@
 
 use hybrid_engine::ActiveFill;
 
+pub const MAKER_BALANCE_ACCOUNT_BYTES: usize = 64;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MakerBalance {
     pub base_free: u64,
@@ -109,6 +111,49 @@ impl MakerBalance {
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MakerBalanceAccount {
+    pub owner: [u8; 32],
+    pub balance: MakerBalance,
+}
+
+impl MakerBalanceAccount {
+    pub fn encode_into(&self, out: &mut [u8]) -> Result<(), SettlementError> {
+        if out.len() != MAKER_BALANCE_ACCOUNT_BYTES || self.owner == [0; 32] {
+            return Err(SettlementError::InvalidFill);
+        }
+        out[0..32].copy_from_slice(&self.owner);
+        out[32..40].copy_from_slice(&self.balance.base_free.to_le_bytes());
+        out[40..48].copy_from_slice(&self.balance.base_locked.to_le_bytes());
+        out[48..56].copy_from_slice(&self.balance.quote_free.to_le_bytes());
+        out[56..64].copy_from_slice(&self.balance.quote_locked.to_le_bytes());
+        Ok(())
+    }
+
+    pub fn decode_from(input: &[u8]) -> Result<Self, SettlementError> {
+        if input.len() != MAKER_BALANCE_ACCOUNT_BYTES {
+            return Err(SettlementError::InvalidFill);
+        }
+        let mut owner = [0u8; 32];
+        owner.copy_from_slice(&input[0..32]);
+        if owner == [0; 32] {
+            return Err(SettlementError::InvalidFill);
+        }
+        Ok(Self {
+            owner,
+            balance: MakerBalance {
+                base_free: u64::from_le_bytes(input[32..40].try_into().expect("base free")),
+                base_locked: u64::from_le_bytes(input[40..48].try_into().expect("base locked")),
+                quote_free: u64::from_le_bytes(input[48..56].try_into().expect("quote free")),
+                quote_locked: u64::from_le_bytes(input[56..64].try_into().expect("quote locked")),
+            },
+        })
+    }
+}
+
+const _: [(); MAKER_BALANCE_ACCOUNT_BYTES] = [(); core::mem::size_of::<MakerBalanceAccount>()];
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ActiveSettlementTotals {
     pub base_to_taker: u64,
@@ -158,6 +203,26 @@ mod tests {
             base_qty,
             quote_qty,
         }
+    }
+
+    #[test]
+    fn maker_balance_account_round_trips_and_has_exact_layout() {
+        let account = MakerBalanceAccount {
+            owner: [7; 32],
+            balance: MakerBalance {
+                base_free: 1,
+                base_locked: 2,
+                quote_free: 3,
+                quote_locked: 4,
+            },
+        };
+        let mut bytes = [0u8; MAKER_BALANCE_ACCOUNT_BYTES];
+        account.encode_into(&mut bytes).unwrap();
+        assert_eq!(MakerBalanceAccount::decode_from(&bytes).unwrap(), account);
+        println!(
+            "HYBRID_STATE_BYTES maker_balance_account {}",
+            core::mem::size_of::<MakerBalanceAccount>()
+        );
     }
 
     #[test]
