@@ -178,7 +178,7 @@ Instruction data:
 
 Accounts:
 
-1. Hybrid-owned market
+1. writable Hybrid-owned market signer
 2. writable custody PDA
 3. writable payer signer
 4. base mint
@@ -188,7 +188,11 @@ Accounts:
 8. system program
 9. SPL Token program
 
-The program validates mint decimals, vault mints, and vault authority before creating the custody PDA.
+The market must sign custody activation. Activation is allowed only when both active books are empty. The program then enables the market's collateralized-active flag.
+
+The custody and maker-balance PDA creation paths support prefunded system-owned PDA addresses. If a PDA already holds lamports but has no data, Hybrid tops it up to rent exemption, allocates the required size, and assigns it to Hybrid instead of relying only on `CreateAccount`.
+
+The program validates mint decimals, vault mints, and vault authority before creating or allocating the custody PDA.
 
 ### Initialize maker balance
 
@@ -246,13 +250,19 @@ Accounts:
 
 Only free collateral can be withdrawn.
 
-### Active-order ABI change
+### Active-order ABI and migration
 
-Ask and bid placement/cancellation now require the maker-balance PDA in addition to the existing market, page, owner sidecar and maker signer.
+Collateralized ask and bid placement/cancellation require the maker-balance PDA in addition to the existing market, page, owner sidecar and maker signer.
 
 This is an alpha ABI change.
 
-The purpose is to remove the previous unbacked active-order path. New resting orders cannot be created unless the maker has enough free collateral to lock the position.
+Markets created before collateral activation remain in legacy cancel-only mode. In that mode:
+
+- new order placement is rejected;
+- existing legacy asks and bids can be canceled with the old four-account ABI;
+- legacy cancellation does not unlock maker collateral because those orders never locked collateral.
+
+Custody activation requires both active books to be empty. After activation, the market flag requires the five-account collateralized ABI and new resting orders cannot be created unless the maker has enough free collateral to lock the position.
 
 ## Current execution boundary
 
