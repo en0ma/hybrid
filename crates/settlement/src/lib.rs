@@ -171,15 +171,43 @@ pub fn settle_buy_active_fills(
 
     let mut totals = ActiveSettlementTotals::default();
 
-    for (fill, balance_index) in fills.iter().zip(ask_owner_balance_indexes.iter()) {
+    for (fill_index, (fill, balance_index)) in fills
+        .iter()
+        .zip(ask_owner_balance_indexes.iter())
+        .enumerate()
+    {
         if fill.base_qty == 0 || fill.quote_qty == 0 {
             return Err(SettlementError::InvalidFill);
         }
+        let index = usize::from(*balance_index);
         let balance = maker_balances
-            .get_mut(usize::from(*balance_index))
+            .get(index)
             .ok_or(SettlementError::BalanceIndexOutOfBounds)?;
 
-        balance.settle_ask_fill(fill.base_qty, fill.quote_qty)?;
+        let mut cumulative_base = 0u64;
+        let mut cumulative_quote = 0u64;
+        for (prior_fill, prior_index) in fills[..=fill_index]
+            .iter()
+            .zip(ask_owner_balance_indexes[..=fill_index].iter())
+        {
+            if usize::from(*prior_index) == index {
+                cumulative_base = cumulative_base
+                    .checked_add(prior_fill.base_qty)
+                    .ok_or(SettlementError::Overflow)?;
+                cumulative_quote = cumulative_quote
+                    .checked_add(prior_fill.quote_qty)
+                    .ok_or(SettlementError::Overflow)?;
+            }
+        }
+
+        if balance.base_locked < cumulative_base {
+            return Err(SettlementError::InsufficientBase);
+        }
+        balance
+            .quote_free
+            .checked_add(cumulative_quote)
+            .ok_or(SettlementError::Overflow)?;
+
         totals.base_to_taker = totals
             .base_to_taker
             .checked_add(fill.base_qty)
@@ -188,6 +216,11 @@ pub fn settle_buy_active_fills(
             .quote_from_taker
             .checked_add(fill.quote_qty)
             .ok_or(SettlementError::Overflow)?;
+    }
+
+    for (fill, balance_index) in fills.iter().zip(ask_owner_balance_indexes.iter()) {
+        maker_balances[usize::from(*balance_index)]
+            .settle_ask_fill(fill.base_qty, fill.quote_qty)?;
     }
 
     Ok(totals)
@@ -315,6 +348,52 @@ mod tests {
         assert_eq!(balances[0].quote_free, 175);
         assert_eq!(balances[1].base_locked, 0);
         assert_eq!(balances[1].quote_free, 120);
+    }
+
+    #[test]
+    fn settlement_error_is_atomic_across_multiple_makers() {
+        let fills = [fill(50, 60), fill(100, 110)];
+        let owner_indexes = [0u16, 1u16];
+        let original = [
+            MakerBalance {
+                base_free: 0,
+                base_locked: 50,
+                quote_free: 7,
+                quote_locked: 0,
+            },
+            MakerBalance {
+                base_free: 0,
+                base_locked: 99,
+                quote_free: 9,
+                quote_locked: 0,
+            },
+        ];
+        let mut balances = original;
+
+        assert_eq!(
+            settle_buy_active_fills(&fills, &owner_indexes, &mut balances),
+            Err(SettlementError::InsufficientBase)
+        );
+        assert_eq!(balances, original);
+    }
+
+    #[test]
+    fn settlement_validates_cumulative_same_maker_fills_before_mutation() {
+        let fills = [fill(60, 70), fill(60, 80)];
+        let owner_indexes = [0u16, 0u16];
+        let original = [MakerBalance {
+            base_free: 0,
+            base_locked: 100,
+            quote_free: 5,
+            quote_locked: 0,
+        }];
+        let mut balances = original;
+
+        assert_eq!(
+            settle_buy_active_fills(&fills, &owner_indexes, &mut balances),
+            Err(SettlementError::InsufficientBase)
+        );
+        assert_eq!(balances, original);
     }
 
     #[test]
