@@ -5,7 +5,7 @@ use hybrid_program::ID;
 use hybrid_state::{
     AskEntry, AskOwnerPage, AskPage, CustodyState, MakerBalance, MarketHeader, PageLinks,
     ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES, CUSTODY_STATE_BYTES, MAKER_BALANCE_BYTES,
-    MARKET_HEADER_BYTES, MARKET_FLAG_COLLATERALIZED_ACTIVE,
+    MARKET_FLAG_COLLATERALIZED_ACTIVE, MARKET_HEADER_BYTES,
 };
 use solana_account::Account;
 use solana_instruction::{AccountMeta, Instruction};
@@ -86,8 +86,7 @@ struct Fixture {
 
 fn fixture() -> Fixture {
     let market = Pubkey::new_unique();
-    let (custody, custody_bump) =
-        Pubkey::find_program_address(&[b"custody", market.as_ref()], &ID);
+    let (custody, custody_bump) = Pubkey::find_program_address(&[b"custody", market.as_ref()], &ID);
     let (ask_page, _) =
         Pubkey::find_program_address(&[b"ask-page", market.as_ref(), &0u32.to_le_bytes()], &ID);
     let owner_page = Pubkey::new_unique();
@@ -102,14 +101,10 @@ fn fixture() -> Fixture {
     let taker_base = Pubkey::new_unique();
     let maker_a = Pubkey::new_unique();
     let maker_b = Pubkey::new_unique();
-    let (maker_a_balance, maker_a_bump) = Pubkey::find_program_address(
-        &[b"maker-balance", market.as_ref(), maker_a.as_ref()],
-        &ID,
-    );
-    let (maker_b_balance, maker_b_bump) = Pubkey::find_program_address(
-        &[b"maker-balance", market.as_ref(), maker_b.as_ref()],
-        &ID,
-    );
+    let (maker_a_balance, maker_a_bump) =
+        Pubkey::find_program_address(&[b"maker-balance", market.as_ref(), maker_a.as_ref()], &ID);
+    let (maker_b_balance, maker_b_bump) =
+        Pubkey::find_program_address(&[b"maker-balance", market.as_ref(), maker_b.as_ref()], &ID);
 
     let mut market_header = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
     market_header.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
@@ -214,10 +209,7 @@ fn fixture() -> Fixture {
             TOKEN_PROGRAM_ID,
         ),
     );
-    program_test.add_account(
-        taker.pubkey(),
-        account(Vec::new(), Pubkey::default()),
-    );
+    program_test.add_account(taker.pubkey(), account(Vec::new(), Pubkey::default()));
 
     Fixture {
         program_test,
