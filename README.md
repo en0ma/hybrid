@@ -110,13 +110,13 @@ Opcode `10` is a state-backed planner probe for SBF and CU validation. It does n
 
 ## Current limits
 
-This is a bounded V0 mutation path.
+This is a bounded V0 execution path.
 
 - Placement and cancellation currently target page index `0` for both asks and bids.
-- Bid-side passive matching is not implemented yet.
-- Token custody, maker deposits, settlement and withdrawals are not implemented yet.
-- The state-backed matcher and planner probes remain read-only.
-- Mutable swap execution will be added only together with collateralized custody and settlement. Hybrid does not delete third-party maker orders without an atomic asset-transfer path.
+- Custody, maker deposits, withdrawals and collateralized active orders are implemented.
+- Native taker execution currently consumes active asks only.
+- A swap is rejected when satisfying the request would require passive liquidity.
+- Passive LP vault accounting and passive mutable execution remain separate follow-up work.
 
 
 
@@ -144,24 +144,6 @@ The canonical active-fill plan can also be applied to an `AskPage`. Fully filled
 
 Settlement fuzzing checks multi-maker fill conservation and rejects paths that would spend more collateral than a maker locked.
 
-### Current execution boundary
-
-This slice establishes deterministic collateral accounting and active-book mutation, but it does not yet move SPL tokens.
-
-The on-chain program must not expose a third-party fill instruction until token vault CPIs, deposits, withdrawals, and the collateral state transition are atomic in one transaction path.
-
-The intended execution sequence is:
-
-1. quote with the canonical matcher;
-2. produce the canonical active-fill plan;
-3. validate maker locked collateral;
-4. transfer taker quote into custody;
-5. transfer maker/passive base to the taker;
-6. apply maker settlement credits;
-7. apply active-order quantity reductions or removals;
-8. commit the final passive price/liquidity state.
-
-That atomic custody path is the next program-layer step.
 
 ## Custody and collateralized maker balances
 
@@ -307,8 +289,70 @@ Markets created before collateral activation remain in legacy cancel-only mode. 
 
 Custody activation requires both active books to be empty. After activation, the market flag requires the five-account collateralized ABI and new resting orders cannot be created unless the maker has enough free collateral to lock the position.
 
-## Current execution boundary
+## Native active buy swaps
 
-This PR establishes custody and collateralization, but it does not yet expose the final Jupiter swap instruction.
+Hybrid now exposes native taker execution for collateralized active asks.
 
-The next execution step can atomically consume locked maker collateral, credit maker proceeds, mutate active pages and move taker tokens through the custody vaults without introducing unsecured accounting.
+### Exact-in buy
+
+Opcode: `15`
+
+Instruction data is exactly 17 bytes:
+
+- byte 0: opcode
+- bytes 1..9: quote input, little-endian `u64`
+- bytes 9..17: minimum base output, little-endian `u64`
+
+### Exact-out buy
+
+Opcode: `16`
+
+Instruction data is exactly 17 bytes:
+
+- byte 0: opcode
+- bytes 1..9: requested base output, little-endian `u64`
+- bytes 9..17: maximum quote input, little-endian `u64`
+
+Both instructions use:
+
+1. writable market
+2. writable custody PDA
+3. writable page-0 ask PDA
+4. writable ask-owner sidecar
+5. taker signer
+6. writable taker quote token account
+7. writable taker base token account
+8. writable quote vault
+9. writable base vault
+10. vault-authority PDA
+11. SPL Token program
+12. up to 8 writable maker-balance PDAs
+
+The program derives the active fill plan from the same engine primitives used for quoting. It then validates every touched maker-balance PDA against the owner sidecar, validates all collateral before mutation, transfers taker quote into the quote vault, transfers base from the base vault to the taker, credits maker quote balances, reduces or removes filled asks, compacts the owner sidecar, updates custody totals, and decrements `ask_count` for fully consumed orders.
+
+The maker-account fan-out is bounded at 8 accounts. One maker account can settle multiple fills.
+
+### Passive-liquidity boundary
+
+Native swaps in this version are intentionally active-only.
+
+The active plan consumes asks only while their price is at or better than the current passive marginal price. If the requested exact-in or exact-out amount would require passive liquidity, the instruction rejects instead of spending assets that do not yet have passive LP vault accounting.
+
+This keeps active execution fully collateralized while preserving the future compressed-passive architecture.
+
+### Slippage and quote parity
+
+Exact-in requires the full requested quote input to be consumed by active asks and requires output to meet `min_base_out`.
+
+Exact-out requires the full requested base amount to be available from active asks and requires quote input to remain at or below `max_quote_in`.
+
+The engine exposes `plan_buy_active_exact_in` and `plan_buy_active_exact_out` so clients can reproduce the same active-only execution plan off-chain.
+
+## Remaining execution limits
+
+- swaps currently buy base with quote; the sell direction is not implemented yet;
+- swaps currently use page-0 asks only;
+- passive LP inventory accounting and mutable passive fills are not implemented yet;
+- maker fan-out is bounded to 8 balance accounts;
+- the fixed swap account set is still above the long-term Jupiter account-footprint target;
+- exact-in/exact-out sell execution, passive settlement, multi-page mutable swaps and Jupiter adapter code remain follow-up work.
