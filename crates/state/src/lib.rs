@@ -912,6 +912,42 @@ pub fn cancel_owned_bid(
     Ok(removed)
 }
 
+pub fn apply_active_fills_to_ask_page(
+    asks: &mut AskPage,
+    fills: &[hybrid_engine::ActiveFill],
+) -> Result<usize, StateError> {
+    let original_len = asks.len();
+    let mut previous_index = None;
+    for fill in fills {
+        let index = usize::from(fill.ask_index);
+        if fill.base_qty == 0 || fill.quote_qty == 0 || index >= original_len {
+            return Err(StateError::Corrupt);
+        }
+        if previous_index.is_some_and(|previous| index <= previous) {
+            return Err(StateError::Corrupt);
+        }
+        if asks.entries[index].base_qty < fill.base_qty {
+            return Err(StateError::Corrupt);
+        }
+        previous_index = Some(index);
+    }
+
+    let mut removed = 0usize;
+    for fill in fills.iter().rev() {
+        let index = usize::from(fill.ask_index);
+        let remaining = asks.entries[index].base_qty - fill.base_qty;
+        if remaining == 0 {
+            let sequence = asks.entries[index].sequence;
+            asks.remove_by_sequence(sequence)?;
+            removed += 1;
+        } else {
+            asks.entries[index].base_qty = remaining;
+        }
+    }
+    asks.validate_order()?;
+    Ok(removed)
+}
+
 pub fn validate_bid_chain(pages: &[BidPage]) -> Result<(), StateError> {
     for (index, page) in pages.iter().enumerate() {
         page.validate_order()?;
@@ -1304,6 +1340,50 @@ mod tests {
         assert_eq!(removed.sequence, 1);
         assert_eq!(asks.as_slice()[0].sequence, 2);
         assert_eq!(owners.as_slice()[0], owner_b);
+    }
+
+    #[test]
+    fn active_fill_application_reduces_and_compacts_asks() {
+        let mut asks = AskPage::default();
+        asks.insert(ask(Q64, 100, 1)).unwrap();
+        asks.insert(ask(Q64, 200, 2)).unwrap();
+        asks.insert(ask(Q64 + 1, 300, 3)).unwrap();
+
+        let fills = [
+            hybrid_engine::ActiveFill {
+                ask_index: 0,
+                base_qty: 100,
+                quote_qty: 100,
+            },
+            hybrid_engine::ActiveFill {
+                ask_index: 1,
+                base_qty: 50,
+                quote_qty: 50,
+            },
+        ];
+
+        let removed = apply_active_fills_to_ask_page(&mut asks, &fills).unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(asks.len(), 2);
+        assert_eq!(asks.as_slice()[0].sequence, 2);
+        assert_eq!(asks.as_slice()[0].base_qty, 150);
+        assert_eq!(asks.as_slice()[1].sequence, 3);
+    }
+
+    #[test]
+    fn active_fill_application_rejects_overfill() {
+        let mut asks = AskPage::default();
+        asks.insert(ask(Q64, 100, 1)).unwrap();
+        let fills = [hybrid_engine::ActiveFill {
+            ask_index: 0,
+            base_qty: 101,
+            quote_qty: 101,
+        }];
+        assert_eq!(
+            apply_active_fills_to_ask_page(&mut asks, &fills),
+            Err(StateError::Corrupt)
+        );
+        assert_eq!(asks.as_slice()[0].base_qty, 100);
     }
 
     #[test]
