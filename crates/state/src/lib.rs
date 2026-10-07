@@ -4,13 +4,18 @@ use hybrid_engine::{validate_limit_ask, LimitAsk, PassiveBoundary, QuoteError};
 
 pub const MARKET_HEADER_BYTES: usize = 128;
 pub const ASK_ENTRY_BYTES: usize = 48;
+pub const BID_ENTRY_BYTES: usize = ASK_ENTRY_BYTES;
 pub const BOUNDARY_ENTRY_BYTES: usize = 32;
 pub const PAGE_HEADER_BYTES: usize = 16;
 pub const ASKS_PER_PAGE: usize = 32;
+pub const BIDS_PER_PAGE: usize = ASKS_PER_PAGE;
 pub const BOUNDARIES_PER_PAGE: usize = 32;
 pub const ASK_PAGE_BYTES: usize = PAGE_HEADER_BYTES + ASKS_PER_PAGE * ASK_ENTRY_BYTES;
+pub const BID_PAGE_BYTES: usize = PAGE_HEADER_BYTES + BIDS_PER_PAGE * BID_ENTRY_BYTES;
 pub const ASK_OWNER_BYTES: usize = 32;
+pub const BID_OWNER_BYTES: usize = ASK_OWNER_BYTES;
 pub const ASK_OWNER_PAGE_BYTES: usize = PAGE_HEADER_BYTES + ASKS_PER_PAGE * ASK_OWNER_BYTES;
+pub const BID_OWNER_PAGE_BYTES: usize = PAGE_HEADER_BYTES + BIDS_PER_PAGE * BID_OWNER_BYTES;
 pub const BOUNDARY_PAGE_BYTES: usize =
     PAGE_HEADER_BYTES + BOUNDARIES_PER_PAGE * BOUNDARY_ENTRY_BYTES;
 
@@ -115,6 +120,26 @@ impl MarketHeader {
             quote_lot_size,
             reserved2: [0; 32],
         }
+    }
+
+    pub fn bid_count(&self) -> u32 {
+        u32::from_le_bytes(self.reserved0[0..4].try_into().expect("bid count"))
+    }
+
+    pub fn set_bid_count(&mut self, bid_count: u32) {
+        self.reserved0[0..4].copy_from_slice(&bid_count.to_le_bytes());
+    }
+
+    pub fn bid_owner_tag(&self) -> [u8; 16] {
+        let mut tag = [0u8; 16];
+        tag[0..8].copy_from_slice(&self.reserved0[4..12]);
+        tag[8..16].copy_from_slice(&self.reserved1);
+        tag
+    }
+
+    pub fn set_bid_owner_tag(&mut self, tag: [u8; 16]) {
+        self.reserved0[4..12].copy_from_slice(&tag[0..8]);
+        self.reserved1.copy_from_slice(&tag[8..16]);
     }
 
     pub fn allocate_sequence(&mut self) -> Result<u64, StateError> {
@@ -644,6 +669,283 @@ pub fn cancel_owned_ask(
     Ok(removed)
 }
 
+pub type BidEntry = AskEntry;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BidPage {
+    pub len: u16,
+    pub reserved: [u8; 14],
+    pub entries: [BidEntry; BIDS_PER_PAGE],
+}
+
+impl Default for BidPage {
+    fn default() -> Self {
+        Self {
+            len: 0,
+            reserved: [0; 14],
+            entries: [BidEntry::EMPTY; BIDS_PER_PAGE],
+        }
+    }
+}
+
+impl BidPage {
+    pub fn len(&self) -> usize {
+        usize::from(self.len)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn as_slice(&self) -> &[BidEntry] {
+        &self.entries[..self.len()]
+    }
+
+    pub fn links(&self) -> PageLinks {
+        PageLinks::decode_from(&self.reserved)
+    }
+
+    pub fn set_links(&mut self, links: PageLinks) {
+        links.encode_into(&mut self.reserved);
+    }
+
+    pub fn validate_next(&self, next: &Self) -> Result<(), StateError> {
+        let links = self.links();
+        let next_links = next.links();
+        if links.next_page != Some(next_links.page_index)
+            || next_links.prev_page != Some(links.page_index)
+        {
+            return Err(StateError::Corrupt);
+        }
+        if let (Some(left), Some(right)) = (self.as_slice().last(), next.as_slice().first()) {
+            if left.price_x64 < right.price_x64
+                || (left.price_x64 == right.price_x64 && left.sequence >= right.sequence)
+            {
+                return Err(StateError::Corrupt);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn insert(&mut self, entry: BidEntry) -> Result<usize, StateError> {
+        entry.validate()?;
+        let len = self.len();
+        if len >= BIDS_PER_PAGE {
+            return Err(StateError::Full);
+        }
+        if self.as_slice().iter().any(|e| e.sequence == entry.sequence) {
+            return Err(StateError::DuplicateSequence);
+        }
+
+        let mut index = 0usize;
+        while index < len {
+            let current = self.entries[index];
+            if entry.price_x64 > current.price_x64
+                || (entry.price_x64 == current.price_x64 && entry.sequence < current.sequence)
+            {
+                break;
+            }
+            index += 1;
+        }
+
+        let mut cursor = len;
+        while cursor > index {
+            self.entries[cursor] = self.entries[cursor - 1];
+            cursor -= 1;
+        }
+        self.entries[index] = entry;
+        self.len = self.len.checked_add(1).ok_or(StateError::Full)?;
+        Ok(index)
+    }
+
+    pub fn remove_by_sequence(&mut self, sequence: u64) -> Result<BidEntry, StateError> {
+        let len = self.len();
+        let index = self
+            .as_slice()
+            .iter()
+            .position(|e| e.sequence == sequence)
+            .ok_or(StateError::NotFound)?;
+        let removed = self.entries[index];
+        let mut cursor = index;
+        while cursor + 1 < len {
+            self.entries[cursor] = self.entries[cursor + 1];
+            cursor += 1;
+        }
+        self.entries[len - 1] = BidEntry::EMPTY;
+        self.len -= 1;
+        Ok(removed)
+    }
+
+    pub fn set_quantity(&mut self, sequence: u64, base_qty: u64) -> Result<(), StateError> {
+        if base_qty == 0 {
+            self.remove_by_sequence(sequence)?;
+            return Ok(());
+        }
+        let len = usize::from(self.len);
+        let entry = self
+            .entries
+            .iter_mut()
+            .take(len)
+            .find(|e| e.sequence == sequence)
+            .ok_or(StateError::NotFound)?;
+        entry.base_qty = base_qty;
+        Ok(())
+    }
+
+    pub fn encode_into(&self, out: &mut [u8]) -> Result<(), StateError> {
+        if out.len() != BID_PAGE_BYTES || self.len() > BIDS_PER_PAGE {
+            return Err(StateError::BufferSize);
+        }
+        out.fill(0);
+        put_u16(out, 0, self.len);
+        out[2..16].copy_from_slice(&self.reserved);
+        for (index, entry) in self.entries.iter().enumerate() {
+            let start = PAGE_HEADER_BYTES + index * BID_ENTRY_BYTES;
+            entry.encode_into(&mut out[start..start + BID_ENTRY_BYTES]);
+        }
+        Ok(())
+    }
+
+    pub fn decode_into(input: &[u8], page: &mut Self) -> Result<(), StateError> {
+        if input.len() != BID_PAGE_BYTES {
+            return Err(StateError::BufferSize);
+        }
+        let len = usize::from(get_u16(input, 0));
+        if len > BIDS_PER_PAGE {
+            return Err(StateError::Corrupt);
+        }
+        page.len = len as u16;
+        page.reserved.copy_from_slice(&input[2..16]);
+        for index in 0..BIDS_PER_PAGE {
+            let start = PAGE_HEADER_BYTES + index * BID_ENTRY_BYTES;
+            page.entries[index] = BidEntry::decode_from(&input[start..start + BID_ENTRY_BYTES]);
+        }
+        page.validate_order()
+    }
+
+    pub fn decode_from(input: &[u8]) -> Result<Self, StateError> {
+        let mut page = Self::default();
+        Self::decode_into(input, &mut page)?;
+        Ok(page)
+    }
+
+    pub fn validate_order(&self) -> Result<(), StateError> {
+        let slice = self.as_slice();
+        for entry in slice {
+            entry.validate()?;
+        }
+        for pair in slice.windows(2) {
+            if pair[0].price_x64 < pair[1].price_x64
+                || (pair[0].price_x64 == pair[1].price_x64 && pair[0].sequence >= pair[1].sequence)
+            {
+                return Err(StateError::Corrupt);
+            }
+        }
+        for (index, entry) in slice.iter().enumerate() {
+            if slice[index + 1..]
+                .iter()
+                .any(|other| other.sequence == entry.sequence)
+            {
+                return Err(StateError::Corrupt);
+            }
+        }
+        if self.entries[self.len()..]
+            .iter()
+            .any(|e| *e != BidEntry::EMPTY)
+        {
+            return Err(StateError::Corrupt);
+        }
+        Ok(())
+    }
+}
+
+pub type BidOwnerPage = AskOwnerPage;
+
+pub fn insert_owned_bid(
+    bids: &mut BidPage,
+    owners: &mut BidOwnerPage,
+    entry: BidEntry,
+    owner: [u8; BID_OWNER_BYTES],
+) -> Result<usize, StateError> {
+    if owners.len() != bids.len() || owners.links() != bids.links() {
+        return Err(StateError::Corrupt);
+    }
+    if owner == [0; BID_OWNER_BYTES] {
+        return Err(StateError::InvalidOwner);
+    }
+    if bids.len() >= BIDS_PER_PAGE {
+        return Err(StateError::Full);
+    }
+
+    let index = bids.insert(entry)?;
+    owners.insert_at(index, owner)?;
+    if owners.len() != bids.len() || owners.links() != bids.links() {
+        return Err(StateError::Corrupt);
+    }
+    Ok(index)
+}
+
+pub fn cancel_owned_bid(
+    bids: &mut BidPage,
+    owners: &mut BidOwnerPage,
+    sequence: u64,
+    owner: [u8; BID_OWNER_BYTES],
+) -> Result<BidEntry, StateError> {
+    if owners.len() != bids.len() || owners.links() != bids.links() {
+        return Err(StateError::Corrupt);
+    }
+    let index = bids
+        .as_slice()
+        .iter()
+        .position(|entry| entry.sequence == sequence)
+        .ok_or(StateError::NotFound)?;
+    if owners.owners[index] != owner {
+        return Err(StateError::Unauthorized);
+    }
+
+    let removed = bids.remove_by_sequence(sequence)?;
+    owners.remove_at(index)?;
+    if owners.len() != bids.len() || owners.links() != bids.links() {
+        return Err(StateError::Corrupt);
+    }
+    Ok(removed)
+}
+
+pub fn validate_bid_chain(pages: &[BidPage]) -> Result<(), StateError> {
+    for (index, page) in pages.iter().enumerate() {
+        page.validate_order()?;
+        let links = page.links();
+        if links.page_index != index as u32 {
+            return Err(StateError::Corrupt);
+        }
+        if index > 0 && index + 1 < pages.len() && page.is_empty() {
+            return Err(StateError::Corrupt);
+        }
+        match index {
+            0 if links.prev_page.is_some() => return Err(StateError::Corrupt),
+            i if i + 1 == pages.len() && links.next_page.is_some() => {
+                return Err(StateError::Corrupt)
+            }
+            _ => {}
+        }
+
+        for entry in page.as_slice() {
+            if pages[index + 1..]
+                .iter()
+                .flat_map(|later| later.as_slice())
+                .any(|other| other.sequence == entry.sequence)
+            {
+                return Err(StateError::Corrupt);
+            }
+        }
+    }
+    for pair in pages.windows(2) {
+        pair[0].validate_next(&pair[1])?;
+    }
+    Ok(())
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BoundaryPage {
@@ -931,9 +1233,12 @@ fn get_u128(input: &[u8], offset: usize) -> u128 {
 
 const _: [(); MARKET_HEADER_BYTES] = [(); core::mem::size_of::<MarketHeader>()];
 const _: [(); ASK_ENTRY_BYTES] = [(); core::mem::size_of::<AskEntry>()];
+const _: [(); BID_ENTRY_BYTES] = [(); core::mem::size_of::<BidEntry>()];
 const _: [(); BOUNDARY_ENTRY_BYTES] = [(); core::mem::size_of::<BoundaryEntry>()];
 const _: [(); ASK_PAGE_BYTES] = [(); core::mem::size_of::<AskPage>()];
+const _: [(); BID_PAGE_BYTES] = [(); core::mem::size_of::<BidPage>()];
 const _: [(); ASK_OWNER_PAGE_BYTES] = [(); core::mem::size_of::<AskOwnerPage>()];
+const _: [(); BID_OWNER_PAGE_BYTES] = [(); core::mem::size_of::<BidOwnerPage>()];
 const _: [(); BOUNDARY_PAGE_BYTES] = [(); core::mem::size_of::<BoundaryPage>()];
 
 #[cfg(test)]
@@ -1002,6 +1307,68 @@ mod tests {
     }
 
     #[test]
+    fn bid_page_preserves_price_time_priority() {
+        let mut page = BidPage::default();
+        let low = Q64;
+        let high = Q64 + Q64 / 100;
+        page.insert(ask(low, 10, 2)).unwrap();
+        page.insert(ask(high, 20, 3)).unwrap();
+        page.insert(ask(high, 30, 1)).unwrap();
+
+        let slice = page.as_slice();
+        assert_eq!(slice[0].sequence, 1);
+        assert_eq!(slice[1].sequence, 3);
+        assert_eq!(slice[2].sequence, 2);
+        page.validate_order().unwrap();
+    }
+
+    #[test]
+    fn owned_bid_insert_and_cancel_preserve_parallel_order() {
+        let mut bids = BidPage::default();
+        bids.set_links(PageLinks::new(0, None, None));
+        let mut owners = BidOwnerPage::default();
+        owners.set_links(PageLinks::new(0, None, None));
+
+        insert_owned_bid(
+            &mut bids,
+            &mut owners,
+            ask(Q64, 10, 1),
+            [1u8; BID_OWNER_BYTES],
+        )
+        .unwrap();
+        insert_owned_bid(
+            &mut bids,
+            &mut owners,
+            ask(Q64 + Q64 / 100, 20, 2),
+            [2u8; BID_OWNER_BYTES],
+        )
+        .unwrap();
+
+        assert_eq!(bids.as_slice()[0].sequence, 2);
+        assert_eq!(owners.as_slice()[0], [2u8; BID_OWNER_BYTES]);
+        assert_eq!(
+            cancel_owned_bid(&mut bids, &mut owners, 2, [1u8; BID_OWNER_BYTES]),
+            Err(StateError::Unauthorized)
+        );
+        cancel_owned_bid(&mut bids, &mut owners, 2, [2u8; BID_OWNER_BYTES]).unwrap();
+        assert_eq!(bids.as_slice()[0].sequence, 1);
+    }
+
+    #[test]
+    fn market_header_tracks_bid_metadata_without_size_growth() {
+        let mut header = MarketHeader::new(1, Q64, 1, 1, 1);
+        let tag = [7u8; 16];
+        header.set_bid_count(3);
+        header.set_bid_owner_tag(tag);
+
+        let mut bytes = [0u8; MARKET_HEADER_BYTES];
+        header.encode_into(&mut bytes).unwrap();
+        let decoded = MarketHeader::decode_from(&bytes).unwrap();
+        assert_eq!(decoded.bid_count(), 3);
+        assert_eq!(decoded.bid_owner_tag(), tag);
+    }
+
+    #[test]
     fn owner_page_round_trips_and_rejects_desync() {
         let mut asks = AskPage::default();
         asks.set_links(PageLinks::new(0, None, None));
@@ -1038,15 +1405,22 @@ mod tests {
                 128usize,
             ),
             ("ask_entry", core::mem::size_of::<AskEntry>(), 48usize),
+            ("bid_entry", core::mem::size_of::<BidEntry>(), 48usize),
             (
                 "boundary_entry",
                 core::mem::size_of::<BoundaryEntry>(),
                 32usize,
             ),
             ("ask_page", core::mem::size_of::<AskPage>(), 1_552usize),
+            ("bid_page", core::mem::size_of::<BidPage>(), 1_552usize),
             (
                 "ask_owner_page",
                 core::mem::size_of::<AskOwnerPage>(),
+                1_040usize,
+            ),
+            (
+                "bid_owner_page",
+                core::mem::size_of::<BidOwnerPage>(),
                 1_040usize,
             ),
             (

@@ -86,6 +86,8 @@ pub fn process_instruction(
         Some(4) => process_state_backed_match(_accounts),
         Some(5) => process_multipage_state_backed_match(_program_id, _accounts, data),
         Some(6) | Some(7) => process_active_order(_program_id, _accounts, data),
+        Some(8) | Some(9) => process_active_bid_order(_program_id, _accounts, data),
+        Some(10) => process_state_backed_plan(_accounts),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
@@ -288,15 +290,29 @@ fn process_multipage_state_backed_match(
     .map_err(|_| ProgramError::InvalidInstructionData)
 }
 
-fn validate_owner_page_bytes(data: &[u8], asks: &hybrid_state::AskPage) -> ProgramResult {
+fn validate_owner_page_header(data: &[u8], len: usize, reserved: &[u8; 14]) -> ProgramResult {
     if data.len() != hybrid_state::ASK_OWNER_PAGE_BYTES {
         return Err(ProgramError::InvalidAccountData);
     }
-    let len = usize::from(u16::from_le_bytes([data[0], data[1]]));
-    if len != asks.len() || data[2..16] != asks.reserved {
+    let owner_len = usize::from(u16::from_le_bytes([data[0], data[1]]));
+    if owner_len != len || data[2..16] != *reserved {
         return Err(ProgramError::InvalidAccountData);
     }
     Ok(())
+}
+
+fn validate_owner_page_bytes(data: &[u8], asks: &hybrid_state::AskPage) -> ProgramResult {
+    validate_owner_page_header(data, asks.len(), &asks.reserved)
+}
+
+fn validate_bid_owner_page_bytes(data: &[u8], bids: &hybrid_state::BidPage) -> ProgramResult {
+    validate_owner_page_header(data, bids.len(), &bids.reserved)
+}
+
+fn owner_tag(key: &Pubkey) -> [u8; 16] {
+    let mut tag = [0u8; 16];
+    tag.copy_from_slice(&key.as_ref()[..16]);
+    tag
 }
 
 fn insert_slot(data: &mut [u8], index: usize, old_len: usize, width: usize) {
@@ -320,6 +336,15 @@ fn load_active_ask_page(account: &AccountInfo) -> Result<Box<hybrid_state::AskPa
     let data = account.try_borrow_data()?;
     let mut page = Box::new(hybrid_state::AskPage::default());
     hybrid_state::AskPage::decode_into(&data, &mut page)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    Ok(page)
+}
+
+#[inline(never)]
+fn load_active_bid_page(account: &AccountInfo) -> Result<Box<hybrid_state::BidPage>, ProgramError> {
+    let data = account.try_borrow_data()?;
+    let mut page = Box::new(hybrid_state::BidPage::default());
+    hybrid_state::BidPage::decode_into(&data, &mut page)
         .map_err(|_| ProgramError::InvalidAccountData)?;
     Ok(page)
 }
@@ -521,4 +546,250 @@ fn process_active_order(
         }
         _ => Err(ProgramError::InvalidInstructionData),
     }
+}
+
+#[inline(never)]
+fn process_active_bid_order(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if accounts.len() != 4 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    if !accounts[3].is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if accounts[..3]
+        .iter()
+        .any(|account| account.owner != program_id)
+    {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    if accounts[..3].iter().any(|account| !account.is_writable) {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    let index_bytes = 0u32.to_le_bytes();
+    let (expected_bid, _) = Pubkey::find_program_address(
+        &[b"bid-page", accounts[0].key.as_ref(), &index_bytes],
+        program_id,
+    );
+    if *accounts[1].key != expected_bid {
+        return Err(ProgramError::InvalidSeeds);
+    }
+
+    let market_data = accounts[0].try_borrow_data()?;
+    let market = hybrid_state::MarketHeader::decode_from(&market_data)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    drop(market_data);
+
+    let page = load_active_bid_page(&accounts[1])?;
+    let links = page.links();
+    if links.page_index != 0 || links.prev_page.is_some() || links.next_page.is_some() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    let bid_count = market.bid_count();
+    let expected_tag = market.bid_owner_tag();
+    let supplied_tag = owner_tag(accounts[2].key);
+    let owner_data = accounts[2].try_borrow_data()?;
+    let owner_page_uninitialized = expected_tag == [0; 16]
+        && bid_count == 0
+        && owner_data.len() == hybrid_state::BID_OWNER_PAGE_BYTES
+        && owner_data.iter().all(|byte| *byte == 0);
+    if !owner_page_uninitialized {
+        validate_bid_owner_page_bytes(&owner_data, &page)?;
+    }
+    drop(owner_data);
+
+    if bid_count as usize != page.len() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    if expected_tag != [0; 16] && expected_tag != supplied_tag {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    if expected_tag == [0; 16] && bid_count != 0 {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    match data.first().copied() {
+        Some(8) => {
+            if data.len() != 41 {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let sequence = market.next_sequence;
+            let base_qty = u64::from_le_bytes(
+                data[33..41]
+                    .try_into()
+                    .map_err(|_| ProgramError::InvalidInstructionData)?,
+            );
+            if sequence == 0 || base_qty == 0 || page.len() >= hybrid_state::BIDS_PER_PAGE {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let entry = hybrid_state::BidEntry {
+                price_x64: u128::from_le_bytes(
+                    data[1..17]
+                        .try_into()
+                        .map_err(|_| ProgramError::InvalidInstructionData)?,
+                ),
+                sqrt_price_x64: u128::from_le_bytes(
+                    data[17..33]
+                        .try_into()
+                        .map_err(|_| ProgramError::InvalidInstructionData)?,
+                ),
+                base_qty,
+                sequence,
+            };
+            hybrid_engine::validate_limit_ask(entry.as_limit_ask())
+                .map_err(|_| ProgramError::InvalidInstructionData)?;
+
+            let mut index = 0usize;
+            while index < page.len() {
+                let existing = page.entries[index];
+                if existing.sequence == sequence {
+                    return Err(ProgramError::InvalidInstructionData);
+                }
+                if existing.price_x64 < entry.price_x64
+                    || (existing.price_x64 == entry.price_x64 && existing.sequence > entry.sequence)
+                {
+                    break;
+                }
+                index += 1;
+            }
+
+            let next_sequence = sequence
+                .checked_add(1)
+                .ok_or(ProgramError::InvalidInstructionData)?;
+            let next_count = bid_count
+                .checked_add(1)
+                .ok_or(ProgramError::InvalidInstructionData)?;
+            let old_len = page.len();
+
+            {
+                let mut bid_data = accounts[1].try_borrow_mut_data()?;
+                insert_slot(&mut bid_data, index, old_len, hybrid_state::BID_ENTRY_BYTES);
+                let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::BID_ENTRY_BYTES;
+                bid_data[start..start + 16].copy_from_slice(&entry.price_x64.to_le_bytes());
+                bid_data[start + 16..start + 32]
+                    .copy_from_slice(&entry.sqrt_price_x64.to_le_bytes());
+                bid_data[start + 32..start + 40].copy_from_slice(&entry.base_qty.to_le_bytes());
+                bid_data[start + 40..start + 48].copy_from_slice(&entry.sequence.to_le_bytes());
+            }
+            {
+                let mut owners = accounts[2].try_borrow_mut_data()?;
+                if owner_page_uninitialized {
+                    owners[2..16].copy_from_slice(&page.reserved);
+                }
+                insert_slot(&mut owners, index, old_len, hybrid_state::BID_OWNER_BYTES);
+                let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::BID_OWNER_BYTES;
+                owners[start..start + hybrid_state::BID_OWNER_BYTES]
+                    .copy_from_slice(accounts[3].key.as_ref());
+            }
+            {
+                let mut market_bytes = accounts[0].try_borrow_mut_data()?;
+                market_bytes[20..24].copy_from_slice(&next_count.to_le_bytes());
+                market_bytes[32..40].copy_from_slice(&next_sequence.to_le_bytes());
+                if expected_tag == [0; 16] {
+                    market_bytes[24..32].copy_from_slice(&supplied_tag[0..8]);
+                    market_bytes[40..48].copy_from_slice(&supplied_tag[8..16]);
+                }
+            }
+            Ok(())
+        }
+        Some(9) => {
+            if data.len() != 9 {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let sequence = u64::from_le_bytes(
+                data[1..9]
+                    .try_into()
+                    .map_err(|_| ProgramError::InvalidInstructionData)?,
+            );
+            if sequence == 0 {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            let mut index = 0usize;
+            while index < page.len() && page.entries[index].sequence != sequence {
+                index += 1;
+            }
+            if index == page.len() {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            {
+                let owners = accounts[2].try_borrow_data()?;
+                let start = hybrid_state::PAGE_HEADER_BYTES + index * hybrid_state::BID_OWNER_BYTES;
+                if owners[start..start + hybrid_state::BID_OWNER_BYTES]
+                    != accounts[3].key.to_bytes()
+                {
+                    return Err(ProgramError::InvalidArgument);
+                }
+            }
+
+            let next_count = bid_count
+                .checked_sub(1)
+                .ok_or(ProgramError::InvalidAccountData)?;
+            let old_len = page.len();
+            {
+                let mut bid_data = accounts[1].try_borrow_mut_data()?;
+                remove_slot(&mut bid_data, index, old_len, hybrid_state::BID_ENTRY_BYTES);
+            }
+            {
+                let mut owners = accounts[2].try_borrow_mut_data()?;
+                remove_slot(&mut owners, index, old_len, hybrid_state::BID_OWNER_BYTES);
+            }
+            {
+                let mut market_bytes = accounts[0].try_borrow_mut_data()?;
+                market_bytes[20..24].copy_from_slice(&next_count.to_le_bytes());
+            }
+            Ok(())
+        }
+        _ => Err(ProgramError::InvalidInstructionData),
+    }
+}
+
+#[inline(never)]
+fn process_state_backed_plan(accounts: &[AccountInfo]) -> ProgramResult {
+    if accounts.len() != 3 {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+
+    let market_data = accounts[0].try_borrow_data()?;
+    let market = hybrid_state::MarketHeader::decode_from(&market_data)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    drop(market_data);
+
+    let mut ask_pages = Vec::with_capacity(1);
+    decode_and_push_ask_page(&accounts[1], &mut ask_pages)?;
+    hybrid_state::validate_ask_chain(&ask_pages).map_err(|_| ProgramError::InvalidAccountData)?;
+
+    let mut boundary_pages = Vec::with_capacity(1);
+    decode_and_push_boundary_page(&accounts[2], &mut boundary_pages)?;
+    hybrid_state::validate_boundary_chain(&boundary_pages)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+
+    let asks = ask_pages[0]
+        .as_slice()
+        .iter()
+        .copied()
+        .map(hybrid_state::AskEntry::as_limit_ask)
+        .collect::<Vec<_>>();
+    let boundaries = boundary_pages[0]
+        .as_slice()
+        .iter()
+        .copied()
+        .map(hybrid_state::BoundaryEntry::as_passive_boundary)
+        .collect::<Vec<_>>();
+
+    hybrid_engine::plan_buy_exact_in_levels(
+        hybrid_engine::PassiveState {
+            sqrt_price_x64: market.sqrt_price_x64,
+            liquidity: market.liquidity,
+        },
+        &asks,
+        &boundaries,
+        20_000,
+    )
+    .map(|_| ())
+    .map_err(|_| ProgramError::InvalidInstructionData)
 }

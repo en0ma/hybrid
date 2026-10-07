@@ -3,8 +3,8 @@
 use hybrid_engine::Q64;
 use hybrid_program::ID;
 use hybrid_state::{
-    AskOwnerPage, AskPage, MarketHeader, PageLinks, ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES,
-    MARKET_HEADER_BYTES,
+    AskOwnerPage, AskPage, BidOwnerPage, BidPage, MarketHeader, PageLinks, ASK_OWNER_PAGE_BYTES,
+    ASK_PAGE_BYTES, BID_OWNER_PAGE_BYTES, BID_PAGE_BYTES, MARKET_HEADER_BYTES,
 };
 use solana_account::Account;
 use solana_instruction::{AccountMeta, Instruction};
@@ -20,6 +20,22 @@ fn place_data(price_x64: u128, sqrt_price_x64: u128, base_qty: u64) -> Vec<u8> {
     data.extend_from_slice(&price_x64.to_le_bytes());
     data.extend_from_slice(&sqrt_price_x64.to_le_bytes());
     data.extend_from_slice(&base_qty.to_le_bytes());
+    data
+}
+
+fn place_bid_data(price_x64: u128, sqrt_price_x64: u128, base_qty: u64) -> Vec<u8> {
+    let mut data = Vec::with_capacity(41);
+    data.push(8);
+    data.extend_from_slice(&price_x64.to_le_bytes());
+    data.extend_from_slice(&sqrt_price_x64.to_le_bytes());
+    data.extend_from_slice(&base_qty.to_le_bytes());
+    data
+}
+
+fn cancel_bid_data(sequence: u64) -> Vec<u8> {
+    let mut data = Vec::with_capacity(9);
+    data.push(9);
+    data.extend_from_slice(&sequence.to_le_bytes());
     data
 }
 
@@ -287,4 +303,216 @@ async fn place_rejects_replacement_sidecar_and_missing_signature() {
         blockhash,
     );
     assert!(context.banks_client.process_transaction(tx).await.is_err());
+}
+
+#[tokio::test]
+async fn bid_place_cancel_preserves_descending_book_and_owner_binding() {
+    let market_key = Pubkey::new_unique();
+    let (bid_key, _) = Pubkey::find_program_address(
+        &[b"bid-page", market_key.as_ref(), &0u32.to_le_bytes()],
+        &ID,
+    );
+    let owner_page = Keypair::new();
+    let owner_key = owner_page.pubkey();
+    let maker = Keypair::new();
+    let other = Keypair::new();
+
+    let market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
+    market.encode_into(&mut market_data).unwrap();
+
+    let mut bids = BidPage::default();
+    bids.set_links(PageLinks::new(0, None, None));
+    let mut bid_data = vec![0u8; BID_PAGE_BYTES];
+    bids.encode_into(&mut bid_data).unwrap();
+
+    let mut program_test = ProgramTest::new("hybrid_program", ID, None);
+    program_test.add_account(market_key, account(market_data, ID));
+    program_test.add_account(bid_key, account(bid_data, ID));
+    program_test.add_account(maker.pubkey(), account(Vec::new(), Pubkey::default()));
+    program_test.add_account(other.pubkey(), account(Vec::new(), Pubkey::default()));
+
+    let mut context = program_test.start_with_context().await;
+
+    let mut create_data = Vec::with_capacity(52);
+    create_data.extend_from_slice(&0u32.to_le_bytes());
+    create_data.extend_from_slice(&10_000_000u64.to_le_bytes());
+    create_data.extend_from_slice(&(BID_OWNER_PAGE_BYTES as u64).to_le_bytes());
+    create_data.extend_from_slice(ID.as_ref());
+    let create_owner_page = Instruction {
+        program_id: Pubkey::default(),
+        accounts: vec![
+            AccountMeta::new(context.payer.pubkey(), true),
+            AccountMeta::new(owner_key, true),
+        ],
+        data: create_data,
+    };
+    let blockhash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[create_owner_page],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &owner_page],
+        blockhash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let instruction = |maker_key, signer, data| Instruction {
+        program_id: ID,
+        accounts: vec![
+            AccountMeta::new(market_key, false),
+            AccountMeta::new(bid_key, false),
+            AccountMeta::new(owner_key, false),
+            if signer {
+                AccountMeta::new_readonly(maker_key, true)
+            } else {
+                AccountMeta::new_readonly(maker_key, false)
+            },
+        ],
+        data,
+    };
+
+    let higher_sqrt = Q64 + Q64 / 100;
+    let higher_price = hybrid_engine::spot_price_x64(higher_sqrt).unwrap();
+
+    for data in [
+        place_bid_data(Q64, Q64, 100),
+        place_bid_data(higher_price, higher_sqrt, 200),
+    ] {
+        let ix = instruction(maker.pubkey(), true, data);
+        let blockhash = context.get_new_latest_blockhash().await.unwrap();
+        let tx = Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&context.payer.pubkey()),
+            &[&context.payer, &maker],
+            blockhash,
+        );
+        context.banks_client.process_transaction(tx).await.unwrap();
+    }
+
+    let stored_market = context
+        .banks_client
+        .get_account(market_key)
+        .await
+        .unwrap()
+        .unwrap();
+    let market = MarketHeader::decode_from(&stored_market.data).unwrap();
+    assert_eq!(market.bid_count(), 2);
+    assert_eq!(market.next_sequence, 3);
+    assert_eq!(market.bid_owner_tag(), owner_key.to_bytes()[..16]);
+
+    let stored_bids = context
+        .banks_client
+        .get_account(bid_key)
+        .await
+        .unwrap()
+        .unwrap();
+    let bids = BidPage::decode_from(&stored_bids.data).unwrap();
+    assert_eq!(bids.as_slice()[0].sequence, 2);
+    assert_eq!(bids.as_slice()[1].sequence, 1);
+
+    let stored_owners = context
+        .banks_client
+        .get_account(owner_key)
+        .await
+        .unwrap()
+        .unwrap();
+    let owners = BidOwnerPage::decode_from(&stored_owners.data).unwrap();
+    assert_eq!(owners.as_slice()[0], maker.pubkey().to_bytes());
+    assert_eq!(owners.as_slice()[1], maker.pubkey().to_bytes());
+
+    let unauthorized = instruction(other.pubkey(), true, cancel_bid_data(2));
+    let blockhash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[unauthorized],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &other],
+        blockhash,
+    );
+    assert!(context.banks_client.process_transaction(tx).await.is_err());
+
+    let cancel = instruction(maker.pubkey(), true, cancel_bid_data(2));
+    let blockhash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[cancel],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &maker],
+        blockhash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let stored_market = context
+        .banks_client
+        .get_account(market_key)
+        .await
+        .unwrap()
+        .unwrap();
+    let market = MarketHeader::decode_from(&stored_market.data).unwrap();
+    assert_eq!(market.bid_count(), 1);
+    assert_eq!(market.next_sequence, 3);
+
+    let stored_bids = context
+        .banks_client
+        .get_account(bid_key)
+        .await
+        .unwrap()
+        .unwrap();
+    let bids = BidPage::decode_from(&stored_bids.data).unwrap();
+    assert_eq!(bids.len(), 1);
+    assert_eq!(bids.as_slice()[0].sequence, 1);
+}
+
+#[tokio::test]
+async fn bid_place_rejects_undersized_uninitialized_sidecar() {
+    let market_key = Pubkey::new_unique();
+    let (bid_key, _) = Pubkey::find_program_address(
+        &[b"bid-page", market_key.as_ref(), &0u32.to_le_bytes()],
+        &ID,
+    );
+    let owner_key = Pubkey::new_unique();
+    let maker = Keypair::new();
+
+    let market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
+    market.encode_into(&mut market_data).unwrap();
+
+    let mut bids = BidPage::default();
+    bids.set_links(PageLinks::new(0, None, None));
+    let mut bid_data = vec![0u8; BID_PAGE_BYTES];
+    bids.encode_into(&mut bid_data).unwrap();
+
+    let mut program_test = ProgramTest::new("hybrid_program", ID, None);
+    program_test.add_account(market_key, account(market_data, ID));
+    program_test.add_account(bid_key, account(bid_data, ID));
+    program_test.add_account(owner_key, account(vec![0u8; 48], ID));
+    program_test.add_account(maker.pubkey(), account(Vec::new(), Pubkey::default()));
+
+    let mut context = program_test.start_with_context().await;
+    let ix = Instruction {
+        program_id: ID,
+        accounts: vec![
+            AccountMeta::new(market_key, false),
+            AccountMeta::new(bid_key, false),
+            AccountMeta::new(owner_key, false),
+            AccountMeta::new_readonly(maker.pubkey(), true),
+        ],
+        data: place_bid_data(Q64, Q64, 100),
+    };
+    let blockhash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &maker],
+        blockhash,
+    );
+    assert!(context.banks_client.process_transaction(tx).await.is_err());
+
+    let stored_market = context
+        .banks_client
+        .get_account(market_key)
+        .await
+        .unwrap()
+        .unwrap();
+    let market = MarketHeader::decode_from(&stored_market.data).unwrap();
+    assert_eq!(market.bid_count(), 0);
+    assert_eq!(market.next_sequence, 1);
 }
