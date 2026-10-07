@@ -302,8 +302,7 @@ mod tests {
             },
         ];
 
-        let totals =
-            settle_buy_active_fills(&fills, &owner_indexes, &mut balances).unwrap();
+        let totals = settle_buy_active_fills(&fills, &owner_indexes, &mut balances).unwrap();
 
         assert_eq!(
             totals,
