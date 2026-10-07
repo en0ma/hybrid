@@ -6,7 +6,7 @@ use hybrid_state::{
     AskEntry, AskOwnerPage, AskPage, BidEntry, BidOwnerPage, BidPage, BoundaryEntry, BoundaryPage,
     CustodyState, MakerBalance, MarketHeader, PageLinks, ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES,
     BID_OWNER_PAGE_BYTES, BID_PAGE_BYTES, BOUNDARY_PAGE_BYTES, CUSTODY_STATE_BYTES,
-    MAKER_BALANCE_BYTES, MARKET_HEADER_BYTES, MARKET_FLAG_COLLATERALIZED_ACTIVE,
+    MAKER_BALANCE_BYTES, MARKET_FLAG_COLLATERALIZED_ACTIVE, MARKET_HEADER_BYTES,
 };
 use solana_account::Account;
 use solana_instruction::{AccountMeta, Instruction};
@@ -591,7 +591,6 @@ async fn measure_cancel_bid_cu() {
     assert!(units > 0);
 }
 
-
 const TOKEN_PROGRAM_ID: Pubkey =
     solana_program::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 
@@ -608,11 +607,7 @@ fn cu_token_amount(data: &[u8]) -> u64 {
     u64::from_le_bytes(data[64..72].try_into().unwrap())
 }
 
-fn cu_mock_token(
-    _program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    data: &[u8],
-) -> ProgramResult {
+fn cu_mock_token(_program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     if data.len() != 9 || data[0] != 3 || accounts.len() < 3 || !accounts[2].is_signer {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -632,8 +627,7 @@ fn cu_mock_token(
 
 async fn units_for_buy_swap(opcode: u8) -> u64 {
     let market = Pubkey::new_unique();
-    let (custody, custody_bump) =
-        Pubkey::find_program_address(&[b"custody", market.as_ref()], &ID);
+    let (custody, custody_bump) = Pubkey::find_program_address(&[b"custody", market.as_ref()], &ID);
     let (ask_page, _) =
         Pubkey::find_program_address(&[b"ask-page", market.as_ref(), &0u32.to_le_bytes()], &ID);
     let owner_page = Pubkey::new_unique();
@@ -647,10 +641,8 @@ async fn units_for_buy_swap(opcode: u8) -> u64 {
     let taker_quote = Pubkey::new_unique();
     let taker_base = Pubkey::new_unique();
     let maker = Pubkey::new_unique();
-    let (maker_balance, maker_bump) = Pubkey::find_program_address(
-        &[b"maker-balance", market.as_ref(), maker.as_ref()],
-        &ID,
-    );
+    let (maker_balance, maker_bump) =
+        Pubkey::find_program_address(&[b"maker-balance", market.as_ref(), maker.as_ref()], &ID);
 
     let mut header = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
     header.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
