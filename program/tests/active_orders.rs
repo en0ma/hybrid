@@ -73,7 +73,8 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
         &ID,
     );
 
-    let market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    market.enable_collateralized_active();
     let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
     market.encode_into(&mut market_data).unwrap();
 
@@ -280,6 +281,7 @@ async fn place_rejects_replacement_sidecar_and_missing_signature() {
     );
 
     let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    market.enable_collateralized_active();
     market.reserved2 = bound_owner_key.to_bytes();
     let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
     market.encode_into(&mut market_data).unwrap();
@@ -365,7 +367,8 @@ async fn bid_place_cancel_preserves_descending_book_and_owner_binding() {
         &ID,
     );
 
-    let market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    market.enable_collateralized_active();
     let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
     market.encode_into(&mut market_data).unwrap();
 
@@ -530,7 +533,8 @@ async fn bid_place_rejects_undersized_uninitialized_sidecar() {
         &ID,
     );
 
-    let market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    market.enable_collateralized_active();
     let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
     market.encode_into(&mut market_data).unwrap();
 
