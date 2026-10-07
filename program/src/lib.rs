@@ -135,11 +135,11 @@ fn mint_decimals(account: &AccountInfo) -> Result<u8, ProgramError> {
     Ok(data[44])
 }
 
-fn create_program_pda(
+fn create_program_pda<'a>(
     program_id: &Pubkey,
-    payer: &AccountInfo,
-    target: &AccountInfo,
-    system_program: &AccountInfo,
+    payer: &AccountInfo<'a>,
+    target: &AccountInfo<'a>,
+    system_program: &AccountInfo<'a>,
     seeds: &[&[u8]],
     bump: u8,
     space: usize,
@@ -147,37 +147,91 @@ fn create_program_pda(
     if *system_program.key != Pubkey::default() || !payer.is_signer || !payer.is_writable {
         return Err(ProgramError::MissingRequiredSignature);
     }
-    let lamports = Rent::get()?.minimum_balance(space);
-    let mut ix_data = Vec::with_capacity(52);
-    ix_data.extend_from_slice(&0u32.to_le_bytes());
-    ix_data.extend_from_slice(&lamports.to_le_bytes());
-    ix_data.extend_from_slice(&(space as u64).to_le_bytes());
-    ix_data.extend_from_slice(program_id.as_ref());
-    let ix = Instruction {
-        program_id: Pubkey::default(),
-        accounts: vec![
-            AccountMeta::new(*payer.key, true),
-            AccountMeta::new(*target.key, true),
-        ],
-        data: ix_data,
-    };
+    if *target.owner != Pubkey::default() || !target.data_is_empty() || !target.is_writable {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    let required_lamports = Rent::get()?.minimum_balance(space);
     let bump_bytes = [bump];
     let mut signer_seeds = Vec::with_capacity(seeds.len() + 1);
     signer_seeds.extend_from_slice(seeds);
     signer_seeds.push(&bump_bytes);
+
+    if target.lamports() == 0 {
+        let mut ix_data = Vec::with_capacity(52);
+        ix_data.extend_from_slice(&0u32.to_le_bytes());
+        ix_data.extend_from_slice(&required_lamports.to_le_bytes());
+        ix_data.extend_from_slice(&(space as u64).to_le_bytes());
+        ix_data.extend_from_slice(program_id.as_ref());
+        let ix = Instruction {
+            program_id: Pubkey::default(),
+            accounts: vec![
+                AccountMeta::new(*payer.key, true),
+                AccountMeta::new(*target.key, true),
+            ],
+            data: ix_data,
+        };
+        return invoke_signed(
+            &ix,
+            &[payer.clone(), target.clone(), system_program.clone()],
+            &[&signer_seeds],
+        );
+    }
+
+    let top_up = required_lamports.saturating_sub(target.lamports());
+    if top_up > 0 {
+        let mut transfer_data = Vec::with_capacity(12);
+        transfer_data.extend_from_slice(&2u32.to_le_bytes());
+        transfer_data.extend_from_slice(&top_up.to_le_bytes());
+        let transfer = Instruction {
+            program_id: Pubkey::default(),
+            accounts: vec![
+                AccountMeta::new(*payer.key, true),
+                AccountMeta::new(*target.key, false),
+            ],
+            data: transfer_data,
+        };
+        invoke(
+            &transfer,
+            &[payer.clone(), target.clone(), system_program.clone()],
+        )?;
+    }
+
+    let mut allocate_data = Vec::with_capacity(12);
+    allocate_data.extend_from_slice(&8u32.to_le_bytes());
+    allocate_data.extend_from_slice(&(space as u64).to_le_bytes());
+    let allocate = Instruction {
+        program_id: Pubkey::default(),
+        accounts: vec![AccountMeta::new(*target.key, true)],
+        data: allocate_data,
+    };
     invoke_signed(
-        &ix,
-        &[payer.clone(), target.clone(), system_program.clone()],
+        &allocate,
+        &[target.clone(), system_program.clone()],
+        &[&signer_seeds],
+    )?;
+
+    let mut assign_data = Vec::with_capacity(36);
+    assign_data.extend_from_slice(&1u32.to_le_bytes());
+    assign_data.extend_from_slice(program_id.as_ref());
+    let assign = Instruction {
+        program_id: Pubkey::default(),
+        accounts: vec![AccountMeta::new(*target.key, true)],
+        data: assign_data,
+    };
+    invoke_signed(
+        &assign,
+        &[target.clone(), system_program.clone()],
         &[&signer_seeds],
     )
 }
 
-fn transfer_checked(
-    source: &AccountInfo,
-    mint: &AccountInfo,
-    destination: &AccountInfo,
-    authority: &AccountInfo,
-    token_program: &AccountInfo,
+fn transfer_checked<'a>(
+    source: &AccountInfo<'a>,
+    mint: &AccountInfo<'a>,
+    destination: &AccountInfo<'a>,
+    authority: &AccountInfo<'a>,
+    token_program: &AccountInfo<'a>,
     amount: u64,
     decimals: u8,
     signer_seeds: Option<&[&[u8]]>,
