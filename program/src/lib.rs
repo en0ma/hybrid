@@ -232,10 +232,10 @@ fn transfer_checked<'a>(
     destination: &AccountInfo<'a>,
     authority: &AccountInfo<'a>,
     token_program: &AccountInfo<'a>,
-    amount: u64,
-    decimals: u8,
+    amount_and_decimals: (u64, u8),
     signer_seeds: Option<&[&[u8]]>,
 ) -> ProgramResult {
+    let (amount, decimals) = amount_and_decimals;
     if *token_program.key != TOKEN_PROGRAM_ID {
         return Err(ProgramError::IncorrectProgramId);
     }
@@ -1318,8 +1318,7 @@ fn process_deposit(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -
         vault,
         maker,
         token_program,
-        amount,
-        decimals,
+        (amount, decimals),
         None,
     )?;
     if asset == 0 {
