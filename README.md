@@ -120,6 +120,49 @@ This is a bounded V0 mutation path.
 
 
 
+## Collateralized execution core
+
+Hybrid now separates settlement math from the on-chain entrypoint through the `hybrid-settlement` crate.
+
+The crate defines the canonical maker collateral model:
+
+- free base
+- locked base
+- free quote
+- locked quote
+
+Ask placement can reserve base collateral. Bid placement can reserve quote collateral. Cancellation can release the corresponding locked balance. Active fills consume locked maker collateral and credit the asset received by the maker.
+
+The fixed `MakerBalanceAccount` layout is 64 bytes:
+
+- 32-byte maker public key
+- four 64-bit balance fields
+
+The layout has a permanent state-byte budget and round-trip test.
+
+The canonical active-fill plan can also be applied to an `AskPage`. Fully filled orders are removed and compacted. Partial fills reduce quantity in place. Fill indexes must be strictly increasing and cannot overfill an order.
+
+Settlement fuzzing checks multi-maker fill conservation and rejects paths that would spend more collateral than a maker locked.
+
+### Current execution boundary
+
+This slice establishes deterministic collateral accounting and active-book mutation, but it does not yet move SPL tokens.
+
+The on-chain program must not expose a third-party fill instruction until token vault CPIs, deposits, withdrawals, and the collateral state transition are atomic in one transaction path.
+
+The intended execution sequence is:
+
+1. quote with the canonical matcher;
+2. produce the canonical active-fill plan;
+3. validate maker locked collateral;
+4. transfer taker quote into custody;
+5. transfer maker/passive base to the taker;
+6. apply maker settlement credits;
+7. apply active-order quantity reductions or removals;
+8. commit the final passive price/liquidity state.
+
+That atomic custody path is the next program-layer step.
+
 ## Custody and collateralized maker balances
 
 Hybrid now has a custody foundation for backed active liquidity.
