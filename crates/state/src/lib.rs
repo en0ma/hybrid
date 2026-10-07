@@ -95,8 +95,12 @@ impl CustodyState {
             market: input[16..48].try_into().map_err(|_| StateError::Corrupt)?,
             base_mint: input[48..80].try_into().map_err(|_| StateError::Corrupt)?,
             quote_mint: input[80..112].try_into().map_err(|_| StateError::Corrupt)?,
-            base_vault: input[112..144].try_into().map_err(|_| StateError::Corrupt)?,
-            quote_vault: input[144..176].try_into().map_err(|_| StateError::Corrupt)?,
+            base_vault: input[112..144]
+                .try_into()
+                .map_err(|_| StateError::Corrupt)?,
+            quote_vault: input[144..176]
+                .try_into()
+                .map_err(|_| StateError::Corrupt)?,
             total_base: get_u64(input, 176),
             total_quote: get_u64(input, 184),
         };
@@ -211,10 +215,7 @@ impl MakerBalance {
             .locked_base
             .checked_sub(amount)
             .ok_or(StateError::Corrupt)?;
-        self.free_base = self
-            .free_base
-            .checked_add(amount)
-            .ok_or(StateError::Full)?;
+        self.free_base = self.free_base.checked_add(amount).ok_or(StateError::Full)?;
         Ok(())
     }
 
