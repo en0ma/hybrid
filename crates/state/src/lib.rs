@@ -195,37 +195,67 @@ impl MakerBalance {
     }
 
     pub fn lock_base(&mut self, amount: u64) -> Result<(), StateError> {
-        self.free_base = self.free_base.checked_sub(amount).ok_or(StateError::Unauthorized)?;
-        self.locked_base = self.locked_base.checked_add(amount).ok_or(StateError::Full)?;
+        self.free_base = self
+            .free_base
+            .checked_sub(amount)
+            .ok_or(StateError::Unauthorized)?;
+        self.locked_base = self
+            .locked_base
+            .checked_add(amount)
+            .ok_or(StateError::Full)?;
         Ok(())
     }
 
     pub fn unlock_base(&mut self, amount: u64) -> Result<(), StateError> {
-        self.locked_base = self.locked_base.checked_sub(amount).ok_or(StateError::Corrupt)?;
-        self.free_base = self.free_base.checked_add(amount).ok_or(StateError::Full)?;
+        self.locked_base = self
+            .locked_base
+            .checked_sub(amount)
+            .ok_or(StateError::Corrupt)?;
+        self.free_base = self
+            .free_base
+            .checked_add(amount)
+            .ok_or(StateError::Full)?;
         Ok(())
     }
 
     pub fn lock_quote(&mut self, amount: u64) -> Result<(), StateError> {
-        self.free_quote = self.free_quote.checked_sub(amount).ok_or(StateError::Unauthorized)?;
-        self.locked_quote = self.locked_quote.checked_add(amount).ok_or(StateError::Full)?;
+        self.free_quote = self
+            .free_quote
+            .checked_sub(amount)
+            .ok_or(StateError::Unauthorized)?;
+        self.locked_quote = self
+            .locked_quote
+            .checked_add(amount)
+            .ok_or(StateError::Full)?;
         Ok(())
     }
 
     pub fn unlock_quote(&mut self, amount: u64) -> Result<(), StateError> {
-        self.locked_quote = self.locked_quote.checked_sub(amount).ok_or(StateError::Corrupt)?;
-        self.free_quote = self.free_quote.checked_add(amount).ok_or(StateError::Full)?;
+        self.locked_quote = self
+            .locked_quote
+            .checked_sub(amount)
+            .ok_or(StateError::Corrupt)?;
+        self.free_quote = self
+            .free_quote
+            .checked_add(amount)
+            .ok_or(StateError::Full)?;
         Ok(())
     }
 
     pub fn settle_ask(&mut self, base: u64, quote: u64) -> Result<(), StateError> {
-        self.locked_base = self.locked_base.checked_sub(base).ok_or(StateError::Corrupt)?;
+        self.locked_base = self
+            .locked_base
+            .checked_sub(base)
+            .ok_or(StateError::Corrupt)?;
         self.free_quote = self.free_quote.checked_add(quote).ok_or(StateError::Full)?;
         Ok(())
     }
 
     pub fn settle_bid(&mut self, base: u64, quote: u64) -> Result<(), StateError> {
-        self.locked_quote = self.locked_quote.checked_sub(quote).ok_or(StateError::Corrupt)?;
+        self.locked_quote = self
+            .locked_quote
+            .checked_sub(quote)
+            .ok_or(StateError::Corrupt)?;
         self.free_base = self.free_base.checked_add(base).ok_or(StateError::Full)?;
         Ok(())
     }
