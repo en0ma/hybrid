@@ -461,7 +461,6 @@ async fn bid_place_cancel_preserves_descending_book_and_owner_binding() {
     assert_eq!(bids.as_slice()[0].sequence, 1);
 }
 
-
 #[tokio::test]
 async fn bid_place_rejects_undersized_uninitialized_sidecar() {
     let market_key = Pubkey::new_unique();
