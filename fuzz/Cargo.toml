@@ -11,6 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 hybrid-engine = { path = "../crates/engine" }
 hybrid-state = { path = "../crates/state" }
+hybrid-settlement = { path = "../crates/settlement" }
 
 [[bin]]
 name = "passive_quote"
@@ -22,6 +23,13 @@ bench = false
 [[bin]]
 name = "state_page"
 path = "fuzz_targets/state_page.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "settlement"
+path = "fuzz_targets/settlement.rs"
 test = false
 doc = false
 bench = false
