@@ -443,6 +443,7 @@ async fn units_for_bid_order_mutation(cancel: bool) -> u64 {
     );
 
     let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    market.enable_collateralized_active();
     let mut bids = BidPage::default();
     bids.set_links(PageLinks::new(0, None, None));
     let mut owners = BidOwnerPage::default();
