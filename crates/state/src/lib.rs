@@ -23,6 +23,7 @@ pub const MAKER_BALANCE_BYTES: usize = 112;
 
 pub const MARKET_MAGIC: [u8; 8] = *b"HYBRID01";
 pub const STATE_VERSION: u8 = 1;
+pub const MARKET_FLAG_COLLATERALIZED_ACTIVE: u16 = 1;
 pub const CUSTODY_MAGIC: [u8; 8] = *b"HYBCUST1";
 pub const MAKER_BALANCE_MAGIC: [u8; 8] = *b"HYBBAL01";
 
@@ -334,6 +335,14 @@ impl MarketHeader {
     pub fn set_bid_owner_tag(&mut self, tag: [u8; 16]) {
         self.reserved0[4..12].copy_from_slice(&tag[0..8]);
         self.reserved1.copy_from_slice(&tag[8..16]);
+    }
+
+    pub fn collateralized_active(&self) -> bool {
+        self.flags & MARKET_FLAG_COLLATERALIZED_ACTIVE != 0
+    }
+
+    pub fn enable_collateralized_active(&mut self) {
+        self.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
     }
 
     pub fn allocate_sequence(&mut self) -> Result<u64, StateError> {
