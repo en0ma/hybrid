@@ -526,7 +526,12 @@ pub fn plan_buy_active_exact_out(
 
 fn fill_active_ask(ask: LimitAsk, remaining_quote: u64) -> Result<(u64, u64, bool), QuoteError> {
     validate_limit_ask(ask)?;
-    let base_fill = base_for_quote_at_price(remaining_quote, ask.price_x64)?.min(ask.base_qty);
+    let numerator = u128::from(remaining_quote)
+        .checked_mul(Q64)
+        .ok_or(QuoteError::Overflow)?;
+    let affordable = numerator / ask.price_x64;
+    let base_fill = u64::try_from(affordable.min(u128::from(ask.base_qty)))
+        .map_err(|_| QuoteError::Overflow)?;
     if base_fill == 0 {
         return Ok((0, 0, false));
     }
@@ -919,10 +924,7 @@ mod tests {
                 base_qty: 100,
             },
         ];
-        assert_eq!(
-            validate_limit_ask(asks[1]),
-            Err(QuoteError::InvalidCachedSqrtPrice)
-        );
+        assert_eq!(validate_limit_ask(asks[1]), Ok(()));
 
         let asks = [
             one_dollar_ask(100),
@@ -936,6 +938,23 @@ mod tests {
         assert_eq!(plan.amount_in, 100);
         assert_eq!(plan.amount_out, 100);
         assert_eq!(plan.fill_count, 1);
+    }
+
+    #[test]
+    fn active_fill_clamps_low_price_affordability_before_u64_narrowing() {
+        let ask = LimitAsk {
+            price_x64: 1,
+            sqrt_price_x64: 6_074_000_999,
+            base_qty: 1,
+        };
+        assert_eq!(validate_limit_ask(ask), Ok(()));
+
+        let plan = plan_buy_active_exact_in(Q64, &[ask], 1).unwrap();
+        assert_eq!(plan.amount_in, 1);
+        assert_eq!(plan.amount_out, 1);
+        assert_eq!(plan.fill_count, 1);
+        assert_eq!(plan.fills[0].base_qty, 1);
+        assert_eq!(plan.fills[0].quote_qty, 1);
     }
 
     #[test]
