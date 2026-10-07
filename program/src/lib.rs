@@ -1379,7 +1379,11 @@ fn process_withdraw(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) 
     let (expected_mint, expected_vault, decimals) = if asset == 0 {
         (custody.base_mint, custody.base_vault, custody.base_decimals)
     } else {
-        (custody.quote_mint, custody.quote_vault, custody.quote_decimals)
+        (
+            custody.quote_mint,
+            custody.quote_vault,
+            custody.quote_decimals,
+        )
     };
     if mint.key.to_bytes() != expected_mint
         || vault.key.to_bytes() != expected_vault
