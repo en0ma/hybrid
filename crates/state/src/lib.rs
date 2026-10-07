@@ -1784,6 +1784,16 @@ mod tests {
                 core::mem::size_of::<BoundaryPage>(),
                 1_040usize,
             ),
+            (
+                "custody_state",
+                core::mem::size_of::<CustodyState>(),
+                192usize,
+            ),
+            (
+                "maker_balance",
+                core::mem::size_of::<MakerBalance>(),
+                112usize,
+            ),
         ];
         for (name, actual, expected) in layouts {
             println!("HYBRID_STATE_BYTES {name} {actual}");
