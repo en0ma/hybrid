@@ -1513,8 +1513,9 @@ fn parse_buy_swap(data: &[u8]) -> Result<(u8, u64, u64), ProgramError> {
 }
 
 #[inline(never)]
-#[inline(never)]
-fn load_owner_page_box(account: &AccountInfo) -> Result<Box<hybrid_state::AskOwnerPage>, ProgramError> {
+fn load_owner_page_box(
+    account: &AccountInfo,
+) -> Result<Box<hybrid_state::AskOwnerPage>, ProgramError> {
     let data = account.try_borrow_data()?;
     let mut page = Box::new(hybrid_state::AskOwnerPage::default());
     hybrid_state::AskOwnerPage::decode_into(&data, &mut page)
