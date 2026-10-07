@@ -1352,10 +1352,20 @@ mod tests {
         asks.set_links(PageLinks::new(0, None, None));
         let mut owners = AskOwnerPage::default();
         owners.set_links(PageLinks::new(0, None, None));
-        insert_owned_ask(&mut asks, &mut owners, ask(Q64, 100, 1), [1; ASK_OWNER_BYTES])
-            .unwrap();
-        insert_owned_ask(&mut asks, &mut owners, ask(Q64, 200, 2), [2; ASK_OWNER_BYTES])
-            .unwrap();
+        insert_owned_ask(
+            &mut asks,
+            &mut owners,
+            ask(Q64, 100, 1),
+            [1; ASK_OWNER_BYTES],
+        )
+        .unwrap();
+        insert_owned_ask(
+            &mut asks,
+            &mut owners,
+            ask(Q64, 200, 2),
+            [2; ASK_OWNER_BYTES],
+        )
+        .unwrap();
         insert_owned_ask(
             &mut asks,
             &mut owners,
@@ -1377,8 +1387,7 @@ mod tests {
             },
         ];
 
-        let removed =
-            apply_active_fills_to_ask_page(&mut asks, &mut owners, &fills).unwrap();
+        let removed = apply_active_fills_to_ask_page(&mut asks, &mut owners, &fills).unwrap();
         assert_eq!(removed, 1);
         assert_eq!(asks.len(), 2);
         assert_eq!(asks.as_slice()[0].sequence, 2);
@@ -1396,8 +1405,13 @@ mod tests {
         asks.set_links(PageLinks::new(0, None, None));
         let mut owners = AskOwnerPage::default();
         owners.set_links(PageLinks::new(0, None, None));
-        insert_owned_ask(&mut asks, &mut owners, ask(Q64, 100, 1), [1; ASK_OWNER_BYTES])
-            .unwrap();
+        insert_owned_ask(
+            &mut asks,
+            &mut owners,
+            ask(Q64, 100, 1),
+            [1; ASK_OWNER_BYTES],
+        )
+        .unwrap();
         let fills = [hybrid_engine::ActiveFill {
             ask_index: 0,
             base_qty: 101,
