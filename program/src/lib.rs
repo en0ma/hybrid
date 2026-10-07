@@ -1513,6 +1513,44 @@ fn parse_buy_swap(data: &[u8]) -> Result<(u8, u64, u64), ProgramError> {
 }
 
 #[inline(never)]
+#[inline(never)]
+fn load_owner_page_box(account: &AccountInfo) -> Result<Box<hybrid_state::AskOwnerPage>, ProgramError> {
+    let data = account.try_borrow_data()?;
+    let mut page = Box::new(hybrid_state::AskOwnerPage::default());
+    hybrid_state::AskOwnerPage::decode_into(&data, &mut page)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    Ok(page)
+}
+
+#[inline(never)]
+fn plan_active_buy(
+    opcode: u8,
+    sqrt_price_x64: u128,
+    asks: &[hybrid_engine::LimitAsk],
+    amount: u64,
+    limit: u64,
+) -> Result<Box<hybrid_engine::ActiveOnlyBuyPlan>, ProgramError> {
+    let plan = if opcode == 15 {
+        let plan = hybrid_engine::plan_buy_active_exact_in(sqrt_price_x64, asks, amount)
+            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        if plan.amount_in != amount || plan.amount_out < limit {
+            return Err(ProgramError::InsufficientFunds);
+        }
+        plan
+    } else {
+        let plan = hybrid_engine::plan_buy_active_exact_out(sqrt_price_x64, asks, amount)
+            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        if plan.amount_out != amount || plan.amount_in > limit {
+            return Err(ProgramError::InsufficientFunds);
+        }
+        plan
+    };
+    if plan.fill_count == 0 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    Ok(Box::new(plan))
+}
+
 fn process_buy_swap(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     if accounts.len() <= BUY_SWAP_FIXED_ACCOUNTS
         || accounts.len() > BUY_SWAP_FIXED_ACCOUNTS + MAX_SWAP_MAKER_ACCOUNTS
@@ -1573,10 +1611,7 @@ fn process_buy_swap(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) 
     }
 
     let mut asks = load_active_ask_page(ask_account)?;
-    let owner_data = owner_account.try_borrow_data()?;
-    let mut owners = hybrid_state::AskOwnerPage::decode_from(&owner_data)
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    drop(owner_data);
+    let mut owners = load_owner_page_box(owner_account)?;
     owners
         .validate_parallel(&asks)
         .map_err(|_| ProgramError::InvalidAccountData)?;
@@ -1622,26 +1657,7 @@ fn process_buy_swap(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) 
         .copied()
         .map(hybrid_state::AskEntry::as_limit_ask)
         .collect::<Vec<_>>();
-    let plan = if opcode == 15 {
-        let plan =
-            hybrid_engine::plan_buy_active_exact_in(market.sqrt_price_x64, &ask_limits, amount)
-                .map_err(|_| ProgramError::InvalidInstructionData)?;
-        if plan.amount_in != amount || plan.amount_out < limit {
-            return Err(ProgramError::InsufficientFunds);
-        }
-        plan
-    } else {
-        let plan =
-            hybrid_engine::plan_buy_active_exact_out(market.sqrt_price_x64, &ask_limits, amount)
-                .map_err(|_| ProgramError::InvalidInstructionData)?;
-        if plan.amount_out != amount || plan.amount_in > limit {
-            return Err(ProgramError::InsufficientFunds);
-        }
-        plan
-    };
-    if plan.fill_count == 0 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
+    let plan = plan_active_buy(opcode, market.sqrt_price_x64, &ask_limits, amount, limit)?;
     let fills = &plan.fills[..usize::from(plan.fill_count)];
 
     let mut maker_states = Vec::with_capacity(maker_accounts.len());
