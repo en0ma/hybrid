@@ -160,8 +160,7 @@ async fn legacy_orders_cancel_before_prefunded_custody_activation() {
         &ID,
     );
     let owner_key = Pubkey::new_unique();
-    let (custody_key, _) =
-        Pubkey::find_program_address(&[b"custody", market_key.as_ref()], &ID);
+    let (custody_key, _) = Pubkey::find_program_address(&[b"custody", market_key.as_ref()], &ID);
     let (balance_key, _) = Pubkey::find_program_address(
         &[
             b"maker-balance",
@@ -211,14 +210,8 @@ async fn legacy_orders_cancel_before_prefunded_custody_activation() {
         maker.pubkey(),
         account(1_000_000, Vec::new(), Pubkey::default()),
     );
-    program_test.add_account(
-        custody_key,
-        account(1, Vec::new(), Pubkey::default()),
-    );
-    program_test.add_account(
-        balance_key,
-        account(1, Vec::new(), Pubkey::default()),
-    );
+    program_test.add_account(custody_key, account(1, Vec::new(), Pubkey::default()));
+    program_test.add_account(balance_key, account(1, Vec::new(), Pubkey::default()));
     program_test.add_account(
         base_mint,
         account(1_000_000, mint_data(6), TOKEN_PROGRAM_ID),
