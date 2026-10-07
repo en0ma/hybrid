@@ -1128,7 +1128,6 @@ fn process_state_backed_plan(accounts: &[AccountInfo]) -> ProgramResult {
     .map_err(|_| ProgramError::InvalidInstructionData)
 }
 
-
 #[inline(never)]
 fn process_init_custody(
     program_id: &Pubkey,
@@ -1273,11 +1272,7 @@ fn parse_asset_amount(data: &[u8], opcode: u8) -> Result<(u8, u64), ProgramError
 }
 
 #[inline(never)]
-fn process_deposit(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    data: &[u8],
-) -> ProgramResult {
+fn process_deposit(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     if accounts.len() != 8 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
@@ -1304,7 +1299,11 @@ fn process_deposit(
     let (expected_mint, expected_vault, decimals) = if asset == 0 {
         (custody.base_mint, custody.base_vault, custody.base_decimals)
     } else {
-        (custody.quote_mint, custody.quote_vault, custody.quote_decimals)
+        (
+            custody.quote_mint,
+            custody.quote_vault,
+            custody.quote_decimals,
+        )
     };
     if mint.key.to_bytes() != expected_mint
         || vault.key.to_bytes() != expected_vault
@@ -1313,7 +1312,16 @@ fn process_deposit(
         return Err(ProgramError::InvalidAccountData);
     }
 
-    transfer_checked(source, mint, vault, maker, token_program, amount, decimals, None)?;
+    transfer_checked(
+        source,
+        mint,
+        vault,
+        maker,
+        token_program,
+        amount,
+        decimals,
+        None,
+    )?;
     if asset == 0 {
         balance.free_base = balance
             .free_base
@@ -1338,11 +1346,7 @@ fn process_deposit(
 }
 
 #[inline(never)]
-fn process_withdraw(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    data: &[u8],
-) -> ProgramResult {
+fn process_withdraw(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     if accounts.len() != 9 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
