@@ -1151,8 +1151,17 @@ fn process_init_custody(
     if market.owner != program_id || *token_program.key != TOKEN_PROGRAM_ID {
         return Err(ProgramError::IncorrectProgramId);
     }
-    hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
+    if !market.is_signer || !market.is_writable {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    let mut market_header = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
+    if market_header.ask_count != 0
+        || market_header.bid_count() != 0
+        || market_header.collateralized_active()
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
 
     let (expected_custody, custody_bump) =
         Pubkey::find_program_address(&[b"custody", market.key.as_ref()], program_id);
@@ -1204,7 +1213,12 @@ fn process_init_custody(
         total_base: 0,
         total_quote: 0,
     };
-    store_custody(custody, &state)
+    store_custody(custody, &state)?;
+    market_header.enable_collateralized_active();
+    let mut market_data = market.try_borrow_mut_data()?;
+    market_header
+        .encode_into(&mut market_data)
+        .map_err(|_| ProgramError::InvalidAccountData)
 }
 
 #[inline(never)]
