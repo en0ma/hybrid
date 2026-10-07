@@ -311,6 +311,7 @@ async fn units_for_active_order_mutation(cancel: bool) -> u64 {
 
     let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
     market.reserved2 = owner_key.to_bytes();
+    market.enable_collateralized_active();
     let mut asks = AskPage::default();
     asks.set_links(PageLinks::new(0, None, None));
     let mut owners = AskOwnerPage::default();
