@@ -301,7 +301,11 @@ async fn units_for_active_order_mutation(cancel: bool) -> u64 {
     let owner_key = Pubkey::new_unique();
     let maker = Keypair::new();
     let (balance_key, balance_bump) = Pubkey::find_program_address(
-        &[b"maker-balance", market_key.as_ref(), maker.pubkey().as_ref()],
+        &[
+            b"maker-balance",
+            market_key.as_ref(),
+            maker.pubkey().as_ref(),
+        ],
         &ID,
     );
 
@@ -329,7 +333,11 @@ async fn units_for_active_order_mutation(cancel: bool) -> u64 {
         .unwrap();
     }
 
-    let mut balance = MakerBalance::new(balance_bump, market_key.to_bytes(), maker.pubkey().to_bytes());
+    let mut balance = MakerBalance::new(
+        balance_bump,
+        market_key.to_bytes(),
+        maker.pubkey().to_bytes(),
+    );
     balance.free_base = 10_000;
     if cancel {
         balance.free_base = 9_000;
@@ -438,7 +446,11 @@ async fn units_for_bid_order_mutation(cancel: bool) -> u64 {
     let owner_key = Pubkey::new_unique();
     let maker = Keypair::new();
     let (balance_key, balance_bump) = Pubkey::find_program_address(
-        &[b"maker-balance", market_key.as_ref(), maker.pubkey().as_ref()],
+        &[
+            b"maker-balance",
+            market_key.as_ref(),
+            maker.pubkey().as_ref(),
+        ],
         &ID,
     );
 
@@ -471,7 +483,11 @@ async fn units_for_bid_order_mutation(cancel: bool) -> u64 {
         .unwrap();
     }
 
-    let mut balance = MakerBalance::new(balance_bump, market_key.to_bytes(), maker.pubkey().to_bytes());
+    let mut balance = MakerBalance::new(
+        balance_bump,
+        market_key.to_bytes(),
+        maker.pubkey().to_bytes(),
+    );
     balance.free_quote = 10_000;
     if cancel {
         balance.free_quote = 9_000;
