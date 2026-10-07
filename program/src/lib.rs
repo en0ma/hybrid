@@ -1419,8 +1419,7 @@ fn process_withdraw(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) 
         destination,
         vault_authority,
         token_program,
-        amount,
-        decimals,
+        (amount, decimals),
         Some(seeds),
     )?;
     store_maker_balance(balance_account, &balance)?;
