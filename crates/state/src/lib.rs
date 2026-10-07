@@ -85,7 +85,7 @@ impl CustodyState {
         if input.len() != CUSTODY_STATE_BYTES {
             return Err(StateError::BufferSize);
         }
-        let mut state = Self {
+        let state = Self {
             magic: input[0..8].try_into().map_err(|_| StateError::Corrupt)?,
             version: input[8],
             bump: input[9],
