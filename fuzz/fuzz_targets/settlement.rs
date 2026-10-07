@@ -39,10 +39,13 @@ fuzz_target!(|data: [u64; 8]| {
     ];
     let mut balances = original;
 
-    let expected = if locked_a < fill_a || locked_b < fill_b {
+    let expected = if locked_a < fill_a {
         Err(SettlementError::InsufficientBase)
-    } else if free_quote_a.checked_add(quote_a).is_none()
-        || free_quote_b.checked_add(quote_b).is_none()
+    } else if free_quote_a.checked_add(quote_a).is_none() {
+        Err(SettlementError::Overflow)
+    } else if locked_b < fill_b {
+        Err(SettlementError::InsufficientBase)
+    } else if free_quote_b.checked_add(quote_b).is_none()
         || fill_a.checked_add(fill_b).is_none()
         || quote_a.checked_add(quote_b).is_none()
     {
