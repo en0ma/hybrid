@@ -460,3 +460,60 @@ async fn bid_place_cancel_preserves_descending_book_and_owner_binding() {
     assert_eq!(bids.len(), 1);
     assert_eq!(bids.as_slice()[0].sequence, 1);
 }
+
+
+#[tokio::test]
+async fn bid_place_rejects_undersized_uninitialized_sidecar() {
+    let market_key = Pubkey::new_unique();
+    let (bid_key, _) = Pubkey::find_program_address(
+        &[b"bid-page", market_key.as_ref(), &0u32.to_le_bytes()],
+        &ID,
+    );
+    let owner_key = Pubkey::new_unique();
+    let maker = Keypair::new();
+
+    let market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
+    market.encode_into(&mut market_data).unwrap();
+
+    let mut bids = BidPage::default();
+    bids.set_links(PageLinks::new(0, None, None));
+    let mut bid_data = vec![0u8; BID_PAGE_BYTES];
+    bids.encode_into(&mut bid_data).unwrap();
+
+    let mut program_test = ProgramTest::new("hybrid_program", ID, None);
+    program_test.add_account(market_key, account(market_data, ID));
+    program_test.add_account(bid_key, account(bid_data, ID));
+    program_test.add_account(owner_key, account(vec![0u8; 48], ID));
+    program_test.add_account(maker.pubkey(), account(Vec::new(), Pubkey::default()));
+
+    let mut context = program_test.start_with_context().await;
+    let ix = Instruction {
+        program_id: ID,
+        accounts: vec![
+            AccountMeta::new(market_key, false),
+            AccountMeta::new(bid_key, false),
+            AccountMeta::new(owner_key, false),
+            AccountMeta::new_readonly(maker.pubkey(), true),
+        ],
+        data: place_bid_data(Q64, Q64, 100),
+    };
+    let blockhash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &maker],
+        blockhash,
+    );
+    assert!(context.banks_client.process_transaction(tx).await.is_err());
+
+    let stored_market = context
+        .banks_client
+        .get_account(market_key)
+        .await
+        .unwrap()
+        .unwrap();
+    let market = MarketHeader::decode_from(&stored_market.data).unwrap();
+    assert_eq!(market.bid_count(), 0);
+    assert_eq!(market.next_sequence, 1);
+}
