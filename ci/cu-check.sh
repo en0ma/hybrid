@@ -18,7 +18,7 @@ measure() {
 import pathlib, re, sys
 log=pathlib.Path(sys.argv[1]).read_text()
 label=sys.argv[2]
-values=[int(x) for x in re.findall(r"consumed\s+(\d+)\s+of\s+\d+\s+compute units", log)]
+values=[int(x) for x in re.findall(r"Program US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx consumed\s+(\d+)\s+of\s+\d+\s+compute units", log)]
 if len(values) != 1:
     raise SystemExit(f"{label}: expected exactly one program CU measurement, found {values}")
 print(f"{label} {values[0]}")
@@ -37,6 +37,8 @@ PY
   measure cancel_ask measure_cancel_ask_cu
   measure place_bid measure_place_bid_cu
   measure cancel_bid measure_cancel_bid_cu
+  measure swap_buy_exact_in measure_swap_buy_exact_in_cu
+  measure swap_buy_exact_out measure_swap_buy_exact_out_cu
 } > "$TMP/measurements.txt"
 
 python3 - "$TMP/measurements.txt" ci/cu-budgets.json <<'PY'
@@ -44,7 +46,7 @@ import json, pathlib, sys
 rows={}
 for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
     parts=line.split()
-    if len(parts)==2 and parts[0] in {"noop","passive_quote","hybrid_match","multilevel_match","state_backed_match","state_backed_plan","multipage_state_backed_match","place_ask","cancel_ask","place_bid","cancel_bid"} and parts[1].isdigit():
+    if len(parts)==2 and parts[0] in {"noop","passive_quote","hybrid_match","multilevel_match","state_backed_match","state_backed_plan","multipage_state_backed_match","place_ask","cancel_ask","place_bid","cancel_bid","swap_buy_exact_in","swap_buy_exact_out"} and parts[1].isdigit():
         rows[parts[0]]=int(parts[1])
 budgets=json.load(open(sys.argv[2]))
 missing=set(budgets)-set(rows)
