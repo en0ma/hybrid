@@ -5,6 +5,7 @@ TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 
 cargo test -p hybrid-state --lib tests::layouts_are_exact_and_small -- --exact --nocapture 2>&1 | tee "$TMP"
+cargo test -p hybrid-settlement --lib tests::maker_balance_account_round_trips_and_has_exact_layout -- --exact --nocapture 2>&1 | tee -a "$TMP"
 
 python3 - "$TMP" ci/state-budgets.json <<'PY'
 import json, pathlib, re, sys
