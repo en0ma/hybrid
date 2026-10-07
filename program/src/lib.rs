@@ -1592,8 +1592,10 @@ fn process_buy_swap(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) 
         return Err(ProgramError::InvalidAccountData);
     }
 
-    let (expected_authority, authority_bump) =
-        Pubkey::find_program_address(&[b"vault-authority", market_account.key.as_ref()], program_id);
+    let (expected_authority, authority_bump) = Pubkey::find_program_address(
+        &[b"vault-authority", market_account.key.as_ref()],
+        program_id,
+    );
     if *vault_authority.key != expected_authority {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -1621,23 +1623,17 @@ fn process_buy_swap(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) 
         .map(hybrid_state::AskEntry::as_limit_ask)
         .collect::<Vec<_>>();
     let plan = if opcode == 15 {
-        let plan = hybrid_engine::plan_buy_active_exact_in(
-            market.sqrt_price_x64,
-            &ask_limits,
-            amount,
-        )
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
+        let plan =
+            hybrid_engine::plan_buy_active_exact_in(market.sqrt_price_x64, &ask_limits, amount)
+                .map_err(|_| ProgramError::InvalidInstructionData)?;
         if plan.amount_in != amount || plan.amount_out < limit {
             return Err(ProgramError::InsufficientFunds);
         }
         plan
     } else {
-        let plan = hybrid_engine::plan_buy_active_exact_out(
-            market.sqrt_price_x64,
-            &ask_limits,
-            amount,
-        )
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
+        let plan =
+            hybrid_engine::plan_buy_active_exact_out(market.sqrt_price_x64, &ask_limits, amount)
+                .map_err(|_| ProgramError::InvalidInstructionData)?;
         if plan.amount_out != amount || plan.amount_in > limit {
             return Err(ProgramError::InsufficientFunds);
         }
@@ -1665,7 +1661,8 @@ fn process_buy_swap(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) 
         if state.market != market_account.key.to_bytes() {
             return Err(ProgramError::InvalidAccountData);
         }
-        let checked = load_maker_balance_for_owner(program_id, market_account, account, state.owner)?;
+        let checked =
+            load_maker_balance_for_owner(program_id, market_account, account, state.owner)?;
         maker_states.push(checked);
     }
 
@@ -1743,4 +1740,3 @@ fn process_buy_swap(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) 
     }
     store_custody(custody_account, &custody)
 }
-
