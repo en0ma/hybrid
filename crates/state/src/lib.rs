@@ -18,9 +18,14 @@ pub const ASK_OWNER_PAGE_BYTES: usize = PAGE_HEADER_BYTES + ASKS_PER_PAGE * ASK_
 pub const BID_OWNER_PAGE_BYTES: usize = PAGE_HEADER_BYTES + BIDS_PER_PAGE * BID_OWNER_BYTES;
 pub const BOUNDARY_PAGE_BYTES: usize =
     PAGE_HEADER_BYTES + BOUNDARIES_PER_PAGE * BOUNDARY_ENTRY_BYTES;
+pub const CUSTODY_STATE_BYTES: usize = 192;
+pub const MAKER_BALANCE_BYTES: usize = 112;
 
 pub const MARKET_MAGIC: [u8; 8] = *b"HYBRID01";
 pub const STATE_VERSION: u8 = 1;
+pub const MARKET_FLAG_COLLATERALIZED_ACTIVE: u16 = 1;
+pub const CUSTODY_MAGIC: [u8; 8] = *b"HYBCUST1";
+pub const MAKER_BALANCE_MAGIC: [u8; 8] = *b"HYBBAL01";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StateError {
@@ -34,6 +39,227 @@ pub enum StateError {
     Unauthorized,
     BufferSize,
     Corrupt,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CustodyState {
+    pub magic: [u8; 8],
+    pub version: u8,
+    pub bump: u8,
+    pub base_decimals: u8,
+    pub quote_decimals: u8,
+    pub reserved: [u8; 4],
+    pub market: [u8; 32],
+    pub base_mint: [u8; 32],
+    pub quote_mint: [u8; 32],
+    pub base_vault: [u8; 32],
+    pub quote_vault: [u8; 32],
+    pub total_base: u64,
+    pub total_quote: u64,
+}
+
+impl CustodyState {
+    pub fn encode_into(&self, out: &mut [u8]) -> Result<(), StateError> {
+        if out.len() != CUSTODY_STATE_BYTES {
+            return Err(StateError::BufferSize);
+        }
+        out.fill(0);
+        out[0..8].copy_from_slice(&self.magic);
+        out[8] = self.version;
+        out[9] = self.bump;
+        out[10] = self.base_decimals;
+        out[11] = self.quote_decimals;
+        out[12..16].copy_from_slice(&self.reserved);
+        out[16..48].copy_from_slice(&self.market);
+        out[48..80].copy_from_slice(&self.base_mint);
+        out[80..112].copy_from_slice(&self.quote_mint);
+        out[112..144].copy_from_slice(&self.base_vault);
+        out[144..176].copy_from_slice(&self.quote_vault);
+        put_u64(out, 176, self.total_base);
+        put_u64(out, 184, self.total_quote);
+        Ok(())
+    }
+
+    pub fn decode_from(input: &[u8]) -> Result<Self, StateError> {
+        if input.len() != CUSTODY_STATE_BYTES {
+            return Err(StateError::BufferSize);
+        }
+        let state = Self {
+            magic: input[0..8].try_into().map_err(|_| StateError::Corrupt)?,
+            version: input[8],
+            bump: input[9],
+            base_decimals: input[10],
+            quote_decimals: input[11],
+            reserved: input[12..16].try_into().map_err(|_| StateError::Corrupt)?,
+            market: input[16..48].try_into().map_err(|_| StateError::Corrupt)?,
+            base_mint: input[48..80].try_into().map_err(|_| StateError::Corrupt)?,
+            quote_mint: input[80..112].try_into().map_err(|_| StateError::Corrupt)?,
+            base_vault: input[112..144]
+                .try_into()
+                .map_err(|_| StateError::Corrupt)?,
+            quote_vault: input[144..176]
+                .try_into()
+                .map_err(|_| StateError::Corrupt)?,
+            total_base: get_u64(input, 176),
+            total_quote: get_u64(input, 184),
+        };
+        if state.magic != CUSTODY_MAGIC
+            || state.version != STATE_VERSION
+            || state.reserved != [0; 4]
+            || state.market == [0; 32]
+            || state.base_mint == [0; 32]
+            || state.quote_mint == [0; 32]
+            || state.base_vault == [0; 32]
+            || state.quote_vault == [0; 32]
+        {
+            return Err(StateError::Corrupt);
+        }
+        if state.base_mint == state.quote_mint || state.base_vault == state.quote_vault {
+            return Err(StateError::Corrupt);
+        }
+        Ok(state)
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MakerBalance {
+    pub magic: [u8; 8],
+    pub version: u8,
+    pub bump: u8,
+    pub reserved: [u8; 6],
+    pub market: [u8; 32],
+    pub owner: [u8; 32],
+    pub free_base: u64,
+    pub locked_base: u64,
+    pub free_quote: u64,
+    pub locked_quote: u64,
+}
+
+impl MakerBalance {
+    pub const fn new(bump: u8, market: [u8; 32], owner: [u8; 32]) -> Self {
+        Self {
+            magic: MAKER_BALANCE_MAGIC,
+            version: STATE_VERSION,
+            bump,
+            reserved: [0; 6],
+            market,
+            owner,
+            free_base: 0,
+            locked_base: 0,
+            free_quote: 0,
+            locked_quote: 0,
+        }
+    }
+
+    pub fn encode_into(&self, out: &mut [u8]) -> Result<(), StateError> {
+        if out.len() != MAKER_BALANCE_BYTES {
+            return Err(StateError::BufferSize);
+        }
+        out.fill(0);
+        out[0..8].copy_from_slice(&self.magic);
+        out[8] = self.version;
+        out[9] = self.bump;
+        out[10..16].copy_from_slice(&self.reserved);
+        out[16..48].copy_from_slice(&self.market);
+        out[48..80].copy_from_slice(&self.owner);
+        put_u64(out, 80, self.free_base);
+        put_u64(out, 88, self.locked_base);
+        put_u64(out, 96, self.free_quote);
+        put_u64(out, 104, self.locked_quote);
+        Ok(())
+    }
+
+    pub fn decode_from(input: &[u8]) -> Result<Self, StateError> {
+        if input.len() != MAKER_BALANCE_BYTES {
+            return Err(StateError::BufferSize);
+        }
+        let balance = Self {
+            magic: input[0..8].try_into().map_err(|_| StateError::Corrupt)?,
+            version: input[8],
+            bump: input[9],
+            reserved: input[10..16].try_into().map_err(|_| StateError::Corrupt)?,
+            market: input[16..48].try_into().map_err(|_| StateError::Corrupt)?,
+            owner: input[48..80].try_into().map_err(|_| StateError::Corrupt)?,
+            free_base: get_u64(input, 80),
+            locked_base: get_u64(input, 88),
+            free_quote: get_u64(input, 96),
+            locked_quote: get_u64(input, 104),
+        };
+        if balance.magic != MAKER_BALANCE_MAGIC
+            || balance.version != STATE_VERSION
+            || balance.reserved != [0; 6]
+            || balance.market == [0; 32]
+            || balance.owner == [0; 32]
+        {
+            return Err(StateError::Corrupt);
+        }
+        Ok(balance)
+    }
+
+    pub fn lock_base(&mut self, amount: u64) -> Result<(), StateError> {
+        self.free_base = self
+            .free_base
+            .checked_sub(amount)
+            .ok_or(StateError::Unauthorized)?;
+        self.locked_base = self
+            .locked_base
+            .checked_add(amount)
+            .ok_or(StateError::Full)?;
+        Ok(())
+    }
+
+    pub fn unlock_base(&mut self, amount: u64) -> Result<(), StateError> {
+        self.locked_base = self
+            .locked_base
+            .checked_sub(amount)
+            .ok_or(StateError::Corrupt)?;
+        self.free_base = self.free_base.checked_add(amount).ok_or(StateError::Full)?;
+        Ok(())
+    }
+
+    pub fn lock_quote(&mut self, amount: u64) -> Result<(), StateError> {
+        self.free_quote = self
+            .free_quote
+            .checked_sub(amount)
+            .ok_or(StateError::Unauthorized)?;
+        self.locked_quote = self
+            .locked_quote
+            .checked_add(amount)
+            .ok_or(StateError::Full)?;
+        Ok(())
+    }
+
+    pub fn unlock_quote(&mut self, amount: u64) -> Result<(), StateError> {
+        self.locked_quote = self
+            .locked_quote
+            .checked_sub(amount)
+            .ok_or(StateError::Corrupt)?;
+        self.free_quote = self
+            .free_quote
+            .checked_add(amount)
+            .ok_or(StateError::Full)?;
+        Ok(())
+    }
+
+    pub fn settle_ask(&mut self, base: u64, quote: u64) -> Result<(), StateError> {
+        self.locked_base = self
+            .locked_base
+            .checked_sub(base)
+            .ok_or(StateError::Corrupt)?;
+        self.free_quote = self.free_quote.checked_add(quote).ok_or(StateError::Full)?;
+        Ok(())
+    }
+
+    pub fn settle_bid(&mut self, base: u64, quote: u64) -> Result<(), StateError> {
+        self.locked_quote = self
+            .locked_quote
+            .checked_sub(quote)
+            .ok_or(StateError::Corrupt)?;
+        self.free_base = self.free_base.checked_add(base).ok_or(StateError::Full)?;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,6 +366,14 @@ impl MarketHeader {
     pub fn set_bid_owner_tag(&mut self, tag: [u8; 16]) {
         self.reserved0[4..12].copy_from_slice(&tag[0..8]);
         self.reserved1.copy_from_slice(&tag[8..16]);
+    }
+
+    pub fn collateralized_active(&self) -> bool {
+        self.flags & MARKET_FLAG_COLLATERALIZED_ACTIVE != 0
+    }
+
+    pub fn enable_collateralized_active(&mut self) {
+        self.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
     }
 
     pub fn allocate_sequence(&mut self) -> Result<u64, StateError> {
@@ -1271,6 +1505,8 @@ fn get_u128(input: &[u8], offset: usize) -> u128 {
     )
 }
 
+const _: [(); CUSTODY_STATE_BYTES] = [(); core::mem::size_of::<CustodyState>()];
+const _: [(); MAKER_BALANCE_BYTES] = [(); core::mem::size_of::<MakerBalance>()];
 const _: [(); MARKET_HEADER_BYTES] = [(); core::mem::size_of::<MarketHeader>()];
 const _: [(); ASK_ENTRY_BYTES] = [(); core::mem::size_of::<AskEntry>()];
 const _: [(); BID_ENTRY_BYTES] = [(); core::mem::size_of::<BidEntry>()];
@@ -1547,6 +1783,16 @@ mod tests {
                 "boundary_page",
                 core::mem::size_of::<BoundaryPage>(),
                 1_040usize,
+            ),
+            (
+                "custody_state",
+                core::mem::size_of::<CustodyState>(),
+                192usize,
+            ),
+            (
+                "maker_balance",
+                core::mem::size_of::<MakerBalance>(),
+                112usize,
             ),
         ];
         for (name, actual, expected) in layouts {

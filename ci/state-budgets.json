@@ -8,5 +8,7 @@
   "ask_owner_page": 1040,
   "bid_owner_page": 1040,
   "boundary_page": 1040,
-  "maker_balance_account": 64
+  "maker_balance_account": 64,
+  "custody_state": 192,
+  "maker_balance": 112
 }

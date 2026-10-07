@@ -3,8 +3,9 @@
 use hybrid_engine::Q64;
 use hybrid_program::ID;
 use hybrid_state::{
-    AskOwnerPage, AskPage, BidOwnerPage, BidPage, MarketHeader, PageLinks, ASK_OWNER_PAGE_BYTES,
-    ASK_PAGE_BYTES, BID_OWNER_PAGE_BYTES, BID_PAGE_BYTES, MARKET_HEADER_BYTES,
+    AskOwnerPage, AskPage, BidOwnerPage, BidPage, MakerBalance, MarketHeader, PageLinks,
+    ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES, BID_OWNER_PAGE_BYTES, BID_PAGE_BYTES,
+    MAKER_BALANCE_BYTES, MARKET_HEADER_BYTES,
 };
 use solana_account::Account;
 use solana_instruction::{AccountMeta, Instruction};
@@ -67,8 +68,17 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
     let owner_key = owner_page.pubkey();
     let maker = Keypair::new();
     let other = Keypair::new();
+    let (balance_key, balance_bump) = Pubkey::find_program_address(
+        &[
+            b"maker-balance",
+            market_key.as_ref(),
+            maker.pubkey().as_ref(),
+        ],
+        &ID,
+    );
 
-    let market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    market.enable_collateralized_active();
     let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
     market.encode_into(&mut market_data).unwrap();
 
@@ -77,9 +87,20 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
     let mut ask_data = vec![0u8; ASK_PAGE_BYTES];
     asks.encode_into(&mut ask_data).unwrap();
 
+    let mut balance = MakerBalance::new(
+        balance_bump,
+        market_key.to_bytes(),
+        maker.pubkey().to_bytes(),
+    );
+    balance.free_base = 1_000;
+    balance.free_quote = 10_000;
+    let mut balance_data = vec![0u8; MAKER_BALANCE_BYTES];
+    balance.encode_into(&mut balance_data).unwrap();
+
     let mut program_test = ProgramTest::new("hybrid_program", ID, None);
     program_test.add_account(market_key, account(market_data, ID));
     program_test.add_account(ask_key, account(ask_data, ID));
+    program_test.add_account(balance_key, account(balance_data, ID));
     program_test.add_account(maker.pubkey(), account(Vec::new(), Pubkey::default()));
     program_test.add_account(other.pubkey(), account(Vec::new(), Pubkey::default()));
 
@@ -128,6 +149,7 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
             AccountMeta::new(market_key, false),
             AccountMeta::new(ask_key, false),
             AccountMeta::new(owner_key, false),
+            AccountMeta::new(balance_key, false),
             if signer {
                 AccountMeta::new_readonly(maker_key, true)
             } else {
@@ -177,6 +199,16 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
         .unwrap();
     let owners = AskOwnerPage::decode_from(&stored_owners.data).unwrap();
     assert_eq!(owners.as_slice()[0], maker.pubkey().to_bytes());
+
+    let stored_balance = context
+        .banks_client
+        .get_account(balance_key)
+        .await
+        .unwrap()
+        .unwrap();
+    let balance = MakerBalance::decode_from(&stored_balance.data).unwrap();
+    assert_eq!(balance.free_base, 900);
+    assert_eq!(balance.locked_base, 100);
 
     let mut unauthorized = common(other.pubkey(), true);
     unauthorized.data = cancel_data(1);
@@ -230,6 +262,15 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
             .len(),
         0
     );
+    let stored_balance = context
+        .banks_client
+        .get_account(balance_key)
+        .await
+        .unwrap()
+        .unwrap();
+    let balance = MakerBalance::decode_from(&stored_balance.data).unwrap();
+    assert_eq!(balance.free_base, 1_000);
+    assert_eq!(balance.locked_base, 0);
 }
 
 #[tokio::test]
@@ -242,8 +283,17 @@ async fn place_rejects_replacement_sidecar_and_missing_signature() {
     let bound_owner_key = Pubkey::new_unique();
     let wrong_owner_key = Pubkey::new_unique();
     let maker = Keypair::new();
+    let (balance_key, balance_bump) = Pubkey::find_program_address(
+        &[
+            b"maker-balance",
+            market_key.as_ref(),
+            maker.pubkey().as_ref(),
+        ],
+        &ID,
+    );
 
     let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    market.enable_collateralized_active();
     market.reserved2 = bound_owner_key.to_bytes();
     let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
     market.encode_into(&mut market_data).unwrap();
@@ -258,9 +308,19 @@ async fn place_rejects_replacement_sidecar_and_missing_signature() {
     let mut owner_data = vec![0u8; ASK_OWNER_PAGE_BYTES];
     owners.encode_into(&mut owner_data).unwrap();
 
+    let mut balance = MakerBalance::new(
+        balance_bump,
+        market_key.to_bytes(),
+        maker.pubkey().to_bytes(),
+    );
+    balance.free_base = 1_000;
+    let mut balance_data = vec![0u8; MAKER_BALANCE_BYTES];
+    balance.encode_into(&mut balance_data).unwrap();
+
     let mut program_test = ProgramTest::new("hybrid_program", ID, None);
     program_test.add_account(market_key, account(market_data, ID));
     program_test.add_account(ask_key, account(ask_data, ID));
+    program_test.add_account(balance_key, account(balance_data, ID));
     program_test.add_account(bound_owner_key, account(owner_data.clone(), ID));
     program_test.add_account(wrong_owner_key, account(owner_data, ID));
     program_test.add_account(maker.pubkey(), account(Vec::new(), Pubkey::default()));
@@ -272,6 +332,7 @@ async fn place_rejects_replacement_sidecar_and_missing_signature() {
             AccountMeta::new(market_key, false),
             AccountMeta::new(ask_key, false),
             AccountMeta::new(wrong_owner_key, false),
+            AccountMeta::new(balance_key, false),
             AccountMeta::new_readonly(maker.pubkey(), true),
         ],
         data: place_data(Q64, Q64, 10),
@@ -291,6 +352,7 @@ async fn place_rejects_replacement_sidecar_and_missing_signature() {
             AccountMeta::new(market_key, false),
             AccountMeta::new(ask_key, false),
             AccountMeta::new(bound_owner_key, false),
+            AccountMeta::new(balance_key, false),
             AccountMeta::new_readonly(maker.pubkey(), false),
         ],
         data: place_data(Q64, Q64, 10),
@@ -316,8 +378,17 @@ async fn bid_place_cancel_preserves_descending_book_and_owner_binding() {
     let owner_key = owner_page.pubkey();
     let maker = Keypair::new();
     let other = Keypair::new();
+    let (balance_key, balance_bump) = Pubkey::find_program_address(
+        &[
+            b"maker-balance",
+            market_key.as_ref(),
+            maker.pubkey().as_ref(),
+        ],
+        &ID,
+    );
 
-    let market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    market.enable_collateralized_active();
     let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
     market.encode_into(&mut market_data).unwrap();
 
@@ -326,9 +397,19 @@ async fn bid_place_cancel_preserves_descending_book_and_owner_binding() {
     let mut bid_data = vec![0u8; BID_PAGE_BYTES];
     bids.encode_into(&mut bid_data).unwrap();
 
+    let mut balance = MakerBalance::new(
+        balance_bump,
+        market_key.to_bytes(),
+        maker.pubkey().to_bytes(),
+    );
+    balance.free_quote = 10_000;
+    let mut balance_data = vec![0u8; MAKER_BALANCE_BYTES];
+    balance.encode_into(&mut balance_data).unwrap();
+
     let mut program_test = ProgramTest::new("hybrid_program", ID, None);
     program_test.add_account(market_key, account(market_data, ID));
     program_test.add_account(bid_key, account(bid_data, ID));
+    program_test.add_account(balance_key, account(balance_data, ID));
     program_test.add_account(maker.pubkey(), account(Vec::new(), Pubkey::default()));
     program_test.add_account(other.pubkey(), account(Vec::new(), Pubkey::default()));
 
@@ -362,6 +443,7 @@ async fn bid_place_cancel_preserves_descending_book_and_owner_binding() {
             AccountMeta::new(market_key, false),
             AccountMeta::new(bid_key, false),
             AccountMeta::new(owner_key, false),
+            AccountMeta::new(balance_key, false),
             if signer {
                 AccountMeta::new_readonly(maker_key, true)
             } else {
@@ -470,8 +552,17 @@ async fn bid_place_rejects_undersized_uninitialized_sidecar() {
     );
     let owner_key = Pubkey::new_unique();
     let maker = Keypair::new();
+    let (balance_key, balance_bump) = Pubkey::find_program_address(
+        &[
+            b"maker-balance",
+            market_key.as_ref(),
+            maker.pubkey().as_ref(),
+        ],
+        &ID,
+    );
 
-    let market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    market.enable_collateralized_active();
     let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
     market.encode_into(&mut market_data).unwrap();
 
@@ -480,9 +571,19 @@ async fn bid_place_rejects_undersized_uninitialized_sidecar() {
     let mut bid_data = vec![0u8; BID_PAGE_BYTES];
     bids.encode_into(&mut bid_data).unwrap();
 
+    let mut balance = MakerBalance::new(
+        balance_bump,
+        market_key.to_bytes(),
+        maker.pubkey().to_bytes(),
+    );
+    balance.free_quote = 1_000;
+    let mut balance_data = vec![0u8; MAKER_BALANCE_BYTES];
+    balance.encode_into(&mut balance_data).unwrap();
+
     let mut program_test = ProgramTest::new("hybrid_program", ID, None);
     program_test.add_account(market_key, account(market_data, ID));
     program_test.add_account(bid_key, account(bid_data, ID));
+    program_test.add_account(balance_key, account(balance_data, ID));
     program_test.add_account(owner_key, account(vec![0u8; 48], ID));
     program_test.add_account(maker.pubkey(), account(Vec::new(), Pubkey::default()));
 
@@ -493,6 +594,7 @@ async fn bid_place_rejects_undersized_uninitialized_sidecar() {
             AccountMeta::new(market_key, false),
             AccountMeta::new(bid_key, false),
             AccountMeta::new(owner_key, false),
+            AccountMeta::new(balance_key, false),
             AccountMeta::new_readonly(maker.pubkey(), true),
         ],
         data: place_bid_data(Q64, Q64, 100),

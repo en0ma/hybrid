@@ -162,3 +162,153 @@ The intended execution sequence is:
 8. commit the final passive price/liquidity state.
 
 That atomic custody path is the next program-layer step.
+
+## Custody and collateralized maker balances
+
+Hybrid now has a custody foundation for backed active liquidity.
+
+### Custody state
+
+The canonical custody PDA is:
+
+`["custody", market]`
+
+It stores:
+
+- market public key
+- base mint
+- quote mint
+- base vault
+- quote vault
+- base and quote decimals
+- total accounted base
+- total accounted quote
+
+The vault authority PDA is:
+
+`["vault-authority", market]`
+
+The base and quote token vaults must be SPL Token accounts owned by this vault-authority PDA.
+
+### Maker balance state
+
+The canonical maker-balance PDA is:
+
+`["maker-balance", market, maker]`
+
+Each maker balance stores:
+
+- free base
+- locked base
+- free quote
+- locked quote
+
+Resting asks lock base collateral.
+
+Resting bids lock the full quote notional required by the order price and base quantity.
+
+Cancellation returns locked collateral to the maker's free balance.
+
+### Initialize custody
+
+Opcode: `11`
+
+Instruction data:
+
+- byte 0: opcode
+- byte 1: base mint decimals
+- byte 2: quote mint decimals
+
+Accounts:
+
+1. writable Hybrid-owned market signer
+2. writable custody PDA
+3. writable payer signer
+4. base mint
+5. quote mint
+6. base token vault
+7. quote token vault
+8. system program
+9. SPL Token program
+
+The market must sign custody activation. Activation is allowed only when both active books are empty. The program then enables the market's collateralized-active flag.
+
+The custody and maker-balance PDA creation paths support prefunded system-owned PDA addresses. If a PDA already holds lamports but has no data, Hybrid tops it up to rent exemption, allocates the required size, and assigns it to Hybrid instead of relying only on `CreateAccount`.
+
+The program validates mint decimals, vault mints, and vault authority before creating or allocating the custody PDA.
+
+### Initialize maker balance
+
+Opcode: `12`
+
+Accounts:
+
+1. Hybrid-owned market
+2. custody PDA
+3. writable maker-balance PDA
+4. maker signer
+5. writable payer signer
+6. system program
+
+### Deposit
+
+Opcode: `13`
+
+Instruction data:
+
+- byte 0: opcode
+- byte 1: asset selector, `0 = base`, `1 = quote`
+- bytes 2..10: amount, little-endian `u64`
+
+Accounts:
+
+1. market
+2. writable custody
+3. writable maker balance
+4. maker signer
+5. writable maker source token account
+6. writable market vault
+7. mint
+8. SPL Token program
+
+The token transfer and internal credit happen atomically.
+
+### Withdraw
+
+Opcode: `14`
+
+Instruction data uses the same asset selector and amount encoding as deposit.
+
+Accounts:
+
+1. market
+2. writable custody
+3. writable maker balance
+4. maker signer
+5. writable market vault
+6. writable maker destination token account
+7. mint
+8. vault-authority PDA
+9. SPL Token program
+
+Only free collateral can be withdrawn.
+
+### Active-order ABI and migration
+
+Collateralized ask and bid placement/cancellation require the maker-balance PDA in addition to the existing market, page, owner sidecar and maker signer.
+
+This is an alpha ABI change.
+
+Markets created before collateral activation remain in legacy cancel-only mode. In that mode:
+
+- new order placement is rejected;
+- existing legacy asks and bids can be canceled with the old four-account ABI;
+- legacy cancellation does not unlock maker collateral because those orders never locked collateral.
+
+Custody activation requires both active books to be empty. After activation, the market flag requires the five-account collateralized ABI and new resting orders cannot be created unless the maker has enough free collateral to lock the position.
+
+## Current execution boundary
+
+This PR establishes custody and collateralization, but it does not yet expose the final Jupiter swap instruction.
+
+The next execution step can atomically consume locked maker collateral, credit maker proceeds, mutate active pages and move taker tokens through the custody vaults without introducing unsecured accounting.

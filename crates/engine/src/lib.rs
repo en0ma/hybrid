@@ -252,7 +252,7 @@ fn passive_to_target(state: PassiveState, target_sqrt_x64: u128) -> Result<Quote
     })
 }
 
-fn quote_for_base_at_price(base: u64, price_x64: u128) -> Result<u64, QuoteError> {
+pub fn quote_for_base_at_price(base: u64, price_x64: u128) -> Result<u64, QuoteError> {
     let q = mul_q64_ceil(u128::from(base), price_x64)?;
     u64::try_from(q).map_err(|_| QuoteError::Overflow)
 }

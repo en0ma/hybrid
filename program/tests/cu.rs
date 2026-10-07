@@ -4,8 +4,9 @@ use hybrid_engine::{spot_price_x64, Q64};
 use hybrid_program::ID;
 use hybrid_state::{
     AskEntry, AskOwnerPage, AskPage, BidEntry, BidOwnerPage, BidPage, BoundaryEntry, BoundaryPage,
-    MarketHeader, PageLinks, ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES, BID_OWNER_PAGE_BYTES,
-    BID_PAGE_BYTES, BOUNDARY_PAGE_BYTES, MARKET_HEADER_BYTES,
+    MakerBalance, MarketHeader, PageLinks, ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES,
+    BID_OWNER_PAGE_BYTES, BID_PAGE_BYTES, BOUNDARY_PAGE_BYTES, MAKER_BALANCE_BYTES,
+    MARKET_HEADER_BYTES,
 };
 use solana_account::Account;
 use solana_instruction::{AccountMeta, Instruction};
@@ -299,9 +300,18 @@ async fn units_for_active_order_mutation(cancel: bool) -> u64 {
     );
     let owner_key = Pubkey::new_unique();
     let maker = Keypair::new();
+    let (balance_key, balance_bump) = Pubkey::find_program_address(
+        &[
+            b"maker-balance",
+            market_key.as_ref(),
+            maker.pubkey().as_ref(),
+        ],
+        &ID,
+    );
 
     let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
     market.reserved2 = owner_key.to_bytes();
+    market.enable_collateralized_active();
     let mut asks = AskPage::default();
     asks.set_links(PageLinks::new(0, None, None));
     let mut owners = AskOwnerPage::default();
@@ -324,6 +334,19 @@ async fn units_for_active_order_mutation(cancel: bool) -> u64 {
         .unwrap();
     }
 
+    let mut balance = MakerBalance::new(
+        balance_bump,
+        market_key.to_bytes(),
+        maker.pubkey().to_bytes(),
+    );
+    balance.free_base = 10_000;
+    if cancel {
+        balance.free_base = 9_000;
+        balance.locked_base = 1_000;
+    }
+    let mut balance_data = vec![0u8; MAKER_BALANCE_BYTES];
+    balance.encode_into(&mut balance_data).unwrap();
+
     let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
     let mut ask_data = vec![0u8; ASK_PAGE_BYTES];
     let mut owner_data = vec![0u8; ASK_OWNER_PAGE_BYTES];
@@ -336,6 +359,7 @@ async fn units_for_active_order_mutation(cancel: bool) -> u64 {
         (market_key, market_data),
         (ask_key, ask_data),
         (owner_key, owner_data),
+        (balance_key, balance_data),
     ] {
         program_test.add_account(
             key,
@@ -378,6 +402,7 @@ async fn units_for_active_order_mutation(cancel: bool) -> u64 {
             AccountMeta::new(market_key, false),
             AccountMeta::new(ask_key, false),
             AccountMeta::new(owner_key, false),
+            AccountMeta::new(balance_key, false),
             AccountMeta::new_readonly(maker.pubkey(), true),
         ],
         data: core::mem::take(&mut data),
@@ -421,8 +446,17 @@ async fn units_for_bid_order_mutation(cancel: bool) -> u64 {
     );
     let owner_key = Pubkey::new_unique();
     let maker = Keypair::new();
+    let (balance_key, balance_bump) = Pubkey::find_program_address(
+        &[
+            b"maker-balance",
+            market_key.as_ref(),
+            maker.pubkey().as_ref(),
+        ],
+        &ID,
+    );
 
     let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    market.enable_collateralized_active();
     let mut bids = BidPage::default();
     bids.set_links(PageLinks::new(0, None, None));
     let mut owners = BidOwnerPage::default();
@@ -450,6 +484,19 @@ async fn units_for_bid_order_mutation(cancel: bool) -> u64 {
         .unwrap();
     }
 
+    let mut balance = MakerBalance::new(
+        balance_bump,
+        market_key.to_bytes(),
+        maker.pubkey().to_bytes(),
+    );
+    balance.free_quote = 10_000;
+    if cancel {
+        balance.free_quote = 9_000;
+        balance.locked_quote = 1_000;
+    }
+    let mut balance_data = vec![0u8; MAKER_BALANCE_BYTES];
+    balance.encode_into(&mut balance_data).unwrap();
+
     let mut market_data = vec![0u8; MARKET_HEADER_BYTES];
     let mut bid_data = vec![0u8; BID_PAGE_BYTES];
     let mut owner_data = vec![0u8; BID_OWNER_PAGE_BYTES];
@@ -462,6 +509,7 @@ async fn units_for_bid_order_mutation(cancel: bool) -> u64 {
         (market_key, market_data),
         (bid_key, bid_data),
         (owner_key, owner_data),
+        (balance_key, balance_data),
     ] {
         program_test.add_account(
             key,
@@ -504,6 +552,7 @@ async fn units_for_bid_order_mutation(cancel: bool) -> u64 {
             AccountMeta::new(market_key, false),
             AccountMeta::new(bid_key, false),
             AccountMeta::new(owner_key, false),
+            AccountMeta::new(balance_key, false),
             AccountMeta::new_readonly(maker.pubkey(), true),
         ],
         data,
