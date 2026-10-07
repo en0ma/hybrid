@@ -838,19 +838,23 @@ fn process_active_bid_order(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    if accounts.len() != 5 {
+    if accounts.len() != 4 && accounts.len() != 5 {
         return Err(ProgramError::NotEnoughAccountKeys);
     }
-    if !accounts[4].is_signer {
+    let maker_index = accounts.len() - 1;
+    if !accounts[maker_index].is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
-    if accounts[..4]
+    if accounts[..maker_index]
         .iter()
         .any(|account| account.owner != program_id)
     {
         return Err(ProgramError::IncorrectProgramId);
     }
-    if accounts[..4].iter().any(|account| !account.is_writable) {
+    if accounts[..maker_index]
+        .iter()
+        .any(|account| !account.is_writable)
+    {
         return Err(ProgramError::InvalidAccountData);
     }
 
@@ -897,8 +901,25 @@ fn process_active_bid_order(
         return Err(ProgramError::InvalidAccountData);
     }
 
-    let mut maker_balance =
-        load_maker_balance(program_id, &accounts[0], &accounts[3], &accounts[4])?;
+    let collateralized = market.collateralized_active();
+    if collateralized {
+        if accounts.len() != 5 {
+            return Err(ProgramError::NotEnoughAccountKeys);
+        }
+    } else if accounts.len() != 4 || data.first().copied() != Some(9) {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+
+    let mut maker_balance = if collateralized {
+        Some(load_maker_balance(
+            program_id,
+            &accounts[0],
+            &accounts[3],
+            &accounts[4],
+        )?)
+    } else {
+        None
+    };
 
     match data.first().copied() {
         Some(8) => {
@@ -954,6 +975,8 @@ fn process_active_bid_order(
             let quote_lock = hybrid_engine::quote_for_base_at_price(base_qty, entry.price_x64)
                 .map_err(|_| ProgramError::InvalidInstructionData)?;
             maker_balance
+                .as_mut()
+                .ok_or(ProgramError::InvalidAccountData)?
                 .lock_quote(quote_lock)
                 .map_err(|_| ProgramError::InsufficientFunds)?;
             let old_len = page.len();
@@ -987,8 +1010,12 @@ fn process_active_bid_order(
                     market_bytes[40..48].copy_from_slice(&supplied_tag[8..16]);
                 }
             }
-            store_maker_balance(&accounts[3], &maker_balance)
-
+            store_maker_balance(
+                &accounts[3],
+                maker_balance
+                    .as_ref()
+                    .ok_or(ProgramError::InvalidAccountData)?,
+            )
         }
         Some(9) => {
             if data.len() != 9 {
@@ -1027,9 +1054,11 @@ fn process_active_bid_order(
                 page.entries[index].price_x64,
             )
             .map_err(|_| ProgramError::InvalidAccountData)?;
-            maker_balance
-                .unlock_quote(unlock_quote)
-                .map_err(|_| ProgramError::InvalidAccountData)?;
+            if let Some(balance) = maker_balance.as_mut() {
+                balance
+                    .unlock_quote(unlock_quote)
+                    .map_err(|_| ProgramError::InvalidAccountData)?;
+            }
             let old_len = page.len();
             {
                 let mut bid_data = accounts[1].try_borrow_mut_data()?;
@@ -1043,8 +1072,11 @@ fn process_active_bid_order(
                 let mut market_bytes = accounts[0].try_borrow_mut_data()?;
                 market_bytes[20..24].copy_from_slice(&next_count.to_le_bytes());
             }
-            store_maker_balance(&accounts[3], &maker_balance)
-
+            if let Some(balance) = maker_balance.as_ref() {
+                store_maker_balance(&accounts[3], balance)
+            } else {
+                Ok(())
+            }
         }
         _ => Err(ProgramError::InvalidInstructionData),
     }
