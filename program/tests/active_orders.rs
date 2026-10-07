@@ -69,7 +69,11 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
     let maker = Keypair::new();
     let other = Keypair::new();
     let (balance_key, balance_bump) = Pubkey::find_program_address(
-        &[b"maker-balance", market_key.as_ref(), maker.pubkey().as_ref()],
+        &[
+            b"maker-balance",
+            market_key.as_ref(),
+            maker.pubkey().as_ref(),
+        ],
         &ID,
     );
 
@@ -83,7 +87,11 @@ async fn place_and_cancel_enforce_owner_and_persist_counts() {
     let mut ask_data = vec![0u8; ASK_PAGE_BYTES];
     asks.encode_into(&mut ask_data).unwrap();
 
-    let mut balance = MakerBalance::new(balance_bump, market_key.to_bytes(), maker.pubkey().to_bytes());
+    let mut balance = MakerBalance::new(
+        balance_bump,
+        market_key.to_bytes(),
+        maker.pubkey().to_bytes(),
+    );
     balance.free_base = 1_000;
     balance.free_quote = 10_000;
     let mut balance_data = vec![0u8; MAKER_BALANCE_BYTES];
@@ -276,7 +284,11 @@ async fn place_rejects_replacement_sidecar_and_missing_signature() {
     let wrong_owner_key = Pubkey::new_unique();
     let maker = Keypair::new();
     let (balance_key, balance_bump) = Pubkey::find_program_address(
-        &[b"maker-balance", market_key.as_ref(), maker.pubkey().as_ref()],
+        &[
+            b"maker-balance",
+            market_key.as_ref(),
+            maker.pubkey().as_ref(),
+        ],
         &ID,
     );
 
@@ -296,7 +308,11 @@ async fn place_rejects_replacement_sidecar_and_missing_signature() {
     let mut owner_data = vec![0u8; ASK_OWNER_PAGE_BYTES];
     owners.encode_into(&mut owner_data).unwrap();
 
-    let mut balance = MakerBalance::new(balance_bump, market_key.to_bytes(), maker.pubkey().to_bytes());
+    let mut balance = MakerBalance::new(
+        balance_bump,
+        market_key.to_bytes(),
+        maker.pubkey().to_bytes(),
+    );
     balance.free_base = 1_000;
     let mut balance_data = vec![0u8; MAKER_BALANCE_BYTES];
     balance.encode_into(&mut balance_data).unwrap();
@@ -363,7 +379,11 @@ async fn bid_place_cancel_preserves_descending_book_and_owner_binding() {
     let maker = Keypair::new();
     let other = Keypair::new();
     let (balance_key, balance_bump) = Pubkey::find_program_address(
-        &[b"maker-balance", market_key.as_ref(), maker.pubkey().as_ref()],
+        &[
+            b"maker-balance",
+            market_key.as_ref(),
+            maker.pubkey().as_ref(),
+        ],
         &ID,
     );
 
@@ -377,7 +397,11 @@ async fn bid_place_cancel_preserves_descending_book_and_owner_binding() {
     let mut bid_data = vec![0u8; BID_PAGE_BYTES];
     bids.encode_into(&mut bid_data).unwrap();
 
-    let mut balance = MakerBalance::new(balance_bump, market_key.to_bytes(), maker.pubkey().to_bytes());
+    let mut balance = MakerBalance::new(
+        balance_bump,
+        market_key.to_bytes(),
+        maker.pubkey().to_bytes(),
+    );
     balance.free_quote = 10_000;
     let mut balance_data = vec![0u8; MAKER_BALANCE_BYTES];
     balance.encode_into(&mut balance_data).unwrap();
@@ -529,7 +553,11 @@ async fn bid_place_rejects_undersized_uninitialized_sidecar() {
     let owner_key = Pubkey::new_unique();
     let maker = Keypair::new();
     let (balance_key, balance_bump) = Pubkey::find_program_address(
-        &[b"maker-balance", market_key.as_ref(), maker.pubkey().as_ref()],
+        &[
+            b"maker-balance",
+            market_key.as_ref(),
+            maker.pubkey().as_ref(),
+        ],
         &ID,
     );
 
@@ -543,7 +571,11 @@ async fn bid_place_rejects_undersized_uninitialized_sidecar() {
     let mut bid_data = vec![0u8; BID_PAGE_BYTES];
     bids.encode_into(&mut bid_data).unwrap();
 
-    let mut balance = MakerBalance::new(balance_bump, market_key.to_bytes(), maker.pubkey().to_bytes());
+    let mut balance = MakerBalance::new(
+        balance_bump,
+        market_key.to_bytes(),
+        maker.pubkey().to_bytes(),
+    );
     balance.free_quote = 1_000;
     let mut balance_data = vec![0u8; MAKER_BALANCE_BYTES];
     balance.encode_into(&mut balance_data).unwrap();
