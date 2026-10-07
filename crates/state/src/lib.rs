@@ -914,8 +914,10 @@ pub fn cancel_owned_bid(
 
 pub fn apply_active_fills_to_ask_page(
     asks: &mut AskPage,
+    owners: &mut AskOwnerPage,
     fills: &[hybrid_engine::ActiveFill],
 ) -> Result<usize, StateError> {
+    owners.validate_parallel(asks)?;
     let original_len = asks.len();
     let mut previous_index = None;
     for fill in fills {
@@ -939,12 +941,14 @@ pub fn apply_active_fills_to_ask_page(
         if remaining == 0 {
             let sequence = asks.entries[index].sequence;
             asks.remove_by_sequence(sequence)?;
+            owners.remove_at(index)?;
             removed += 1;
         } else {
             asks.entries[index].base_qty = remaining;
         }
     }
     asks.validate_order()?;
+    owners.validate_parallel(asks)?;
     Ok(removed)
 }
 
@@ -1345,9 +1349,20 @@ mod tests {
     #[test]
     fn active_fill_application_reduces_and_compacts_asks() {
         let mut asks = AskPage::default();
-        asks.insert(ask(Q64, 100, 1)).unwrap();
-        asks.insert(ask(Q64, 200, 2)).unwrap();
-        asks.insert(ask(Q64 + 1, 300, 3)).unwrap();
+        asks.set_links(PageLinks::new(0, None, None));
+        let mut owners = AskOwnerPage::default();
+        owners.set_links(PageLinks::new(0, None, None));
+        insert_owned_ask(&mut asks, &mut owners, ask(Q64, 100, 1), [1; ASK_OWNER_BYTES])
+            .unwrap();
+        insert_owned_ask(&mut asks, &mut owners, ask(Q64, 200, 2), [2; ASK_OWNER_BYTES])
+            .unwrap();
+        insert_owned_ask(
+            &mut asks,
+            &mut owners,
+            ask(Q64 + 1, 300, 3),
+            [3; ASK_OWNER_BYTES],
+        )
+        .unwrap();
 
         let fills = [
             hybrid_engine::ActiveFill {
@@ -1362,28 +1377,39 @@ mod tests {
             },
         ];
 
-        let removed = apply_active_fills_to_ask_page(&mut asks, &fills).unwrap();
+        let removed =
+            apply_active_fills_to_ask_page(&mut asks, &mut owners, &fills).unwrap();
         assert_eq!(removed, 1);
         assert_eq!(asks.len(), 2);
         assert_eq!(asks.as_slice()[0].sequence, 2);
         assert_eq!(asks.as_slice()[0].base_qty, 150);
         assert_eq!(asks.as_slice()[1].sequence, 3);
+        assert_eq!(owners.len(), 2);
+        assert_eq!(owners.as_slice()[0], [2; ASK_OWNER_BYTES]);
+        assert_eq!(owners.as_slice()[1], [3; ASK_OWNER_BYTES]);
+        owners.validate_parallel(&asks).unwrap();
     }
 
     #[test]
     fn active_fill_application_rejects_overfill() {
         let mut asks = AskPage::default();
-        asks.insert(ask(Q64, 100, 1)).unwrap();
+        asks.set_links(PageLinks::new(0, None, None));
+        let mut owners = AskOwnerPage::default();
+        owners.set_links(PageLinks::new(0, None, None));
+        insert_owned_ask(&mut asks, &mut owners, ask(Q64, 100, 1), [1; ASK_OWNER_BYTES])
+            .unwrap();
         let fills = [hybrid_engine::ActiveFill {
             ask_index: 0,
             base_qty: 101,
             quote_qty: 101,
         }];
         assert_eq!(
-            apply_active_fills_to_ask_page(&mut asks, &fills),
+            apply_active_fills_to_ask_page(&mut asks, &mut owners, &fills),
             Err(StateError::Corrupt)
         );
         assert_eq!(asks.as_slice()[0].base_qty, 100);
+        assert_eq!(owners.as_slice()[0], [1; ASK_OWNER_BYTES]);
+        owners.validate_parallel(&asks).unwrap();
     }
 
     #[test]
