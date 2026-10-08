@@ -501,3 +501,15 @@ and token transfers.
 This check does not replace exact position minting, tick accounting,
 or earned-fee settlement. Deposits above the calculated minimum
 remain reserved principal. Passive swaps remain disabled.
+
+### LP account alias and rollback tests
+
+The deposit and redemption instructions reject the same token
+account in two different transfer roles. This prevents a source or
+destination account from also serving as a custody vault.
+
+The SBF program tests exercise principal redemption, an insolvent
+vault, and an invalid destination that aliases a vault. The tests
+check that a failed withdrawal does not change the LP position or
+pool reserves. Passive swaps and earned-fee distribution remain
+disabled.
