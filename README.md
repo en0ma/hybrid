@@ -449,9 +449,25 @@ The program creates the position account and transfers the stated
 principal to the existing vaults in one transaction. It updates
 the passive pool's reserved base, reserved quote, and liquidity.
 
-**Important restriction:** The LP cannot redeem a position yet.
-The supplied liquidity value is a declared position value, not a
-verified AMM mint amount. No swap reads it or spends passive vault
-balances. Do not deposit production funds until safe redemption,
-fee attribution, price-range accounting, and full transaction tests
-are complete. These instructions are development interfaces only.
+**Opcode 21: Close and redeem a passive position.** Data: 9 bytes.
+Byte 0 is `21`; bytes 1..9 are the position nonce as a little-endian
+`u64`. The accounts are: (1) market, (2) custody PDA,
+(3) writable passive-pool PDA, (4) writable position PDA,
+(5) writable LP signer, (6) writable base vault,
+(7) writable quote vault, (8) writable LP base destination,
+(9) writable LP quote destination, (10) base mint,
+(11) quote mint, (12) vault-authority PDA, (13) SPL Token program.
+
+The program checks both PDA seeds and the LP signature. It checks
+that the vault balances cover all active maker collateral, passive
+reserves, and accrued passive fees. It transfers the position's
+original principal to the LP and invalidates the position account.
+A second redemption fails.
+
+**Important restriction:** The supplied liquidity value is declared,
+not derived from a verified AMM formula. No swap reads this value
+or spends passive vault balances. Redemption returns only deposited
+principal; it does not distribute range fees or swap gains.
+Do not use these development interfaces for production liquidity
+until fee attribution, range accounting, and transaction tests
+are complete.
