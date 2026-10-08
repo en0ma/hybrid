@@ -1680,3 +1680,61 @@ mod sell_plan_regression_tests {
         assert_eq!((plan.amount_in, plan.amount_out), (1, 4));
     }
 }
+
+#[cfg(test)]
+mod passive_sell_quote_tests {
+    use super::*;
+
+    fn fixture() -> PassiveState {
+        PassiveState {
+            sqrt_price_x64: Q64,
+            liquidity: Q64,
+        }
+    }
+
+    #[test]
+    fn passive_sell_zero_input_preserves_state() {
+        let quote = quote_base_in_for_quote_out(fixture(), 0).unwrap();
+        assert_eq!(quote.amount_in, 0);
+        assert_eq!(quote.amount_out, 0);
+        assert_eq!(quote.next_sqrt_price_x64, Q64);
+    }
+
+    #[test]
+    fn passive_sell_moves_price_downward_and_is_monotone() {
+        let small = quote_base_in_for_quote_out(fixture(), 20).unwrap();
+        let large = quote_base_in_for_quote_out(fixture(), 100).unwrap();
+        assert_eq!(small.amount_in, 20);
+        assert_eq!(large.amount_in, 100);
+        assert!(small.next_sqrt_price_x64 <= Q64);
+        assert!(large.next_sqrt_price_x64 <= small.next_sqrt_price_x64);
+        assert!(large.amount_out >= small.amount_out);
+    }
+
+    #[test]
+    fn passive_sell_exact_out_finds_minimal_input() {
+        let target = 10;
+        let quote = quote_base_in_for_quote_exact_out(fixture(), target).unwrap();
+        assert!(quote.amount_out >= target);
+        if quote.amount_in > 1 {
+            let previous = quote_base_in_for_quote_out(fixture(), quote.amount_in - 1).unwrap();
+            assert!(previous.amount_out < target);
+        }
+    }
+
+    #[test]
+    fn passive_sell_rejects_zero_liquidity() {
+        let empty = PassiveState {
+            sqrt_price_x64: Q64,
+            liquidity: 0,
+        };
+        assert_eq!(
+            quote_base_in_for_quote_out(empty, 1),
+            Err(QuoteError::ZeroLiquidity)
+        );
+        assert_eq!(
+            quote_base_in_for_quote_exact_out(empty, 1),
+            Err(QuoteError::ZeroLiquidity)
+        );
+    }
+}
