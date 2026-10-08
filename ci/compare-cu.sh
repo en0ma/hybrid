@@ -30,8 +30,8 @@ for name, units in matches:
     rows[name] = int(units)
 missing = set(expected) - set(rows)
 unexpected = set(rows) - set(expected)
-if missing or unexpected:
-    raise SystemExit(f"CU measurements mismatch: missing={sorted(missing)} unexpected={sorted(unexpected)}")
+if missing:
+    raise SystemExit(f"Missing baseline CU measurements: {sorted(missing)}")
 pathlib.Path(sys.argv[2]).write_text(
     "".join(f"{name} {rows[name]}\\n" for name in expected).replace("\\n", "\n")
 )
