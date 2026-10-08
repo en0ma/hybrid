@@ -173,7 +173,9 @@ pub fn quote_base_in_for_quote_out(
     while lo < hi {
         let mid = lo + (hi - lo) / 2;
         let required = passive_base_delta(state.liquidity, mid, state.sqrt_price_x64)?;
-        if required > u128::from(base_in) {
+        // Reserve one atom against fractional required input to avoid an
+        // optimistic floor granting more price movement than paid for.
+        if mid != state.sqrt_price_x64 && required >= u128::from(base_in) {
             lo = mid + 1;
         } else {
             hi = mid;
