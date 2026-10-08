@@ -147,10 +147,7 @@ pub fn quote_quote_in_for_base_out(
 /// A conservative, bounded passive sell quote. This quote layer does not
 /// mutate accounts or authorize settlement. Inputs are base atoms and outputs
 /// are quote atoms; the price moves downward.
-pub fn quote_base_in_for_quote_out(
-    state: PassiveState,
-    base_in: u64,
-) -> Result<Quote, QuoteError> {
+pub fn quote_base_in_for_quote_out(state: PassiveState, base_in: u64) -> Result<Quote, QuoteError> {
     if state.liquidity == 0 {
         return Err(QuoteError::ZeroLiquidity);
     }
