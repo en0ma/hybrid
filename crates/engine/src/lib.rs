@@ -123,9 +123,8 @@ fn range_product_q64(a: u128, b: u128) -> [u32; 10] {
             let existing = u64::from(product[i + j]);
             let part = ((a >> (i * 32)) & 0xffff_ffff) as u64;
             let other = ((b >> (j * 32)) & 0xffff_ffff) as u64;
-            let sum = u128::from(part) * u128::from(other)
-                + u128::from(existing)
-                + u128::from(carry);
+            let sum =
+                u128::from(part) * u128::from(other) + u128::from(existing) + u128::from(carry);
             product[i + j] = sum as u32;
             carry = (sum >> 32) as u64;
         }
@@ -138,10 +137,7 @@ fn range_product_q64(a: u128, b: u128) -> [u32; 10] {
 
 /// Divide up to 320 bits by u128. Return the quotient and remainder.
 /// Track the carry bit before shifting a 128-bit remainder.
-fn div_range_limbs(
-    value: [u32; 10],
-    divisor: u128,
-) -> Result<([u32; 10], u128), QuoteError> {
+fn div_range_limbs(value: [u32; 10], divisor: u128) -> Result<([u32; 10], u128), QuoteError> {
     if divisor == 0 {
         return Err(QuoteError::InvalidPrice);
     }
@@ -149,8 +145,7 @@ fn div_range_limbs(
     let mut remainder = 0u128;
     for bit in (0..320).rev() {
         let carry = remainder >> 127;
-        remainder = (remainder << 1)
-            | u128::from((value[bit / 32] >> (bit % 32)) & 1);
+        remainder = (remainder << 1) | u128::from((value[bit / 32] >> (bit % 32)) & 1);
         if carry != 0 || remainder >= divisor {
             remainder = remainder.wrapping_sub(divisor);
             quotient[bit / 32] |= 1u32 << (bit % 32);
@@ -161,11 +156,7 @@ fn div_range_limbs(
 
 /// Exact ceil(L * (upper - lower) * Q64 / lower / upper).
 /// The wide numerator avoids false overflow for large Q64 price bounds.
-fn range_base_ceil(
-    liquidity: u128,
-    lower: u128,
-    upper: u128,
-) -> Result<u64, QuoteError> {
+fn range_base_ceil(liquidity: u128, lower: u128, upper: u128) -> Result<u64, QuoteError> {
     let numerator = range_product_q64(liquidity, upper - lower);
     let (quotient, first_remainder) = div_range_limbs(numerator, lower)?;
     let (result, second_remainder) = div_range_limbs(quotient, upper)?;
