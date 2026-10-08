@@ -12,7 +12,11 @@ measure() {
   local test_name="$2"
   local out="$TMP/$label.log"
 
-  cargo test-sbf --manifest-path program/Cargo.toml --features test-sbf --test cu "$test_name" -- --exact --nocapture 2>&1 | tee "$out"
+  if ! cargo test-sbf --manifest-path program/Cargo.toml --features test-sbf --test cu "$test_name" -- --exact --nocapture >"$out" 2>&1; then
+    echo "CU measurement failed: $label ($test_name)" >&2
+    tail -n 120 "$out" >&2
+    return 1
+  fi
 
   python3 - "$out" "$label" <<'PY'
 import pathlib, re, sys
