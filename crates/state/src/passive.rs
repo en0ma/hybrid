@@ -410,6 +410,62 @@ mod tests {
     }
 
     #[test]
+    fn many_positions_preserve_reserves_across_all_close_orders() {
+        let mut pool = PassivePool::default();
+        let mut positions = Vec::new();
+        for i in 1..=64u64 {
+            let p = PassivePosition {
+                owner: [i as u8; 32],
+                lower_sqrt_price_x64: 1,
+                upper_sqrt_price_x64: 2,
+                liquidity: u128::from(i),
+                base_principal: i,
+                quote_principal: i * 2,
+            };
+            pool.deposit(&p).unwrap();
+            positions.push(p);
+        }
+        let mut base = positions.iter().map(|p| p.base_principal).sum::<u64>();
+        let mut quote = positions.iter().map(|p| p.quote_principal).sum::<u64>();
+        pool.verify_vault_coverage(123, 456, base + 123, quote + 456)
+            .unwrap();
+        for position in positions.iter().rev() {
+            pool.withdraw(position).unwrap();
+            base -= position.base_principal;
+            quote -= position.quote_principal;
+            assert_eq!(pool.base_reserve, base);
+            assert_eq!(pool.quote_reserve, quote);
+            pool.verify_vault_coverage(123, 456, base + 123, quote + 456)
+                .unwrap();
+            assert!(pool
+                .verify_vault_coverage(123, 456, base + 122, quote + 456)
+                .is_err());
+        }
+        assert_eq!(pool, PassivePool::default());
+    }
+
+    #[test]
+    fn failed_operations_preserve_all_fields() {
+        let mut pool = PassivePool {
+            base_reserve: 100,
+            quote_reserve: 100,
+            total_liquidity: 15,
+            accrued_base_fees: u64::MAX,
+            accrued_quote_fees: u64::MAX,
+        };
+        let snapshot = pool;
+        assert_eq!(pool.buy(5, 1, 1), Err(PassiveAccountingError::Overflow));
+        assert_eq!(pool, snapshot);
+        assert_eq!(pool.sell(5, 1, 1), Err(PassiveAccountingError::Overflow));
+        assert_eq!(pool, snapshot);
+        assert_eq!(
+            pool.verify_vault_coverage(1, 0, u64::MAX, u64::MAX),
+            Err(PassiveAccountingError::Overflow)
+        );
+        assert_eq!(pool, snapshot);
+    }
+
+    #[test]
     fn position_deposit_withdraw_round_trip() {
         let mut pool = PassivePool::default();
         pool.deposit(&position()).unwrap();
