@@ -326,6 +326,41 @@ mod tests {
     }
 
     #[test]
+    fn account_codecs_round_trip_and_reject_corruption() {
+        let pool = PoolAccount {
+            bump: 3,
+            market: [1; 32],
+            pool: PassivePool {
+                base_reserve: 100,
+                quote_reserve: 200,
+                total_liquidity: 500,
+                accrued_base_fees: 7,
+                accrued_quote_fees: 9,
+            },
+        };
+        let mut pool_bytes = [0; PASSIVE_POOL_BYTES];
+        pool.encode_into(&mut pool_bytes).unwrap();
+        assert_eq!(PoolAccount::decode_from(&pool_bytes), Ok(pool));
+        pool_bytes[105] = 1;
+        assert!(PoolAccount::decode_from(&pool_bytes).is_err());
+
+        let position = PositionAccount {
+            bump: 4,
+            market: [1; 32],
+            nonce: 42,
+            position: position(),
+        };
+        let mut position_bytes = [0; PASSIVE_POSITION_BYTES];
+        position.encode_into(&mut position_bytes).unwrap();
+        assert_eq!(PositionAccount::decode_from(&position_bytes), Ok(position));
+        position_bytes[152] = 1;
+        assert!(PositionAccount::decode_from(&position_bytes).is_err());
+        position_bytes[152] = 0;
+        position_bytes[88..104].copy_from_slice(&30u128.to_le_bytes());
+        assert!(PositionAccount::decode_from(&position_bytes).is_err());
+    }
+
+    #[test]
     fn position_deposit_withdraw_round_trip() {
         let mut pool = PassivePool::default();
         pool.deposit(&position()).unwrap();
