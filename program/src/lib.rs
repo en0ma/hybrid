@@ -2113,9 +2113,9 @@ fn process_open_passive_position(
         return Err(ProgramError::IncorrectProgramId);
     }
     let custody = load_custody(program_id, market, custody_account)?;
-    let mut pool = hybrid_state::passive::PoolAccount::decode_from(
-        &pool_account.try_borrow_data()?,
-    ).map_err(|_| ProgramError::InvalidAccountData)?;
+    let mut pool =
+        hybrid_state::passive::PoolAccount::decode_from(&pool_account.try_borrow_data()?)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
     let (expected_pool, pool_bump) =
         Pubkey::find_program_address(&[b"passive-pool", market.key.as_ref()], program_id);
     if *pool_account.key != expected_pool
@@ -2209,14 +2209,24 @@ fn process_open_passive_position(
     )?;
     if position.base_principal > 0 {
         transfer_checked(
-            source_base, base_mint, base_vault, lp, token_program,
-            (position.base_principal, custody.base_decimals), None,
+            source_base,
+            base_mint,
+            base_vault,
+            lp,
+            token_program,
+            (position.base_principal, custody.base_decimals),
+            None,
         )?;
     }
     if position.quote_principal > 0 {
         transfer_checked(
-            source_quote, quote_mint, quote_vault, lp, token_program,
-            (position.quote_principal, custody.quote_decimals), None,
+            source_quote,
+            quote_mint,
+            quote_vault,
+            lp,
+            token_program,
+            (position.quote_principal, custody.quote_decimals),
+            None,
         )?;
     }
     let state = hybrid_state::passive::PositionAccount {
