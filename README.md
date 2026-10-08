@@ -399,3 +399,19 @@ rounding dust is refunded to the maker's free quote balance.
 - maker fan-out is bounded to 8 balance accounts;
 - the fixed swap account set is still above the long-term Jupiter account-footprint target;
 - passive settlement, multi-page mutable swaps and Jupiter adapter code remain follow-up work.
+
+## Passive LP reserve accounting foundation
+
+The `hybrid_state::passive` module introduces explicit bounded LP positions,
+segregated passive base/quote reserves, fee balances, bidirectional checked
+swap-reserve transitions, and vault coverage verification against active maker
+collateral. Its arithmetic validates all values before committing changes, so
+an underflow, overflow, or malformed position does not partially mutate the
+in-memory accounting state.
+
+**This is not live passive custody.** The accounting types are pure transition
+primitives; they are not yet serialized into PDA accounts or wired to SPL Token
+instructions. The protocol must authenticate LP owners and positions, model
+per-range fee growth and tick crossing, bind liquidity to actual deposits, and
+verify real vault balances before enabling executable passive swaps. Calling
+these methods alone cannot authorize a withdrawal or a swap.
