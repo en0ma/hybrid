@@ -2164,3 +2164,36 @@ mod bid_fill_regression_tests {
         assert_eq!(owners, before_owners);
     }
 }
+
+#[cfg(test)]
+mod bid_settlement_tests {
+    use super::*;
+
+    #[test]
+    fn partial_fill_releases_rounding_dust_and_preserves_reserve() {
+        let mut balance = MakerBalance::new(1, [1; 32], [2; 32]);
+        balance.locked_quote = 2;
+        balance
+            .settle_bid_fill(5, 1, hybrid_engine::Q64 / 4, 4, 1)
+            .unwrap();
+        assert_eq!(balance.locked_quote, 1);
+        assert_eq!(balance.free_base, 4);
+        balance
+            .settle_bid_fill(1, 0, hybrid_engine::Q64 / 4, 1, 0)
+            .unwrap();
+        assert_eq!(balance.locked_quote, 0);
+        assert_eq!(balance.free_quote, 1);
+        assert_eq!(balance.free_base, 5);
+    }
+
+    #[test]
+    fn invalid_collateral_release_is_atomic() {
+        let mut balance = MakerBalance::new(1, [1; 32], [2; 32]);
+        balance.locked_quote = 0;
+        let before = balance;
+        assert!(balance
+            .settle_bid_fill(5, 1, hybrid_engine::Q64 / 4, 4, 1)
+            .is_err());
+        assert_eq!(balance, before);
+    }
+}
