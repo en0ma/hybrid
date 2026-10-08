@@ -348,11 +348,54 @@ Exact-out requires the full requested base amount to be available from active as
 
 The engine exposes `plan_buy_active_exact_in` and `plan_buy_active_exact_out` so clients can reproduce the same active-only execution plan off-chain.
 
+## Native active sell swaps
+
+Collateralized markets also support bounded active-only sells against page-0 bids.
+Like active buys, these instructions require all input/output to be supplied
+by eligible explicit orders; passive liquidity is not settled.
+
+### Exact-in sell (opcode `17`)
+
+17-byte instruction data: byte 0 is `17`, bytes 1..9 are the base input
+(`u64`, little-endian), and bytes 9..17 are the minimum quote output
+(`u64`, little-endian). The full base amount must execute.
+
+### Exact-out sell (opcode `18`)
+
+17-byte instruction data: byte 0 is `18`, bytes 1..9 are the requested
+minimum quote output (`u64`, little-endian), and bytes 9..17 are the
+maximum base input (`u64`, little-endian). Integer rounding may produce
+more quote output than requested, but input cannot exceed the specified
+maximum.
+
+Both sell instructions use this **distinct** account order:
+
+1. writable market
+2. writable custody PDA
+3. writable page-0 bid PDA
+4. writable bid-owner sidecar
+5. taker signer
+6. writable taker base token account
+7. writable taker quote token account
+8. writable base vault
+9. writable quote vault
+10. vault-authority PDA
+11. SPL Token program
+12. up to 8 writable maker-balance PDAs for touched resting bid owners
+
+The processor checks bid ordering and the bid-owner tag, validates every
+maker-balance PDA and token mint/authority, transfers base from the taker into
+the base vault, transfers quote from the vault to the taker using the
+vault-authority PDA, and atomically updates bid quantities, owner sidecars,
+custody totals and maker balances. Fully consumed bids are removed. Partial
+fills release the difference of the old/new rounded-up quote reserve; quote
+rounding dust is refunded to the maker's free quote balance.
+
 ## Remaining execution limits
 
-- swaps currently buy base with quote; the sell direction is not implemented yet;
-- swaps currently use page-0 asks only;
+- swaps support active-only buys and sells, not executable passive liquidity;
+- swaps currently use page-0 asks (buy) or bids (sell) only;
 - passive LP inventory accounting and mutable passive fills are not implemented yet;
 - maker fan-out is bounded to 8 balance accounts;
 - the fixed swap account set is still above the long-term Jupiter account-footprint target;
-- exact-in/exact-out sell execution, passive settlement, multi-page mutable swaps and Jupiter adapter code remain follow-up work.
+- passive settlement, multi-page mutable swaps and Jupiter adapter code remain follow-up work.
