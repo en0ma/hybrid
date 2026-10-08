@@ -135,6 +135,8 @@ jobs:
         with:
           ref: ${{ env.PR_HEAD_SHA }}
       - name: Run Surfpool mainnet-fork suite
+        env:
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
         run: bash ci/fork.sh
 
   manifest:
