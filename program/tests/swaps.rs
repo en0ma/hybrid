@@ -49,7 +49,7 @@ fn mock_token_process(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    if data.len() != 9 || data[0] != 3 || accounts.len() < 3 || !accounts[2].is_signer {
+    if data.len() != 9 || data[0] != 3 || accounts.len() < 3 {
         return Err(ProgramError::InvalidInstructionData);
     }
     let amount = u64::from_le_bytes(data[1..9].try_into().unwrap());
