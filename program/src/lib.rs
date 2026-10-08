@@ -2108,8 +2108,8 @@ fn check_passive_vault_coverage(
 }
 
 /// Create a position PDA and transfer the owner's base and quote principal
-/// into the existing SPL Token vaults. Positions cannot withdraw or trade
-/// until fee attribution and position redemption are implemented.
+/// into the existing SPL Token vaults. The owner can later redeem the
+/// original principal. Passive trading and fee distribution remain disabled.
 /// Instruction: 20 | nonce:u64 | lower:u128 | upper:u128 | liquidity:u128
 ///                | base:u64 | quote:u64. Exactly 73 bytes.
 #[inline(never)]
