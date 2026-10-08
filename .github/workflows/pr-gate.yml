@@ -9,9 +9,11 @@ on:
   pull_request_review_comment:
     types: [created, edited, deleted]
 
+# Review activity must not cancel tests for the same code head.
+# Only a newer push can supersede a push-triggered validation run.
 concurrency:
-  group: pr-gate-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: pr-gate-${{ github.event.pull_request.number }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
