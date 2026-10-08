@@ -9,5 +9,7 @@
   "place_ask": 50000,
   "cancel_ask": 50000,
   "place_bid": 50000,
-  "cancel_bid": 50000
+  "cancel_bid": 50000,
+  "swap_buy_exact_in": 180000,
+  "swap_buy_exact_out": 180000
 }

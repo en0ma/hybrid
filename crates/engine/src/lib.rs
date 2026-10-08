@@ -408,9 +408,130 @@ pub struct BuyExecutionPlan {
     pub fills: [ActiveFill; MAX_ACTIVE_FILLS],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActiveOnlyBuyPlan {
+    pub amount_in: u64,
+    pub amount_out: u64,
+    pub fill_count: u8,
+    pub fills: [ActiveFill; MAX_ACTIVE_FILLS],
+}
+
+fn validate_active_asks(asks: &[LimitAsk]) -> Result<(), QuoteError> {
+    for ask in asks {
+        validate_limit_ask(*ask)?;
+    }
+    for pair in asks.windows(2) {
+        if pair[0].price_x64 > pair[1].price_x64 {
+            return Err(QuoteError::InvalidPrice);
+        }
+    }
+    Ok(())
+}
+
+pub fn plan_buy_active_exact_in(
+    passive_sqrt_price_x64: u128,
+    asks: &[LimitAsk],
+    quote_in: u64,
+) -> Result<ActiveOnlyBuyPlan, QuoteError> {
+    if passive_sqrt_price_x64 == 0 {
+        return Err(QuoteError::InvalidPrice);
+    }
+    validate_active_asks(asks)?;
+    let passive_price_x64 = spot_price_x64(passive_sqrt_price_x64)?;
+    let mut remaining_quote = quote_in;
+    let mut amount_out = 0u64;
+    let mut fills = [ActiveFill::default(); MAX_ACTIVE_FILLS];
+    let mut fill_count = 0usize;
+
+    for (ask_index, ask) in asks.iter().copied().enumerate() {
+        if remaining_quote == 0 || ask.price_x64 > passive_price_x64 {
+            break;
+        }
+        let (quote_used, base_fill, _) = fill_active_ask(ask, remaining_quote)?;
+        if base_fill == 0 {
+            break;
+        }
+        if fill_count >= MAX_ACTIVE_FILLS {
+            return Err(QuoteError::Overflow);
+        }
+        fills[fill_count] = ActiveFill {
+            ask_index: u16::try_from(ask_index).map_err(|_| QuoteError::Overflow)?,
+            base_qty: base_fill,
+            quote_qty: quote_used,
+        };
+        fill_count += 1;
+        remaining_quote -= quote_used;
+        amount_out = amount_out
+            .checked_add(base_fill)
+            .ok_or(QuoteError::Overflow)?;
+        if base_fill < ask.base_qty {
+            break;
+        }
+    }
+
+    Ok(ActiveOnlyBuyPlan {
+        amount_in: quote_in - remaining_quote,
+        amount_out,
+        fill_count: u8::try_from(fill_count).map_err(|_| QuoteError::Overflow)?,
+        fills,
+    })
+}
+
+pub fn plan_buy_active_exact_out(
+    passive_sqrt_price_x64: u128,
+    asks: &[LimitAsk],
+    base_out: u64,
+) -> Result<ActiveOnlyBuyPlan, QuoteError> {
+    if passive_sqrt_price_x64 == 0 {
+        return Err(QuoteError::InvalidPrice);
+    }
+    validate_active_asks(asks)?;
+    let passive_price_x64 = spot_price_x64(passive_sqrt_price_x64)?;
+    let mut remaining_base = base_out;
+    let mut amount_in = 0u64;
+    let mut fills = [ActiveFill::default(); MAX_ACTIVE_FILLS];
+    let mut fill_count = 0usize;
+
+    for (ask_index, ask) in asks.iter().copied().enumerate() {
+        if remaining_base == 0 || ask.price_x64 > passive_price_x64 {
+            break;
+        }
+        let base_fill = remaining_base.min(ask.base_qty);
+        if base_fill == 0 {
+            continue;
+        }
+        if fill_count >= MAX_ACTIVE_FILLS {
+            return Err(QuoteError::Overflow);
+        }
+        let quote_used = quote_for_base_at_price(base_fill, ask.price_x64)?;
+        fills[fill_count] = ActiveFill {
+            ask_index: u16::try_from(ask_index).map_err(|_| QuoteError::Overflow)?,
+            base_qty: base_fill,
+            quote_qty: quote_used,
+        };
+        fill_count += 1;
+        remaining_base -= base_fill;
+        amount_in = amount_in
+            .checked_add(quote_used)
+            .ok_or(QuoteError::Overflow)?;
+    }
+
+    Ok(ActiveOnlyBuyPlan {
+        amount_in,
+        amount_out: base_out - remaining_base,
+        fill_count: u8::try_from(fill_count).map_err(|_| QuoteError::Overflow)?,
+        fills,
+    })
+}
+
 fn fill_active_ask(ask: LimitAsk, remaining_quote: u64) -> Result<(u64, u64, bool), QuoteError> {
     validate_limit_ask(ask)?;
-    let base_fill = base_for_quote_at_price(remaining_quote, ask.price_x64)?.min(ask.base_qty);
+    let numerator = u128::from(remaining_quote)
+        .checked_mul(Q64)
+        .ok_or(QuoteError::Overflow)?;
+    let affordable = numerator / ask.price_x64;
+    let base_fill = u64::try_from(affordable.min(u128::from(ask.base_qty)))
+        .map_err(|_| QuoteError::Overflow)?;
     if base_fill == 0 {
         return Ok((0, 0, false));
     }
@@ -792,6 +913,71 @@ mod tests {
         assert_eq!(q.active_base_out, 0);
         assert_eq!(q.remaining_active_base, 1);
     }
+    #[test]
+    fn active_only_exact_in_stops_before_passive_price() {
+        let passive_sqrt = Q64;
+        let asks = [
+            one_dollar_ask(100),
+            LimitAsk {
+                price_x64: Q64 + 1,
+                sqrt_price_x64: Q64,
+                base_qty: 100,
+            },
+        ];
+        assert_eq!(validate_limit_ask(asks[1]), Ok(()));
+
+        let asks = [
+            one_dollar_ask(100),
+            LimitAsk {
+                price_x64: spot_price_x64(Q64 + 1).unwrap(),
+                sqrt_price_x64: Q64 + 1,
+                base_qty: 100,
+            },
+        ];
+        let plan = plan_buy_active_exact_in(passive_sqrt, &asks, 150).unwrap();
+        assert_eq!(plan.amount_in, 100);
+        assert_eq!(plan.amount_out, 100);
+        assert_eq!(plan.fill_count, 1);
+    }
+
+    #[test]
+    fn active_fill_clamps_low_price_affordability_before_u64_narrowing() {
+        let ask = LimitAsk {
+            price_x64: 1,
+            sqrt_price_x64: 6_074_000_999,
+            base_qty: 1,
+        };
+        assert_eq!(validate_limit_ask(ask), Ok(()));
+
+        let plan = plan_buy_active_exact_in(Q64, &[ask], 1).unwrap();
+        assert_eq!(plan.amount_in, 1);
+        assert_eq!(plan.amount_out, 1);
+        assert_eq!(plan.fill_count, 1);
+        assert_eq!(plan.fills[0].base_qty, 1);
+        assert_eq!(plan.fills[0].quote_qty, 1);
+    }
+
+    #[test]
+    fn active_only_exact_out_uses_price_time_order() {
+        let asks = [one_dollar_ask(100), one_dollar_ask(200)];
+        let plan = plan_buy_active_exact_out(Q64, &asks, 250).unwrap();
+        assert_eq!(plan.amount_out, 250);
+        assert_eq!(plan.amount_in, 250);
+        assert_eq!(plan.fill_count, 2);
+        assert_eq!(plan.fills[0].ask_index, 0);
+        assert_eq!(plan.fills[0].base_qty, 100);
+        assert_eq!(plan.fills[1].ask_index, 1);
+        assert_eq!(plan.fills[1].base_qty, 150);
+    }
+
+    #[test]
+    fn active_only_exact_out_reports_partial_when_passive_is_required() {
+        let asks = [one_dollar_ask(100)];
+        let plan = plan_buy_active_exact_out(Q64, &asks, 150).unwrap();
+        assert_eq!(plan.amount_out, 100);
+        assert_eq!(plan.amount_in, 100);
+    }
+
     #[test]
     fn execution_plan_matches_quote_and_records_active_fills() {
         let asks = [

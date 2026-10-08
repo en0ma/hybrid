@@ -816,7 +816,7 @@ impl AskOwnerPage {
         Ok(())
     }
 
-    pub fn decode_from(input: &[u8]) -> Result<Self, StateError> {
+    pub fn decode_into(input: &[u8], page: &mut Self) -> Result<(), StateError> {
         if input.len() != ASK_OWNER_PAGE_BYTES {
             return Err(StateError::BufferSize);
         }
@@ -824,10 +824,7 @@ impl AskOwnerPage {
         if len > ASKS_PER_PAGE {
             return Err(StateError::Corrupt);
         }
-        let mut page = Self {
-            len: len as u16,
-            ..Self::default()
-        };
+        page.len = len as u16;
         page.reserved.copy_from_slice(&input[2..16]);
         for index in 0..ASKS_PER_PAGE {
             let start = PAGE_HEADER_BYTES + index * ASK_OWNER_BYTES;
@@ -839,6 +836,12 @@ impl AskOwnerPage {
         {
             return Err(StateError::Corrupt);
         }
+        Ok(())
+    }
+
+    pub fn decode_from(input: &[u8]) -> Result<Self, StateError> {
+        let mut page = Self::default();
+        Self::decode_into(input, &mut page)?;
         Ok(page)
     }
 }

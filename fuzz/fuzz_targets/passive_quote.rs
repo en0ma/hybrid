@@ -1,8 +1,9 @@
 #![no_main]
 
 use hybrid_engine::{
-    quote_buy_exact_in, quote_buy_exact_in_levels, quote_quote_in_for_base_out, spot_price_x64,
-    HybridMarket, LimitAsk, PassiveBoundary, PassiveState, Q64,
+    plan_buy_active_exact_in, plan_buy_active_exact_out, quote_buy_exact_in,
+    quote_buy_exact_in_levels, quote_quote_in_for_base_out, spot_price_x64, HybridMarket,
+    LimitAsk, PassiveBoundary, PassiveState, Q64,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -81,6 +82,32 @@ fuzz_target!(|data: (u64, u64, u64, u64)| {
         assert!(q.next_sqrt_price_x64 >= Q64);
         assert!(q.fully_consumed_asks <= asks.len() as u32);
         assert!(q.crossed_boundaries <= boundaries.len() as u32);
+    }
+
+    if let Ok(active_in) = plan_buy_active_exact_in(Q64, &asks, amount_in) {
+        assert!(active_in.amount_in <= amount_in);
+        let fills = &active_in.fills[..usize::from(active_in.fill_count)];
+        assert_eq!(
+            active_in.amount_out,
+            fills.iter().map(|fill| fill.base_qty).sum::<u64>()
+        );
+        assert_eq!(
+            active_in.amount_in,
+            fills.iter().map(|fill| fill.quote_qty).sum::<u64>()
+        );
+    }
+
+    if let Ok(active_out) = plan_buy_active_exact_out(Q64, &asks, ask_qty) {
+        assert!(active_out.amount_out <= ask_qty);
+        let fills = &active_out.fills[..usize::from(active_out.fill_count)];
+        assert_eq!(
+            active_out.amount_out,
+            fills.iter().map(|fill| fill.base_qty).sum::<u64>()
+        );
+        assert_eq!(
+            active_out.amount_in,
+            fills.iter().map(|fill| fill.quote_qty).sum::<u64>()
+        );
     }
 
     let tombstone_sqrt = Q64 + 1 + u128::from(sqrt_hi % 10_000);
