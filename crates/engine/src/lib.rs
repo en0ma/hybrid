@@ -113,6 +113,70 @@ pub fn validate_limit_ask(order: LimitAsk) -> Result<(), QuoteError> {
     Ok(())
 }
 
+/// Multiply two u128 values into little-endian 32-bit limbs.
+/// The extra two limbs leave room for multiplication by Q64.
+fn range_product_q64(a: u128, b: u128) -> [u32; 10] {
+    let mut product = [0u32; 8];
+    for i in 0..4 {
+        let mut carry = 0u64;
+        for j in 0..4 {
+            let existing = u64::from(product[i + j]);
+            let part = ((a >> (i * 32)) & 0xffff_ffff) as u64;
+            let other = ((b >> (j * 32)) & 0xffff_ffff) as u64;
+            let sum = u128::from(part) * u128::from(other)
+                + u128::from(existing)
+                + u128::from(carry);
+            product[i + j] = sum as u32;
+            carry = (sum >> 32) as u64;
+        }
+        product[i + 4] = carry as u32;
+    }
+    let mut result = [0u32; 10];
+    result[2..].copy_from_slice(&product);
+    result
+}
+
+/// Divide up to 320 bits by u128. Return the quotient and remainder.
+/// Track the carry bit before shifting a 128-bit remainder.
+fn div_range_limbs(
+    value: [u32; 10],
+    divisor: u128,
+) -> Result<([u32; 10], u128), QuoteError> {
+    if divisor == 0 {
+        return Err(QuoteError::InvalidPrice);
+    }
+    let mut quotient = [0u32; 10];
+    let mut remainder = 0u128;
+    for bit in (0..320).rev() {
+        let carry = remainder >> 127;
+        remainder = (remainder << 1)
+            | u128::from((value[bit / 32] >> (bit % 32)) & 1);
+        if carry != 0 || remainder >= divisor {
+            remainder = remainder.wrapping_sub(divisor);
+            quotient[bit / 32] |= 1u32 << (bit % 32);
+        }
+    }
+    Ok((quotient, remainder))
+}
+
+/// Exact ceil(L * (upper - lower) * Q64 / lower / upper).
+/// The wide numerator avoids false overflow for large Q64 price bounds.
+fn range_base_ceil(
+    liquidity: u128,
+    lower: u128,
+    upper: u128,
+) -> Result<u64, QuoteError> {
+    let numerator = range_product_q64(liquidity, upper - lower);
+    let (quotient, first_remainder) = div_range_limbs(numerator, lower)?;
+    let (result, second_remainder) = div_range_limbs(quotient, upper)?;
+    if result[2..].iter().any(|digit| *digit != 0) {
+        return Err(QuoteError::Overflow);
+    }
+    let whole = u64::from(result[0]) | (u64::from(result[1]) << 32);
+    let rounded = u64::from(first_remainder != 0 || second_remainder != 0);
+    whole.checked_add(rounded).ok_or(QuoteError::Overflow)
+}
+
 /// Minimum tokens that must back a range position at the current price.
 /// Amounts are rounded up. This calculation does not mint liquidity or move
 /// tokens. The caller must check custody and the position owner.
@@ -135,9 +199,7 @@ pub fn required_range_deposit(
     let base = if base_lower >= upper_sqrt_price_x64 {
         0
     } else {
-        passive_base_delta(state.liquidity, base_lower, upper_sqrt_price_x64)?
-            .checked_add(1)
-            .ok_or(QuoteError::Overflow)?
+        range_base_ceil(state.liquidity, base_lower, upper_sqrt_price_x64)?
     };
     let quote_upper = current.min(upper_sqrt_price_x64);
     let quote = if quote_upper <= lower_sqrt_price_x64 {
@@ -146,7 +208,7 @@ pub fn required_range_deposit(
         mul_q64_ceil(state.liquidity, quote_upper - lower_sqrt_price_x64)?
     };
     Ok((
-        u64::try_from(base).map_err(|_| QuoteError::Overflow)?,
+        base,
         u64::try_from(quote).map_err(|_| QuoteError::Overflow)?,
     ))
 }
