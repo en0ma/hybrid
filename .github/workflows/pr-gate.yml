@@ -173,9 +173,15 @@ jobs:
         run: |
           echo "Manifest cache exact hit: ${{ steps.manifest-build-cache.outputs.cache-hit }}"
           echo "Manifest baseline SHA: $MANIFEST_COMMIT"
+      - name: Install native Rust compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: "v0.16.0"
       - name: Test and build pinned Manifest
         env:
           MANIFEST_BASELINE_ONLY: "1"
+          MANIFEST_NATIVE_SCCACHE: "1"
+          SCCACHE_GHA_ENABLED: "true"
           MANIFEST_TARGET_DIR: ${{ runner.temp }}/manifest-target
         run: |
           source ci/install-solana.sh
