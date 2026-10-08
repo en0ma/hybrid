@@ -2391,10 +2391,10 @@ fn process_close_passive_position(
     position_account.try_borrow_mut_data()?.fill(0);
     // Return the position account's rent to the LP.
     let rent = position_account.lamports();
-    **position_account.try_borrow_mut_lamports()? = 0;
-    **lp.try_borrow_mut_lamports()? = lp
-        .lamports()
+    let new_lp_lamports = lp.lamports()
         .checked_add(rent)
         .ok_or(ProgramError::InvalidAccountData)?;
+    **position_account.try_borrow_mut_lamports()? = 0;
+    **lp.try_borrow_mut_lamports()? = new_lp_lamports;
     Ok(())
 }
