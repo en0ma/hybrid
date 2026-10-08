@@ -2055,3 +2055,79 @@ mod tests {
         );
     }
 }
+
+
+#[cfg(test)]
+mod bid_fill_regression_tests {
+    use super::*;
+
+    #[test]
+    fn full_and_partial_fills_preserve_parallel_bid_owners() {
+        let mut bids = BidPage::default();
+        let mut owners = BidOwnerPage::default();
+        bids.set_links(PageLinks::new(0, None, None));
+        owners.set_links(PageLinks::new(0, None, None));
+        for sequence in 1..=3 {
+            insert_owned_bid(
+                &mut bids,
+                &mut owners,
+                BidEntry {
+                    price_x64: hybrid_engine::Q64,
+                    sqrt_price_x64: hybrid_engine::Q64,
+                    base_qty: 10,
+                    sequence,
+                },
+                [sequence as u8; BID_OWNER_BYTES],
+            )
+            .unwrap();
+        }
+        let fills = [
+            hybrid_engine::ActiveBidFill {
+                bid_index: 0,
+                base_qty: 10,
+                quote_qty: 10,
+            },
+            hybrid_engine::ActiveBidFill {
+                bid_index: 2,
+                base_qty: 4,
+                quote_qty: 4,
+            },
+        ];
+        assert_eq!(apply_active_fills_to_bid_page(&mut bids, &mut owners, &fills), Ok(1));
+        assert_eq!(bids.len(), 2);
+        assert_eq!(bids.as_slice()[0].sequence, 2);
+        assert_eq!(bids.as_slice()[1].base_qty, 6);
+        assert_eq!(owners.owners[0], [2; BID_OWNER_BYTES]);
+        assert_eq!(owners.owners[1], [3; BID_OWNER_BYTES]);
+    }
+
+    #[test]
+    fn invalid_bid_fill_keeps_pages_unchanged() {
+        let mut bids = BidPage::default();
+        let mut owners = BidOwnerPage::default();
+        bids.set_links(PageLinks::new(0, None, None));
+        owners.set_links(PageLinks::new(0, None, None));
+        insert_owned_bid(
+            &mut bids,
+            &mut owners,
+            BidEntry {
+                price_x64: hybrid_engine::Q64,
+                sqrt_price_x64: hybrid_engine::Q64,
+                base_qty: 5,
+                sequence: 1,
+            },
+            [7; BID_OWNER_BYTES],
+        )
+        .unwrap();
+        let before_bids = bids.clone();
+        let before_owners = owners.clone();
+        let bad = [hybrid_engine::ActiveBidFill {
+            bid_index: 0,
+            base_qty: 6,
+            quote_qty: 6,
+        }];
+        assert!(apply_active_fills_to_bid_page(&mut bids, &mut owners, &bad).is_err());
+        assert_eq!(bids, before_bids);
+        assert_eq!(owners, before_owners);
+    }
+}
