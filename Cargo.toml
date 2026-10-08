@@ -24,15 +24,11 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 [workspace.metadata.solana]
 tools-version = "v1.57"
 
+# Solana's executable account limit is much larger than this repository's
+# historical 160 KiB CI guard. Prefer low execution CU over minimizing ELF
+# bytes, while retaining LTO and a separate deploy-size regression guard.
 [profile.release]
-opt-level = "z"
+opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
-
-# Balance compiled engine size against the compute-unit cost of the
-# multipage matcher. Global opt-level z regressed its CU; level 3 exceeded
-# the SBF binary-size guard. Optimize the engine for size without z's
-# most aggressive speed trade-offs.
-[profile.release.package.hybrid-engine]
-opt-level = "s"
