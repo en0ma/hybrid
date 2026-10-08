@@ -222,8 +222,7 @@ pub fn validate_range_collateral(
     base_principal: u64,
     quote_principal: u64,
 ) -> Result<(), QuoteError> {
-    let (base, quote) =
-        required_range_deposit(state, lower_sqrt_price_x64, upper_sqrt_price_x64)?;
+    let (base, quote) = required_range_deposit(state, lower_sqrt_price_x64, upper_sqrt_price_x64)?;
     if base_principal < base || quote_principal < quote {
         return Err(QuoteError::ZeroLiquidity);
     }
@@ -1891,54 +1890,100 @@ mod range_collateral_tests {
     fn inside_range_requires_both_assets() {
         let l = Q64 / 100;
         let (base, quote) = required_range_deposit(
-            PassiveState { sqrt_price_x64: Q64, liquidity: l },
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: l,
+            },
             Q64 - Q64 / 10,
             Q64 + Q64 / 10,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(base > 0 && quote > 0);
         validate_range_collateral(
-            PassiveState { sqrt_price_x64: Q64, liquidity: l },
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: l,
+            },
             Q64 - Q64 / 10,
             Q64 + Q64 / 10,
-            base, quote,
-        ).unwrap();
+            base,
+            quote,
+        )
+        .unwrap();
         assert!(validate_range_collateral(
-            PassiveState { sqrt_price_x64: Q64, liquidity: l },
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: l
+            },
             Q64 - Q64 / 10,
             Q64 + Q64 / 10,
-            base - 1, quote,
-        ).is_err());
+            base - 1,
+            quote,
+        )
+        .is_err());
     }
 
     #[test]
     fn out_of_range_uses_only_one_token() {
         let l = Q64 / 100;
         let below = required_range_deposit(
-            PassiveState { sqrt_price_x64: Q64 / 2, liquidity: l },
-            Q64, Q64 + Q64 / 10,
-        ).unwrap();
+            PassiveState {
+                sqrt_price_x64: Q64 / 2,
+                liquidity: l,
+            },
+            Q64,
+            Q64 + Q64 / 10,
+        )
+        .unwrap();
         assert!(below.0 > 0);
         assert_eq!(below.1, 0);
         let above = required_range_deposit(
-            PassiveState { sqrt_price_x64: Q64 * 2, liquidity: l },
-            Q64, Q64 + Q64 / 10,
-        ).unwrap();
+            PassiveState {
+                sqrt_price_x64: Q64 * 2,
+                liquidity: l,
+            },
+            Q64,
+            Q64 + Q64 / 10,
+        )
+        .unwrap();
         assert_eq!(above.0, 0);
         assert!(above.1 > 0);
     }
 
     #[test]
     fn invalid_ranges_and_overflow_are_rejected() {
-        let state = PassiveState { sqrt_price_x64: Q64, liquidity: Q64 };
-        assert_eq!(required_range_deposit(state, Q64, Q64), Err(QuoteError::InvalidPrice));
-        assert_eq!(required_range_deposit(state, 0, Q64), Err(QuoteError::InvalidPrice));
+        let state = PassiveState {
+            sqrt_price_x64: Q64,
+            liquidity: Q64,
+        };
         assert_eq!(
-            required_range_deposit(PassiveState { liquidity: 0, ..state }, 1, Q64),
+            required_range_deposit(state, Q64, Q64),
+            Err(QuoteError::InvalidPrice)
+        );
+        assert_eq!(
+            required_range_deposit(state, 0, Q64),
+            Err(QuoteError::InvalidPrice)
+        );
+        assert_eq!(
+            required_range_deposit(
+                PassiveState {
+                    liquidity: 0,
+                    ..state
+                },
+                1,
+                Q64
+            ),
             Err(QuoteError::ZeroLiquidity)
         );
         assert!(required_range_deposit(
-            PassiveState { liquidity: u128::MAX, ..state }, 1, Q64 * 2,
-        ).is_err());
+            PassiveState {
+                liquidity: u128::MAX,
+                ..state
+            },
+            1,
+            Q64 * 2,
+        )
+        .is_err());
     }
 
     #[test]
@@ -1946,9 +1991,14 @@ mod range_collateral_tests {
         let mut last = (0, 0);
         for units in 1..=100u128 {
             let value = required_range_deposit(
-                PassiveState { sqrt_price_x64: Q64, liquidity: units * 10000 },
-                Q64 - Q64 / 4, Q64 + Q64 / 4,
-            ).unwrap();
+                PassiveState {
+                    sqrt_price_x64: Q64,
+                    liquidity: units * 10000,
+                },
+                Q64 - Q64 / 4,
+                Q64 + Q64 / 4,
+            )
+            .unwrap();
             assert!(value.0 >= last.0 && value.1 >= last.1);
             last = value;
         }
