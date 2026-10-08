@@ -103,9 +103,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.PR_HEAD_SHA }}
-          fetch-depth: 0
+          fetch-depth: 1
       - name: Assert exact checkout
         run: test "$(git rev-parse HEAD)" = "$PR_HEAD_SHA"
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: hybrid-core-v1
+          cache-on-failure: true
+      - name: Cache Solana CLI and SBF tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/solana/install
+          key: ${{ runner.os }}-solana-v4.3.0-v1
+      - name: Cache fuzz runner
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-fuzz
+          key: ${{ runner.os }}-cargo-fuzz-v1
       - name: Run deterministic core CI
         run: |
           source ci/install-solana.sh
@@ -130,6 +145,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.PR_HEAD_SHA }}
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: manifest-baseline-v1
+          cache-on-failure: true
+      - name: Cache Solana CLI and SBF tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/solana/install
+          key: ${{ runner.os }}-solana-v4.3.0-v1
       - name: Build, test and compare against pinned Manifest
         run: |
           source ci/install-solana.sh
