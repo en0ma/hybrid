@@ -226,8 +226,8 @@ fn close_ix(f: &Fixture, owner: Pubkey, base_destination: Pubkey) -> Instruction
 #[tokio::test]
 async fn close_redeems_principal_without_spending_active_collateral() {
     let f = fixture(120, 180);
-    let mut ctx = f.test.start_with_context().await;
     let ix = close_ix(&f, f.owner.pubkey(), f.base_dest);
+    let mut ctx = f.test.start_with_context().await;
     let hash = ctx.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -280,8 +280,8 @@ async fn close_redeems_principal_without_spending_active_collateral() {
 #[tokio::test]
 async fn short_vault_rejects_close_and_preserves_position() {
     let f = fixture(119, 180);
-    let mut ctx = f.test.start_with_context().await;
     let ix = close_ix(&f, f.owner.pubkey(), f.base_dest);
+    let mut ctx = f.test.start_with_context().await;
     let hash = ctx.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -316,8 +316,8 @@ async fn short_vault_rejects_close_and_preserves_position() {
 #[tokio::test]
 async fn aliased_destination_rejects_close_without_mutation() {
     let f = fixture(120, 180);
-    let mut ctx = f.test.start_with_context().await;
     let ix = close_ix(&f, f.owner.pubkey(), f.base_vault);
+    let mut ctx = f.test.start_with_context().await;
     let hash = ctx.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
