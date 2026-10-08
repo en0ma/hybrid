@@ -40,16 +40,19 @@ pub struct PassivePosition {
 impl PassivePool {
     /// Add an explicitly collateralized position. All arithmetic is checked
     /// before any state is mutated, including the liquidity total.
-    pub fn deposit(
-        &mut self,
-        position: &PassivePosition,
-    ) -> Result<(), PassiveAccountingError> {
+    pub fn deposit(&mut self, position: &PassivePosition) -> Result<(), PassiveAccountingError> {
         position.validate()?;
-        let base = self.base_reserve.checked_add(position.base_principal)
+        let base = self
+            .base_reserve
+            .checked_add(position.base_principal)
             .ok_or(PassiveAccountingError::Overflow)?;
-        let quote = self.quote_reserve.checked_add(position.quote_principal)
+        let quote = self
+            .quote_reserve
+            .checked_add(position.quote_principal)
             .ok_or(PassiveAccountingError::Overflow)?;
-        let liquidity = self.total_liquidity.checked_add(position.liquidity)
+        let liquidity = self
+            .total_liquidity
+            .checked_add(position.liquidity)
             .ok_or(PassiveAccountingError::Overflow)?;
         self.base_reserve = base;
         self.quote_reserve = quote;
@@ -59,16 +62,19 @@ impl PassivePool {
 
     /// Remove precisely this position's principal once all outstanding
     /// exposure has been settled by the surrounding swap/LP processor.
-    pub fn withdraw(
-        &mut self,
-        position: &PassivePosition,
-    ) -> Result<(), PassiveAccountingError> {
+    pub fn withdraw(&mut self, position: &PassivePosition) -> Result<(), PassiveAccountingError> {
         position.validate()?;
-        let base = self.base_reserve.checked_sub(position.base_principal)
+        let base = self
+            .base_reserve
+            .checked_sub(position.base_principal)
             .ok_or(PassiveAccountingError::InsufficientReserves)?;
-        let quote = self.quote_reserve.checked_sub(position.quote_principal)
+        let quote = self
+            .quote_reserve
+            .checked_sub(position.quote_principal)
             .ok_or(PassiveAccountingError::InsufficientReserves)?;
-        let liquidity = self.total_liquidity.checked_sub(position.liquidity)
+        let liquidity = self
+            .total_liquidity
+            .checked_sub(position.liquidity)
             .ok_or(PassiveAccountingError::InsufficientLiquidity)?;
         self.base_reserve = base;
         self.quote_reserve = quote;
@@ -88,11 +94,17 @@ impl PassivePool {
         if quote_in == 0 || base_out == 0 || quote_fee >= quote_in {
             return Err(PassiveAccountingError::ZeroAmount);
         }
-        let base = self.base_reserve.checked_sub(base_out)
+        let base = self
+            .base_reserve
+            .checked_sub(base_out)
             .ok_or(PassiveAccountingError::InsufficientReserves)?;
-        let quote = self.quote_reserve.checked_add(quote_in - quote_fee)
+        let quote = self
+            .quote_reserve
+            .checked_add(quote_in - quote_fee)
             .ok_or(PassiveAccountingError::Overflow)?;
-        let fees = self.accrued_quote_fees.checked_add(quote_fee)
+        let fees = self
+            .accrued_quote_fees
+            .checked_add(quote_fee)
             .ok_or(PassiveAccountingError::Overflow)?;
         self.base_reserve = base;
         self.quote_reserve = quote;
@@ -110,11 +122,17 @@ impl PassivePool {
         if base_in == 0 || quote_out == 0 || base_fee >= base_in {
             return Err(PassiveAccountingError::ZeroAmount);
         }
-        let base = self.base_reserve.checked_add(base_in - base_fee)
+        let base = self
+            .base_reserve
+            .checked_add(base_in - base_fee)
             .ok_or(PassiveAccountingError::Overflow)?;
-        let quote = self.quote_reserve.checked_sub(quote_out)
+        let quote = self
+            .quote_reserve
+            .checked_sub(quote_out)
             .ok_or(PassiveAccountingError::InsufficientReserves)?;
-        let fees = self.accrued_base_fees.checked_add(base_fee)
+        let fees = self
+            .accrued_base_fees
+            .checked_add(base_fee)
             .ok_or(PassiveAccountingError::Overflow)?;
         self.base_reserve = base;
         self.quote_reserve = quote;
@@ -131,10 +149,12 @@ impl PassivePool {
         actual_base: u64,
         actual_quote: u64,
     ) -> Result<(), PassiveAccountingError> {
-        let required_base = active_base.checked_add(self.base_reserve)
+        let required_base = active_base
+            .checked_add(self.base_reserve)
             .and_then(|n| n.checked_add(self.accrued_base_fees))
             .ok_or(PassiveAccountingError::Overflow)?;
-        let required_quote = active_quote.checked_add(self.quote_reserve)
+        let required_quote = active_quote
+            .checked_add(self.quote_reserve)
             .and_then(|n| n.checked_add(self.accrued_quote_fees))
             .ok_or(PassiveAccountingError::Overflow)?;
         if actual_base < required_base || actual_quote < required_quote {
@@ -177,7 +197,10 @@ mod tests {
     fn position_deposit_withdraw_round_trip() {
         let mut pool = PassivePool::default();
         pool.deposit(&position()).unwrap();
-        assert_eq!((pool.base_reserve, pool.quote_reserve, pool.total_liquidity), (200, 300, 100));
+        assert_eq!(
+            (pool.base_reserve, pool.quote_reserve, pool.total_liquidity),
+            (200, 300, 100)
+        );
         pool.verify_vault_coverage(50, 70, 250, 370).unwrap();
         assert!(pool.verify_vault_coverage(50, 70, 249, 370).is_err());
         pool.withdraw(&position()).unwrap();
@@ -189,9 +212,23 @@ mod tests {
         let mut pool = PassivePool::default();
         pool.deposit(&position()).unwrap();
         pool.buy(25, 10, 2).unwrap();
-        assert_eq!((pool.base_reserve, pool.quote_reserve, pool.accrued_quote_fees), (190, 323, 2));
+        assert_eq!(
+            (
+                pool.base_reserve,
+                pool.quote_reserve,
+                pool.accrued_quote_fees
+            ),
+            (190, 323, 2)
+        );
         pool.sell(20, 15, 3).unwrap();
-        assert_eq!((pool.base_reserve, pool.quote_reserve, pool.accrued_base_fees), (207, 308, 3));
+        assert_eq!(
+            (
+                pool.base_reserve,
+                pool.quote_reserve,
+                pool.accrued_base_fees
+            ),
+            (207, 308, 3)
+        );
         pool.verify_vault_coverage(50, 70, 260, 380).unwrap();
         assert!(pool.verify_vault_coverage(50, 70, 259, 380).is_err());
     }
@@ -200,11 +237,17 @@ mod tests {
     fn invalid_and_insolvent_transitions_do_not_mutate() {
         let mut pool = PassivePool::default();
         let before = pool;
-        assert_eq!(pool.withdraw(&position()), Err(PassiveAccountingError::InsufficientReserves));
+        assert_eq!(
+            pool.withdraw(&position()),
+            Err(PassiveAccountingError::InsufficientReserves)
+        );
         assert_eq!(pool, before);
         assert_eq!(pool.buy(10, 1, 10), Err(PassiveAccountingError::ZeroAmount));
         assert_eq!(pool, before);
-        assert_eq!(pool.sell(10, 1, 0), Err(PassiveAccountingError::InsufficientReserves));
+        assert_eq!(
+            pool.sell(10, 1, 0),
+            Err(PassiveAccountingError::InsufficientReserves)
+        );
         assert_eq!(pool, before);
     }
 
@@ -215,11 +258,17 @@ mod tests {
             ..PassivePool::default()
         };
         let before = pool;
-        assert_eq!(pool.deposit(&position()), Err(PassiveAccountingError::Overflow));
+        assert_eq!(
+            pool.deposit(&position()),
+            Err(PassiveAccountingError::Overflow)
+        );
         assert_eq!(pool, before);
         let mut invalid = position();
         invalid.upper_sqrt_price_x64 = invalid.lower_sqrt_price_x64;
-        assert_eq!(pool.deposit(&invalid), Err(PassiveAccountingError::InvalidPosition));
+        assert_eq!(
+            pool.deposit(&invalid),
+            Err(PassiveAccountingError::InvalidPosition)
+        );
         assert_eq!(pool, before);
     }
 
