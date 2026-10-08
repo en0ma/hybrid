@@ -170,11 +170,13 @@ fn fixture() -> Fixture {
     maker_b_state.encode_into(&mut maker_b_data).unwrap();
 
     let mut program_test = ProgramTest::new("hybrid_program", ID, None);
-    program_test.add_builtin_program(
+    program_test.prefer_bpf(false);
+    program_test.add_program(
         "mock_token",
         TOKEN_PROGRAM_ID,
         processor!(mock_token_process),
     );
+    program_test.prefer_bpf(true);
     program_test.add_account(market, account(market_data, ID));
     program_test.add_account(custody, account(custody_data, ID));
     program_test.add_account(ask_page, account(ask_data, ID));
