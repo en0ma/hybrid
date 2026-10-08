@@ -1858,6 +1858,36 @@ mod range_collateral_tests {
     use super::*;
 
     #[test]
+    fn exact_base_amount_does_not_add_dust() {
+        let result = required_range_deposit(
+            PassiveState {
+                sqrt_price_x64: Q64 / 4,
+                liquidity: 10,
+            },
+            Q64 / 2,
+            Q64,
+        )
+        .unwrap();
+        assert_eq!(result, (10, 0));
+    }
+
+    #[test]
+    fn large_price_bounds_do_not_overflow_intermediate_products() {
+        let result = required_range_deposit(
+            PassiveState {
+                sqrt_price_x64: 1u128 << 94,
+                liquidity: Q64,
+            },
+            1u128 << 95,
+            (1u128 << 96) - 1,
+        )
+        .unwrap();
+        assert_eq!(result.1, 0);
+        assert!(result.0 > 0);
+        assert!(result.0 <= (1u64 << 32));
+    }
+
+    #[test]
     fn inside_range_requires_both_assets() {
         let l = Q64 / 100;
         let (base, quote) = required_range_deposit(
