@@ -29,3 +29,8 @@ opt-level = "z"
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
+
+# Preserve the hot matching/math path's CU performance while keeping
+# size-focused optimization for the Solana processor and remaining crates.
+[profile.release.package.hybrid-engine]
+opt-level = 3
