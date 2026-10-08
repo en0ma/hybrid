@@ -2080,6 +2080,33 @@ fn process_init_passive_pool(
         .map_err(|_| ProgramError::InvalidAccountData)
 }
 
+/// Read the SPL Token amount only after the token-account owner and
+/// initialized state have been checked.
+fn checked_token_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
+    token_account_fields(account)?;
+    let data = account.try_borrow_data()?;
+    Ok(u64::from_le_bytes(
+        data[64..72]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidAccountData)?,
+    ))
+}
+
+fn check_passive_vault_coverage(
+    custody: &hybrid_state::CustodyState,
+    pool: &hybrid_state::passive::PassivePool,
+    base_vault: &AccountInfo,
+    quote_vault: &AccountInfo,
+) -> ProgramResult {
+    pool.verify_vault_coverage(
+        custody.total_base,
+        custody.total_quote,
+        checked_token_amount(base_vault)?,
+        checked_token_amount(quote_vault)?,
+    )
+    .map_err(|_| ProgramError::InsufficientFunds)
+}
+
 /// Create a position PDA and transfer the owner's base and quote principal
 /// into the existing SPL Token vaults. Positions cannot withdraw or trade
 /// until fee attribution and position redemption are implemented.
@@ -2191,6 +2218,9 @@ fn process_open_passive_position(
     {
         return Err(ProgramError::InvalidAccountData);
     }
+    // Do not accept more LP claims when pre-existing custody is insolvent.
+    // The deposits in this instruction are checked again after the CPIs.
+    check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
     pool.pool
         .deposit(&position)
         .map_err(|_| ProgramError::InvalidAccountData)?;
@@ -2230,6 +2260,7 @@ fn process_open_passive_position(
             None,
         )?;
     }
+    check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
     let state = hybrid_state::passive::PositionAccount {
         bump,
         market: market.key.to_bytes(),
@@ -2336,24 +2367,8 @@ fn process_close_passive_position(
         return Err(ProgramError::InvalidAccountData);
     }
 
-    // The vaults must cover all active maker claims and passive LP claims
-    // before a position can draw down its principal.
-    let vault_amount = |account: &AccountInfo| -> Result<u64, ProgramError> {
-        let bytes = account.try_borrow_data()?;
-        Ok(u64::from_le_bytes(
-            bytes[64..72]
-                .try_into()
-                .map_err(|_| ProgramError::InvalidAccountData)?,
-        ))
-    };
-    pool.pool
-        .verify_vault_coverage(
-            custody.total_base,
-            custody.total_quote,
-            vault_amount(base_vault)?,
-            vault_amount(quote_vault)?,
-        )
-        .map_err(|_| ProgramError::InsufficientFunds)?;
+    // Both active maker claims and passive LP claims must remain funded.
+    check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
     // Swaps and fee distributions are not enabled for passive positions.
     // Only the exact deposited principal can be redeemed.
     pool.pool
@@ -2385,6 +2400,7 @@ fn process_close_passive_position(
         )?;
     }
 
+    check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
     pool.encode_into(&mut pool_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
     // A zeroed position cannot decode again. A second withdrawal fails.
