@@ -2056,7 +2056,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod bid_fill_regression_tests {
     use super::*;
@@ -2093,7 +2092,10 @@ mod bid_fill_regression_tests {
                 quote_qty: 4,
             },
         ];
-        assert_eq!(apply_active_fills_to_bid_page(&mut bids, &mut owners, &fills), Ok(1));
+        assert_eq!(
+            apply_active_fills_to_bid_page(&mut bids, &mut owners, &fills),
+            Ok(1)
+        );
         assert_eq!(bids.len(), 2);
         assert_eq!(bids.as_slice()[0].sequence, 2);
         assert_eq!(bids.as_slice()[1].base_qty, 6);
