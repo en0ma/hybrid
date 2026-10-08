@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod passive;
+
 use hybrid_engine::{validate_limit_ask, LimitAsk, PassiveBoundary, QuoteError};
 
 pub const MARKET_HEADER_BYTES: usize = 128;
