@@ -263,9 +263,7 @@ impl MakerBalance {
         base_received: u64,
         quote_paid: u64,
     ) -> Result<(), StateError> {
-        if original_base == 0
-            || original_base.checked_sub(base_received) != Some(remaining_base)
-        {
+        if original_base == 0 || original_base.checked_sub(base_received) != Some(remaining_base) {
             return Err(StateError::Corrupt);
         }
         let old_lock = hybrid_engine::quote_for_base_at_price(original_base, price_x64)
@@ -274,9 +272,18 @@ impl MakerBalance {
             .map_err(|_| StateError::Corrupt)?;
         let release = old_lock.checked_sub(new_lock).ok_or(StateError::Corrupt)?;
         let refund = release.checked_sub(quote_paid).ok_or(StateError::Corrupt)?;
-        let next_locked = self.locked_quote.checked_sub(release).ok_or(StateError::Corrupt)?;
-        let next_free_base = self.free_base.checked_add(base_received).ok_or(StateError::Full)?;
-        let next_free_quote = self.free_quote.checked_add(refund).ok_or(StateError::Full)?;
+        let next_locked = self
+            .locked_quote
+            .checked_sub(release)
+            .ok_or(StateError::Corrupt)?;
+        let next_free_base = self
+            .free_base
+            .checked_add(base_received)
+            .ok_or(StateError::Full)?;
+        let next_free_quote = self
+            .free_quote
+            .checked_add(refund)
+            .ok_or(StateError::Full)?;
         self.locked_quote = next_locked;
         self.free_base = next_free_base;
         self.free_quote = next_free_quote;
