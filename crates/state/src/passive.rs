@@ -171,6 +171,11 @@ impl PassivePosition {
             || self.lower_sqrt_price_x64 >= self.upper_sqrt_price_x64
             || self.liquidity == 0
             || (self.base_principal == 0 && self.quote_principal == 0)
+            // Until a range mint formula is verified, bound declared
+            // liquidity by deposited principal. This is a safety cap,
+            // NOT a liquidity calculation or permission to trade.
+            || self.liquidity
+                > u128::from(self.base_principal) + u128::from(self.quote_principal)
         {
             return Err(PassiveAccountingError::InvalidPosition);
         }
@@ -345,6 +350,25 @@ mod tests {
             base_principal: 200,
             quote_principal: 300,
         }
+    }
+
+    #[test]
+    fn position_rejects_unbacked_liquidity_without_mutating_pool() {
+        let mut pool = PassivePool::default();
+        let mut bad = position();
+        bad.liquidity = u128::MAX;
+        bad.base_principal = 1;
+        bad.quote_principal = 0;
+        assert_eq!(bad.validate(), Err(PassiveAccountingError::InvalidPosition));
+        assert_eq!(pool.deposit(&bad), Err(PassiveAccountingError::InvalidPosition));
+        assert_eq!(pool, PassivePool::default());
+
+        let mut small = position();
+        small.base_principal = 1;
+        small.quote_principal = 1;
+        small.liquidity = 2;
+        pool.deposit(&small).unwrap();
+        assert_eq!(pool.total_liquidity, 2);
     }
 
     #[test]
