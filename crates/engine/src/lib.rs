@@ -144,6 +144,87 @@ pub fn quote_quote_in_for_base_out(
     })
 }
 
+/// A conservative, bounded passive sell quote. This quote layer does not
+/// mutate accounts or authorize settlement. Inputs are base atoms and outputs
+/// are quote atoms; the price moves downward.
+pub fn quote_base_in_for_quote_out(
+    state: PassiveState,
+    base_in: u64,
+) -> Result<Quote, QuoteError> {
+    if state.liquidity == 0 {
+        return Err(QuoteError::ZeroLiquidity);
+    }
+    if state.sqrt_price_x64 == 0 {
+        return Err(QuoteError::InvalidPrice);
+    }
+    if base_in == 0 {
+        return Ok(Quote {
+            amount_in: 0,
+            amount_out: 0,
+            next_sqrt_price_x64: state.sqrt_price_x64,
+        });
+    }
+    // For sqrt P' <= sqrt P, base movement is
+    // L * (P - P') * Q64 / (P * P').
+    // Find the largest representable price movement covered by base_in.
+    // This uses checked arithmetic and no approximate floating point.
+    let mut lo = 1u128;
+    let mut hi = state.sqrt_price_x64;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let required = passive_base_delta(state.liquidity, mid, state.sqrt_price_x64)?;
+        if required > u128::from(base_in) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    let quote_out = mul_q64_floor(state.liquidity, state.sqrt_price_x64 - lo)?;
+    let quote_out = u64::try_from(quote_out).map_err(|_| QuoteError::Overflow)?;
+    Ok(Quote {
+        amount_in: base_in,
+        amount_out: quote_out,
+        next_sqrt_price_x64: lo,
+    })
+}
+
+/// Find the minimum whole base amount whose passive quote covers the requested
+/// exact output. A nonrepresentable target is rejected rather than silently
+/// overcharging the taker. No vault or LP state is changed here.
+pub fn quote_base_in_for_quote_exact_out(
+    state: PassiveState,
+    quote_out: u64,
+) -> Result<Quote, QuoteError> {
+    if state.liquidity == 0 {
+        return Err(QuoteError::ZeroLiquidity);
+    }
+    if state.sqrt_price_x64 == 0 {
+        return Err(QuoteError::InvalidPrice);
+    }
+    if quote_out == 0 {
+        return Ok(Quote {
+            amount_in: 0,
+            amount_out: 0,
+            next_sqrt_price_x64: state.sqrt_price_x64,
+        });
+    }
+    let max = quote_base_in_for_quote_out(state, u64::MAX)?;
+    if max.amount_out < quote_out {
+        return Err(QuoteError::Overflow);
+    }
+    let mut lo = 1u64;
+    let mut hi = u64::MAX;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if quote_base_in_for_quote_out(state, mid)?.amount_out >= quote_out {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    quote_base_in_for_quote_out(state, lo)
+}
+
 /// Divide `remainder * 2^64` by `denominator` without a wider integer.
 ///
 /// The precondition `remainder < denominator` keeps every doubled remainder
