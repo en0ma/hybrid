@@ -178,6 +178,138 @@ impl PassivePosition {
     }
 }
 
+/// Fixed-width account formats. No Rust memory layout is persisted.
+pub const PASSIVE_POOL_BYTES: usize = 112;
+pub const PASSIVE_POSITION_BYTES: usize = 160;
+pub const PASSIVE_POOL_MAGIC: [u8; 8] = *b"HYBPOOL1";
+pub const PASSIVE_POSITION_MAGIC: [u8; 8] = *b"HYBPOS01";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PoolAccount {
+    pub bump: u8,
+    pub market: [u8; 32],
+    pub pool: PassivePool,
+}
+
+impl PoolAccount {
+    pub fn encode_into(&self, out: &mut [u8]) -> Result<(), PassiveAccountingError> {
+        if out.len() != PASSIVE_POOL_BYTES || self.market == [0; 32] {
+            return Err(PassiveAccountingError::InvalidPosition);
+        }
+        out.fill(0);
+        out[..8].copy_from_slice(&PASSIVE_POOL_MAGIC);
+        out[8] = 1;
+        out[9] = self.bump;
+        out[16..48].copy_from_slice(&self.market);
+        out[48..56].copy_from_slice(&self.pool.base_reserve.to_le_bytes());
+        out[56..64].copy_from_slice(&self.pool.quote_reserve.to_le_bytes());
+        out[64..80].copy_from_slice(&self.pool.total_liquidity.to_le_bytes());
+        out[80..88].copy_from_slice(&self.pool.accrued_base_fees.to_le_bytes());
+        out[88..96].copy_from_slice(&self.pool.accrued_quote_fees.to_le_bytes());
+        Ok(())
+    }
+
+    pub fn decode_from(data: &[u8]) -> Result<Self, PassiveAccountingError> {
+        if data.len() != PASSIVE_POOL_BYTES
+            || data[..8] != PASSIVE_POOL_MAGIC
+            || data[8] != 1
+            || data[10..16].iter().any(|byte| *byte != 0)
+            || data[96..].iter().any(|byte| *byte != 0)
+        {
+            return Err(PassiveAccountingError::InvalidPosition);
+        }
+        let market: [u8; 32] = data[16..48].try_into()
+            .map_err(|_| PassiveAccountingError::InvalidPosition)?;
+        if market == [0; 32] {
+            return Err(PassiveAccountingError::InvalidPosition);
+        }
+        Ok(Self {
+            bump: data[9],
+            market,
+            pool: PassivePool {
+                base_reserve: u64::from_le_bytes(data[48..56].try_into()
+                    .map_err(|_| PassiveAccountingError::InvalidPosition)?),
+                quote_reserve: u64::from_le_bytes(data[56..64].try_into()
+                    .map_err(|_| PassiveAccountingError::InvalidPosition)?),
+                total_liquidity: u128::from_le_bytes(data[64..80].try_into()
+                    .map_err(|_| PassiveAccountingError::InvalidPosition)?),
+                accrued_base_fees: u64::from_le_bytes(data[80..88].try_into()
+                    .map_err(|_| PassiveAccountingError::InvalidPosition)?),
+                accrued_quote_fees: u64::from_le_bytes(data[88..96].try_into()
+                    .map_err(|_| PassiveAccountingError::InvalidPosition)?),
+            },
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PositionAccount {
+    pub bump: u8,
+    pub market: [u8; 32],
+    pub nonce: u64,
+    pub position: PassivePosition,
+}
+
+impl PositionAccount {
+    pub fn encode_into(&self, out: &mut [u8]) -> Result<(), PassiveAccountingError> {
+        self.position.validate()?;
+        if out.len() != PASSIVE_POSITION_BYTES || self.market == [0; 32] {
+            return Err(PassiveAccountingError::InvalidPosition);
+        }
+        out.fill(0);
+        out[..8].copy_from_slice(&PASSIVE_POSITION_MAGIC);
+        out[8] = 1;
+        out[9] = self.bump;
+        out[16..48].copy_from_slice(&self.market);
+        out[48..80].copy_from_slice(&self.position.owner);
+        out[80..88].copy_from_slice(&self.nonce.to_le_bytes());
+        out[88..104].copy_from_slice(&self.position.lower_sqrt_price_x64.to_le_bytes());
+        out[104..120].copy_from_slice(&self.position.upper_sqrt_price_x64.to_le_bytes());
+        out[120..136].copy_from_slice(&self.position.liquidity.to_le_bytes());
+        out[136..144].copy_from_slice(&self.position.base_principal.to_le_bytes());
+        out[144..152].copy_from_slice(&self.position.quote_principal.to_le_bytes());
+        Ok(())
+    }
+
+    pub fn decode_from(data: &[u8]) -> Result<Self, PassiveAccountingError> {
+        if data.len() != PASSIVE_POSITION_BYTES
+            || data[..8] != PASSIVE_POSITION_MAGIC
+            || data[8] != 1
+            || data[10..16].iter().any(|byte| *byte != 0)
+            || data[152..].iter().any(|byte| *byte != 0)
+        {
+            return Err(PassiveAccountingError::InvalidPosition);
+        }
+        let bytes32 = |range: core::ops::Range<usize>| -> Result<[u8; 32], PassiveAccountingError> {
+            data[range].try_into().map_err(|_| PassiveAccountingError::InvalidPosition)
+        };
+        let bytes16 = |range: core::ops::Range<usize>| -> Result<[u8; 16], PassiveAccountingError> {
+            data[range].try_into().map_err(|_| PassiveAccountingError::InvalidPosition)
+        };
+        let bytes8 = |range: core::ops::Range<usize>| -> Result<[u8; 8], PassiveAccountingError> {
+            data[range].try_into().map_err(|_| PassiveAccountingError::InvalidPosition)
+        };
+        let state = Self {
+            bump: data[9],
+            market: bytes32(16..48)?,
+            nonce: u64::from_le_bytes(bytes8(80..88)?),
+            position: PassivePosition {
+                owner: bytes32(48..80)?,
+                lower_sqrt_price_x64: u128::from_le_bytes(bytes16(88..104)?),
+                upper_sqrt_price_x64: u128::from_le_bytes(bytes16(104..120)?),
+                liquidity: u128::from_le_bytes(bytes16(120..136)?),
+                base_principal: u64::from_le_bytes(bytes8(136..144)?),
+                quote_principal: u64::from_le_bytes(bytes8(144..152)?),
+            },
+        };
+        if state.market == [0; 32] {
+            return Err(PassiveAccountingError::InvalidPosition);
+        }
+        state.position.validate()?;
+        Ok(state)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
