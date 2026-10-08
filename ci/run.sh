@@ -29,7 +29,7 @@ if [[ ! -f ci/bytecode-check.sh || ! -f ci/bytecode-budgets.json ]]; then
 fi
 bash ci/bytecode-check.sh
 
-cargo test-sbf --manifest-path program/Cargo.toml --features test-sbf
+cargo test-sbf --manifest-path program/Cargo.toml --features test-sbf -- --nocapture --test-threads=1
 
 if [[ ! -f fuzz/Cargo.toml ]]; then
   echo "fuzz/Cargo.toml is required once Hybrid contains Rust program code."
