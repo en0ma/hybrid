@@ -164,6 +164,8 @@ fn fixture(available_base: u64, available_quote: u64) -> Fixture {
     test.add_account(pool, account(ID, pool_bytes));
     test.add_account(position, account(ID, position_bytes));
     test.add_account(owner.pubkey(), account(Pubkey::default(), vec![]));
+    test.add_account(base_mint, account(TOKEN_ID, vec![0; 82]));
+    test.add_account(quote_mint, account(TOKEN_ID, vec![0; 82]));
     test.add_account(
         base_vault,
         account(TOKEN_ID, token(base_mint, authority, available_base)),
