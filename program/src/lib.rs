@@ -2277,19 +2277,25 @@ fn process_close_passive_position(
         return Err(ProgramError::IncorrectProgramId);
     }
     let custody = load_custody(program_id, market, custody_account)?;
-    let mut pool = hybrid_state::passive::PoolAccount::decode_from(
-        &pool_account.try_borrow_data()?,
-    ).map_err(|_| ProgramError::InvalidAccountData)?;
-    let state = hybrid_state::passive::PositionAccount::decode_from(
-        &position_account.try_borrow_data()?,
-    ).map_err(|_| ProgramError::InvalidAccountData)?;
+    let mut pool =
+        hybrid_state::passive::PoolAccount::decode_from(&pool_account.try_borrow_data()?)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+    let state =
+        hybrid_state::passive::PositionAccount::decode_from(&position_account.try_borrow_data()?)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
 
     let (expected_pool, pool_bump) =
         Pubkey::find_program_address(&[b"passive-pool", market.key.as_ref()], program_id);
-    let nonce_bytes: [u8; 8] = data[1..9].try_into()
+    let nonce_bytes: [u8; 8] = data[1..9]
+        .try_into()
         .map_err(|_| ProgramError::InvalidInstructionData)?;
     let (expected_position, position_bump) = Pubkey::find_program_address(
-        &[b"passive-position", market.key.as_ref(), lp.key.as_ref(), &nonce_bytes],
+        &[
+            b"passive-position",
+            market.key.as_ref(),
+            lp.key.as_ref(),
+            &nonce_bytes,
+        ],
         program_id,
     );
     if *pool_account.key != expected_pool
@@ -2335,32 +2341,47 @@ fn process_close_passive_position(
     let vault_amount = |account: &AccountInfo| -> Result<u64, ProgramError> {
         let bytes = account.try_borrow_data()?;
         Ok(u64::from_le_bytes(
-            bytes[64..72].try_into().map_err(|_| ProgramError::InvalidAccountData)?,
+            bytes[64..72]
+                .try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?,
         ))
     };
-    pool.pool.verify_vault_coverage(
-        custody.total_base,
-        custody.total_quote,
-        vault_amount(base_vault)?,
-        vault_amount(quote_vault)?,
-    ).map_err(|_| ProgramError::InsufficientFunds)?;
+    pool.pool
+        .verify_vault_coverage(
+            custody.total_base,
+            custody.total_quote,
+            vault_amount(base_vault)?,
+            vault_amount(quote_vault)?,
+        )
+        .map_err(|_| ProgramError::InsufficientFunds)?;
     // Swaps and fee distributions are not enabled for passive positions.
     // Only the exact deposited principal can be redeemed.
-    pool.pool.withdraw(&state.position)
+    pool.pool
+        .withdraw(&state.position)
         .map_err(|_| ProgramError::InsufficientFunds)?;
 
     let bump = [authority_bump];
     let seeds: &[&[u8]] = &[b"vault-authority", market.key.as_ref(), &bump];
     if state.position.base_principal > 0 {
         transfer_checked(
-            base_vault, base_mint, dest_base, vault_authority, token_program,
-            (state.position.base_principal, custody.base_decimals), Some(seeds),
+            base_vault,
+            base_mint,
+            dest_base,
+            vault_authority,
+            token_program,
+            (state.position.base_principal, custody.base_decimals),
+            Some(seeds),
         )?;
     }
     if state.position.quote_principal > 0 {
         transfer_checked(
-            quote_vault, quote_mint, dest_quote, vault_authority, token_program,
-            (state.position.quote_principal, custody.quote_decimals), Some(seeds),
+            quote_vault,
+            quote_mint,
+            dest_quote,
+            vault_authority,
+            token_program,
+            (state.position.quote_principal, custody.quote_decimals),
+            Some(seeds),
         )?;
     }
 
@@ -2371,7 +2392,9 @@ fn process_close_passive_position(
     // Return the position account's rent to the LP.
     let rent = position_account.lamports();
     **position_account.try_borrow_mut_lamports()? = 0;
-    **lp.try_borrow_mut_lamports()? = lp.lamports()
-        .checked_add(rent).ok_or(ProgramError::InvalidAccountData)?;
+    **lp.try_borrow_mut_lamports()? = lp
+        .lamports()
+        .checked_add(rent)
+        .ok_or(ProgramError::InvalidAccountData)?;
     Ok(())
 }
