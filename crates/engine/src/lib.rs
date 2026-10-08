@@ -1495,7 +1495,7 @@ mod sell_plan_regression_tests {
     fn bid(price: u128, quantity: u64) -> LimitAsk {
         LimitAsk {
             price_x64: price,
-            sqrt_price_x64: Q64,
+            sqrt_price_x64: if price == Q64 * 4 { Q64 * 2 } else { Q64 },
             base_qty: quantity,
         }
     }
@@ -1519,7 +1519,7 @@ mod sell_plan_regression_tests {
 
     #[test]
     fn sell_plans_reject_unsorted_bids_and_report_partial_depth() {
-        let reversed = [bid(Q64, 1), bid(Q64 * 2, 1)];
+        let reversed = [bid(Q64, 1), bid(Q64 * 4, 1)];
         assert_eq!(
             plan_sell_active_exact_in(Q64, &reversed, 1),
             Err(QuoteError::InvalidPrice)
