@@ -635,7 +635,10 @@ pub fn plan_sell_active_exact_out(
             continue;
         }
         let (take, quote) = if available < u128::from(remaining) {
-            (bid.base_qty, u64::try_from(available).map_err(|_| QuoteError::Overflow)?)
+            (
+                bid.base_qty,
+                u64::try_from(available).map_err(|_| QuoteError::Overflow)?,
+            )
         } else {
             let mut lo = 1u64;
             let mut hi = bid.base_qty;
