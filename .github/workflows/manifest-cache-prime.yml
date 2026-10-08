@@ -1,0 +1,63 @@
+name: Prime Manifest compiler cache
+
+# PR caches are scoped to their branch. Seed the default branch so that
+# subsequent PRs can restore compatible compiler results.
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/manifest-cache-prime.yml
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manifest-cache-prime
+  cancel-in-progress: false
+
+env:
+  MANIFEST_COMMIT: d04b7aa90b098ba64ebcdf398e9a24d89a9114d8
+  SOLANA_VERSION: "v4.3.0"
+
+jobs:
+  prime:
+    name: Prime pinned Manifest native and SBF caches
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Solana CLI and SBF tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/solana/install
+          key: ${{ runner.os }}-solana-v4.3.0-v1
+      - name: Restore pinned Manifest target
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/manifest-target
+          key: ${{ runner.os }}-manifest-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-solana-v4.3.0-v2-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-manifest-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-solana-v4.3.0-v2-
+      - name: Restore pinned Manifest compiler outputs
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/manifest-sccache
+          key: ${{ runner.os }}-manifest-sccache-v0.16.0-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-manifest-sccache-v0.16.0-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-
+      - name: Install native Rust compiler cache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: "v0.16.0"
+      - name: Verify pinned Manifest and seed caches
+        env:
+          MANIFEST_BASELINE_ONLY: "1"
+          MANIFEST_NATIVE_SCCACHE: "1"
+          SCCACHE_DIR: ${{ runner.temp }}/manifest-sccache
+          SCCACHE_CACHE_SIZE: "1G"
+          MANIFEST_TARGET_DIR: ${{ runner.temp }}/manifest-target
+        run: |
+          source ci/install-solana.sh
+          bash ci/manifest-compare.sh
