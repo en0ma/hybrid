@@ -415,3 +415,59 @@ instructions. The protocol must authenticate LP owners and positions, model
 per-range fee growth and tick crossing, bind liquidity to actual deposits, and
 verify real vault balances before enabling executable passive swaps. Calling
 these methods alone cannot authorize a withdrawal or a swap.
+
+## Passive pool and funded LP position instructions
+
+These instructions add real SPL Token deposits. They do not enable passive
+swaps or withdrawals.
+
+**Opcode 19: Initialize a passive pool.** Data: one byte (`19`).
+Use these accounts in order: (1) market, (2) custody PDA,
+(3) writable passive-pool PDA, (4) writable payer signer,
+(5) system program. The pool PDA uses seeds
+`["passive-pool", market]`. The market must have active collateral
+enabled and valid custody.
+
+**Opcode 20: Open and fund an LP position.** Data: 73 bytes.
+Byte 0 is `20`. Bytes 1..9 contain a little-endian `u64` position
+nonce. Bytes 9..25 and 25..41 contain the lower and upper Q64 sqrt
+prices (`u128`). Bytes 41..57 contain liquidity (`u128`).
+Bytes 57..65 and 65..73 contain the base and quote deposits (`u64`).
+
+Use the accounts in this order: (1) market, (2) custody PDA,
+(3) writable passive-pool PDA, (4) writable new position PDA,
+(5) writable LP signer and payer, (6) writable LP base account,
+(7) writable LP quote account, (8) writable base vault,
+(9) writable quote vault, (10) base mint, (11) quote mint,
+(12) SPL Token program, (13) system program.
+
+The position PDA uses
+`["passive-position", market, LP owner, nonce_le_bytes]`.
+The program checks both pool and position addresses, the LP signer,
+SPL Token mints, LP source ownership, and vault authority.
+The program creates the position account and transfers the stated
+principal to the existing vaults in one transaction. It updates
+the passive pool's reserved base, reserved quote, and liquidity.
+
+**Opcode 21: Close and redeem a passive position.** Data: 9 bytes.
+Byte 0 is `21`; bytes 1..9 are the position nonce as a little-endian
+`u64`. The accounts are: (1) market, (2) custody PDA,
+(3) writable passive-pool PDA, (4) writable position PDA,
+(5) writable LP signer, (6) writable base vault,
+(7) writable quote vault, (8) writable LP base destination,
+(9) writable LP quote destination, (10) base mint,
+(11) quote mint, (12) vault-authority PDA, (13) SPL Token program.
+
+The program checks both PDA seeds and the LP signature. It checks
+that the vault balances cover all active maker collateral, passive
+reserves, and accrued passive fees. It transfers the position's
+original principal to the LP and invalidates the position account.
+A second redemption fails.
+
+**Important restriction:** The supplied liquidity value is declared,
+not derived from a verified AMM formula. No swap reads this value
+or spends passive vault balances. Redemption returns only deposited
+principal; it does not distribute range fees or swap gains.
+Do not use these development interfaces for production liquidity
+until fee attribution, range accounting, and transaction tests
+are complete.
