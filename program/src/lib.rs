@@ -103,6 +103,7 @@ pub fn process_instruction(
         Some(17) | Some(18) => process_sell_swap(_program_id, _accounts, data),
         Some(19) => process_init_passive_pool(_program_id, _accounts, data),
         Some(20) => process_open_passive_position(_program_id, _accounts, data),
+        Some(21) => process_close_passive_position(_program_id, _accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
@@ -2240,4 +2241,137 @@ fn process_open_passive_position(
         .map_err(|_| ProgramError::InvalidAccountData)?;
     pool.encode_into(&mut pool_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)
+}
+
+#[inline(never)]
+fn process_close_passive_position(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if data.len() != 9 || data[0] != 21 || accounts.len() != 13 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let market = &accounts[0];
+    let custody_account = &accounts[1];
+    let pool_account = &accounts[2];
+    let position_account = &accounts[3];
+    let lp = &accounts[4];
+    let base_vault = &accounts[5];
+    let quote_vault = &accounts[6];
+    let dest_base = &accounts[7];
+    let dest_quote = &accounts[8];
+    let base_mint = &accounts[9];
+    let quote_mint = &accounts[10];
+    let vault_authority = &accounts[11];
+    let token_program = &accounts[12];
+
+    if !lp.is_signer || !lp.is_writable {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    if pool_account.owner != program_id
+        || position_account.owner != program_id
+        || !pool_account.is_writable
+        || !position_account.is_writable
+    {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    let custody = load_custody(program_id, market, custody_account)?;
+    let mut pool = hybrid_state::passive::PoolAccount::decode_from(
+        &pool_account.try_borrow_data()?,
+    ).map_err(|_| ProgramError::InvalidAccountData)?;
+    let state = hybrid_state::passive::PositionAccount::decode_from(
+        &position_account.try_borrow_data()?,
+    ).map_err(|_| ProgramError::InvalidAccountData)?;
+
+    let (expected_pool, pool_bump) =
+        Pubkey::find_program_address(&[b"passive-pool", market.key.as_ref()], program_id);
+    let nonce_bytes: [u8; 8] = data[1..9].try_into()
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+    let (expected_position, position_bump) = Pubkey::find_program_address(
+        &[b"passive-position", market.key.as_ref(), lp.key.as_ref(), &nonce_bytes],
+        program_id,
+    );
+    if *pool_account.key != expected_pool
+        || *position_account.key != expected_position
+        || pool.bump != pool_bump
+        || state.bump != position_bump
+        || state.nonce != u64::from_le_bytes(nonce_bytes)
+        || pool.market != market.key.to_bytes()
+        || state.market != market.key.to_bytes()
+        || state.position.owner != lp.key.to_bytes()
+    {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let (expected_authority, authority_bump) =
+        Pubkey::find_program_address(&[b"vault-authority", market.key.as_ref()], program_id);
+    if *vault_authority.key != expected_authority
+        || *base_vault.key != Pubkey::new_from_array(custody.base_vault)
+        || *quote_vault.key != Pubkey::new_from_array(custody.quote_vault)
+        || *base_mint.key != Pubkey::new_from_array(custody.base_mint)
+        || *quote_mint.key != Pubkey::new_from_array(custody.quote_mint)
+        || *token_program.key != TOKEN_PROGRAM_ID
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let (base_mint_id, base_owner) = token_account_fields(base_vault)?;
+    let (quote_mint_id, quote_owner) = token_account_fields(quote_vault)?;
+    let (dest_base_mint, dest_base_owner) = token_account_fields(dest_base)?;
+    let (dest_quote_mint, dest_quote_owner) = token_account_fields(dest_quote)?;
+    if base_mint_id != custody.base_mint
+        || quote_mint_id != custody.quote_mint
+        || base_owner != expected_authority.to_bytes()
+        || quote_owner != expected_authority.to_bytes()
+        || dest_base_mint != custody.base_mint
+        || dest_quote_mint != custody.quote_mint
+        || dest_base_owner != lp.key.to_bytes()
+        || dest_quote_owner != lp.key.to_bytes()
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    // The vaults must cover all active maker claims and passive LP claims
+    // before a position can draw down its principal.
+    let vault_amount = |account: &AccountInfo| -> Result<u64, ProgramError> {
+        let bytes = account.try_borrow_data()?;
+        Ok(u64::from_le_bytes(
+            bytes[64..72].try_into().map_err(|_| ProgramError::InvalidAccountData)?,
+        ))
+    };
+    pool.pool.verify_vault_coverage(
+        custody.total_base,
+        custody.total_quote,
+        vault_amount(base_vault)?,
+        vault_amount(quote_vault)?,
+    ).map_err(|_| ProgramError::InsufficientFunds)?;
+    // Swaps and fee distributions are not enabled for passive positions.
+    // Only the exact deposited principal can be redeemed.
+    pool.pool.withdraw(&state.position)
+        .map_err(|_| ProgramError::InsufficientFunds)?;
+
+    let bump = [authority_bump];
+    let seeds: &[&[u8]] = &[b"vault-authority", market.key.as_ref(), &bump];
+    if state.position.base_principal > 0 {
+        transfer_checked(
+            base_vault, base_mint, dest_base, vault_authority, token_program,
+            (state.position.base_principal, custody.base_decimals), Some(seeds),
+        )?;
+    }
+    if state.position.quote_principal > 0 {
+        transfer_checked(
+            quote_vault, quote_mint, dest_quote, vault_authority, token_program,
+            (state.position.quote_principal, custody.quote_decimals), Some(seeds),
+        )?;
+    }
+
+    pool.encode_into(&mut pool_account.try_borrow_mut_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    // A zeroed position cannot decode again. A second withdrawal fails.
+    position_account.try_borrow_mut_data()?.fill(0);
+    // Return the position account's rent to the LP.
+    let rent = position_account.lamports();
+    **position_account.try_borrow_mut_lamports()? = 0;
+    **lp.try_borrow_mut_lamports()? = lp.lamports()
+        .checked_add(rent).ok_or(ProgramError::InvalidAccountData)?;
+    Ok(())
 }
