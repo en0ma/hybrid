@@ -269,28 +269,63 @@ async fn exact_in_sell_transfers_tokens_and_compacts_bids() {
         blockhash,
     );
     context.banks_client.process_transaction(tx).await.unwrap();
-    let market = context.banks_client.get_account(f.market).await.unwrap().unwrap();
+    let market = context
+        .banks_client
+        .get_account(f.market)
+        .await
+        .unwrap()
+        .unwrap();
     let market = MarketHeader::decode_from(&market.data).unwrap();
     assert_eq!(market.bid_count(), 1);
-    let page = context.banks_client.get_account(f.ask_page).await.unwrap().unwrap();
+    let page = context
+        .banks_client
+        .get_account(f.ask_page)
+        .await
+        .unwrap()
+        .unwrap();
     let page = BidPage::decode_from(&page.data).unwrap();
     assert_eq!(page.len(), 1);
     assert_eq!(page.as_slice()[0].sequence, 2);
     assert_eq!(page.as_slice()[0].base_qty, 50);
-    let maker_a = context.banks_client.get_account(f.maker_a_balance).await.unwrap().unwrap();
+    let maker_a = context
+        .banks_client
+        .get_account(f.maker_a_balance)
+        .await
+        .unwrap()
+        .unwrap();
     let maker_a = MakerBalance::decode_from(&maker_a.data).unwrap();
     assert_eq!(maker_a.locked_quote, 0);
     assert_eq!(maker_a.free_base, 100);
-    let maker_b = context.banks_client.get_account(f.maker_b_balance).await.unwrap().unwrap();
+    let maker_b = context
+        .banks_client
+        .get_account(f.maker_b_balance)
+        .await
+        .unwrap()
+        .unwrap();
     let maker_b = MakerBalance::decode_from(&maker_b.data).unwrap();
     assert_eq!(maker_b.locked_quote, 50);
     assert_eq!(maker_b.free_base, 150);
-    let custody = context.banks_client.get_account(f.custody).await.unwrap().unwrap();
+    let custody = context
+        .banks_client
+        .get_account(f.custody)
+        .await
+        .unwrap()
+        .unwrap();
     let custody = CustodyState::decode_from(&custody.data).unwrap();
     assert_eq!(custody.total_base, 250);
     assert_eq!(custody.total_quote, 750);
-    let taker_base = context.banks_client.get_account(f.taker_base).await.unwrap().unwrap();
-    let taker_quote = context.banks_client.get_account(f.taker_quote).await.unwrap().unwrap();
+    let taker_base = context
+        .banks_client
+        .get_account(f.taker_base)
+        .await
+        .unwrap()
+        .unwrap();
+    let taker_quote = context
+        .banks_client
+        .get_account(f.taker_quote)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(token_amount(&taker_base.data), 750);
     assert_eq!(token_amount(&taker_quote.data), 250);
 }
@@ -308,8 +343,18 @@ async fn exact_out_sell_honors_input_limit() {
         blockhash,
     );
     context.banks_client.process_transaction(tx).await.unwrap();
-    let taker_base = context.banks_client.get_account(f.taker_base).await.unwrap().unwrap();
-    let taker_quote = context.banks_client.get_account(f.taker_quote).await.unwrap().unwrap();
+    let taker_base = context
+        .banks_client
+        .get_account(f.taker_base)
+        .await
+        .unwrap()
+        .unwrap();
+    let taker_quote = context
+        .banks_client
+        .get_account(f.taker_quote)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(token_amount(&taker_base.data), 850);
     assert_eq!(token_amount(&taker_quote.data), 150);
 }
@@ -327,8 +372,18 @@ async fn sell_rejects_insufficient_depth_without_transfers() {
         blockhash,
     );
     assert!(context.banks_client.process_transaction(tx).await.is_err());
-    let taker_base = context.banks_client.get_account(f.taker_base).await.unwrap().unwrap();
-    let taker_quote = context.banks_client.get_account(f.taker_quote).await.unwrap().unwrap();
+    let taker_base = context
+        .banks_client
+        .get_account(f.taker_base)
+        .await
+        .unwrap()
+        .unwrap();
+    let taker_quote = context
+        .banks_client
+        .get_account(f.taker_quote)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(token_amount(&taker_base.data), 1_000);
     assert_eq!(token_amount(&taker_quote.data), 0);
 }
