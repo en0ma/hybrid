@@ -15,7 +15,15 @@ echo "Manifest baseline: $ACTUAL"
 if [[ "${MANIFEST_COMPARE_ONLY:-0}" != "1" ]]; then
   # The checkout is short lived. Keep outputs in a persistent directory.
   MANIFEST_TARGET_DIR="${MANIFEST_TARGET_DIR:-$ROOT/target}"
-  CARGO_TARGET_DIR="$MANIFEST_TARGET_DIR" cargo test --manifest-path "$ROOT/Cargo.toml" -p manifest-dex --lib
+  # Only wrap native rustc. Solana's SBF toolchain uses its own compiler.
+  # A compiler cache survives Cargo fingerprint rebuilds after a fresh clone.
+  if [[ "${MANIFEST_NATIVE_SCCACHE:-0}" == "1" ]]; then
+    command -v sccache >/dev/null 2>&1 || { echo "sccache missing" >&2; exit 1; }
+    CARGO_TARGET_DIR="$MANIFEST_TARGET_DIR" RUSTC_WRAPPER=sccache cargo test --manifest-path "$ROOT/Cargo.toml" -p manifest-dex --lib
+    sccache --show-stats
+  else
+    CARGO_TARGET_DIR="$MANIFEST_TARGET_DIR" cargo test --manifest-path "$ROOT/Cargo.toml" -p manifest-dex --lib
+  fi
   CARGO_TARGET_DIR="$MANIFEST_TARGET_DIR" cargo build-sbf --manifest-path "$ROOT/programs/manifest/Cargo.toml"
 fi
 
