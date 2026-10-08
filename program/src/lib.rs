@@ -2219,6 +2219,17 @@ fn process_open_passive_position(
     {
         return Err(ProgramError::InvalidAccountData);
     }
+    // Reject account aliasing before token CPIs. A source cannot also be
+    // a reserve vault or the other source.
+    if source_base.key == source_quote.key
+        || source_base.key == base_vault.key
+        || source_base.key == quote_vault.key
+        || source_quote.key == base_vault.key
+        || source_quote.key == quote_vault.key
+        || base_vault.key == quote_vault.key
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
     let (source_base_mint, source_base_owner) = token_account_fields(source_base)?;
     let (source_quote_mint, source_quote_owner) = token_account_fields(source_quote)?;
     let (vault_base_mint, vault_base_owner) = token_account_fields(base_vault)?;
@@ -2364,6 +2375,17 @@ fn process_close_passive_position(
         || *base_mint.key != Pubkey::new_from_array(custody.base_mint)
         || *quote_mint.key != Pubkey::new_from_array(custody.quote_mint)
         || *token_program.key != TOKEN_PROGRAM_ID
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    // A withdrawal destination cannot be a reserve vault. Token-account
+    // aliases must never be used to satisfy two different claims.
+    if dest_base.key == dest_quote.key
+        || dest_base.key == base_vault.key
+        || dest_base.key == quote_vault.key
+        || dest_quote.key == base_vault.key
+        || dest_quote.key == quote_vault.key
+        || base_vault.key == quote_vault.key
     {
         return Err(ProgramError::InvalidAccountData);
     }
