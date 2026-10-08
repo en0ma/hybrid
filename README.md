@@ -483,3 +483,21 @@ the instruction fails and the whole transaction rolls back.
 These checks do not make passive swaps executable. They do not replace
 position-specific fee accounting, correct liquidity mint calculations,
 or on-chain integration tests for malicious token-account inputs.
+
+### Price-range collateral check for LP positions
+
+An LP position must now contain enough tokens for its declared
+liquidity at the market's current sqrt price. The engine calculates
+minimum base and quote principal from the position's price limits.
+The calculations use Q64 fixed-point arithmetic and round deposits
+up. A position below the current price needs quote only. A position
+above the current price needs base only. A position that contains the
+current price needs both tokens.
+
+The program rejects a position if the declared principal is less
+than either minimum. It checks this condition before PDA creation
+and token transfers.
+
+This check does not replace exact position minting, tick accounting,
+or earned-fee settlement. Deposits above the calculated minimum
+remain reserved principal. Passive swaps remain disabled.
