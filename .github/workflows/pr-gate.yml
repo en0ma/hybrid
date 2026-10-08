@@ -111,7 +111,7 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          key: hybrid-core-v1
+          shared-key: hybrid-native-v2
           cache-on-failure: true
       - name: Cache Solana CLI and SBF tools
         uses: actions/cache@v4
@@ -192,8 +192,10 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          key: manifest-cu-v1
+          shared-key: hybrid-native-v2
           cache-on-failure: true
+          # The core lane writes shared dependencies. The CU lane restores them.
+          save-if: "false"
       - name: Cache Solana CLI and SBF tools
         uses: actions/cache@v4
         with:
