@@ -1189,6 +1189,50 @@ pub fn apply_active_fills_to_ask_page(
     Ok(removed)
 }
 
+/// Apply a canonical active sell plan without breaking the parallel owner index.
+/// Validate all records before mutation, then remove full bids in reverse order.
+pub fn apply_active_fills_to_bid_page(
+    bids: &mut BidPage,
+    owners: &mut BidOwnerPage,
+    fills: &[hybrid_engine::ActiveBidFill],
+) -> Result<usize, StateError> {
+    bids.validate_order()?;
+    if owners.len() != bids.len() || owners.links() != bids.links() {
+        return Err(StateError::Corrupt);
+    }
+    let mut previous = None;
+    for fill in fills {
+        let index = usize::from(fill.bid_index);
+        if fill.base_qty == 0
+            || fill.quote_qty == 0
+            || index >= bids.len()
+            || previous.is_some_and(|prior| index <= prior)
+            || bids.entries[index].base_qty < fill.base_qty
+        {
+            return Err(StateError::Corrupt);
+        }
+        previous = Some(index);
+    }
+    let mut removed = 0usize;
+    for fill in fills.iter().rev() {
+        let index = usize::from(fill.bid_index);
+        let remaining = bids.entries[index].base_qty - fill.base_qty;
+        if remaining == 0 {
+            let sequence = bids.entries[index].sequence;
+            bids.remove_by_sequence(sequence)?;
+            owners.remove_at(index)?;
+            removed += 1;
+        } else {
+            bids.entries[index].base_qty = remaining;
+        }
+    }
+    bids.validate_order()?;
+    if owners.len() != bids.len() || owners.links() != bids.links() {
+        return Err(StateError::Corrupt);
+    }
+    Ok(removed)
+}
+
 pub fn validate_bid_chain(pages: &[BidPage]) -> Result<(), StateError> {
     for (index, page) in pages.iter().enumerate() {
         page.validate_order()?;
