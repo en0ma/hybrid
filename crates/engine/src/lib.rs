@@ -1486,3 +1486,56 @@ mod tests {
         );
     }
 }
+
+
+#[cfg(test)]
+mod sell_plan_regression_tests {
+    use super::*;
+
+    fn bid(price: u128, quantity: u64) -> LimitAsk {
+        LimitAsk {
+            price_x64: price,
+            sqrt_price_x64: Q64,
+            base_qty: quantity,
+        }
+    }
+
+    #[test]
+    fn exact_in_uses_best_bid_then_stops_at_passive() {
+        let bids = [bid(Q64, 8), bid(Q64, 7)];
+        let plan = plan_sell_active_exact_in(Q64, &bids, 10).unwrap();
+        assert_eq!((plan.amount_in, plan.amount_out, plan.fill_count), (10, 10, 2));
+        assert_eq!(plan.fills[0].bid_index, 0);
+        assert_eq!(plan.fills[1].base_qty, 2);
+    }
+
+    #[test]
+    fn exact_out_rounds_minimal_base_and_tracks_actual_quote() {
+        let bids = [bid(Q64, 5), bid(Q64, 7)];
+        let plan = plan_sell_active_exact_out(Q64, &bids, 9).unwrap();
+        assert_eq!((plan.amount_in, plan.amount_out, plan.fill_count), (9, 9, 2));
+        assert_eq!(plan.fills[1].base_qty, 4);
+    }
+
+    #[test]
+    fn sell_plans_reject_unsorted_bids_and_report_partial_depth() {
+        let reversed = [bid(Q64, 1), bid(Q64 * 2, 1)];
+        assert_eq!(
+            plan_sell_active_exact_in(Q64, &reversed, 1),
+            Err(QuoteError::InvalidPrice)
+        );
+        let plan = plan_sell_active_exact_out(Q64, &[bid(Q64, 2)], 10).unwrap();
+        assert_eq!((plan.amount_in, plan.amount_out), (2, 2));
+    }
+
+    #[test]
+    fn sell_plans_do_not_spend_bids_below_passive_price() {
+        let low = LimitAsk {
+            price_x64: Q64,
+            sqrt_price_x64: Q64,
+            base_qty: 10,
+        };
+        let plan = plan_sell_active_exact_in(Q64 * 2, &[low], 5).unwrap();
+        assert_eq!((plan.amount_in, plan.amount_out), (0, 0));
+    }
+}
