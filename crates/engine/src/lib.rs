@@ -524,6 +524,148 @@ pub fn plan_buy_active_exact_out(
     })
 }
 
+/// Sell plans consume bids in descending price-time order. The bid index is
+/// stable until execution applies all fills in reverse index order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ActiveBidFill {
+    pub bid_index: u16,
+    pub base_qty: u64,
+    pub quote_qty: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActiveOnlySellPlan {
+    pub amount_in: u64,
+    pub amount_out: u64,
+    pub fill_count: u8,
+    pub fills: [ActiveBidFill; MAX_ACTIVE_FILLS],
+}
+
+fn validate_active_bids(bids: &[LimitAsk]) -> Result<(), QuoteError> {
+    for bid in bids {
+        validate_limit_ask(*bid)?;
+    }
+    for pair in bids.windows(2) {
+        if pair[0].price_x64 < pair[1].price_x64 {
+            return Err(QuoteError::InvalidPrice);
+        }
+    }
+    Ok(())
+}
+
+fn bid_quote_for_base(base: u64, price_x64: u128) -> Result<u64, QuoteError> {
+    let value = mul_q64_floor(u128::from(base), price_x64)?;
+    u64::try_from(value).map_err(|_| QuoteError::Overflow)
+}
+
+/// Plan a base exact-in sell against eligible explicit bids only.
+/// Resting bids own equality with the passive marginal price.
+/// Quote proceeds round down. Zero-quote dust cannot remove resting orders.
+pub fn plan_sell_active_exact_in(
+    passive_sqrt_price_x64: u128,
+    bids: &[LimitAsk],
+    base_in: u64,
+) -> Result<ActiveOnlySellPlan, QuoteError> {
+    let passive_price = spot_price_x64(passive_sqrt_price_x64)?;
+    validate_active_bids(bids)?;
+    let mut remaining = base_in;
+    let mut out = 0u64;
+    let mut fills = [ActiveBidFill::default(); MAX_ACTIVE_FILLS];
+    let mut count = 0usize;
+    for (index, bid) in bids.iter().copied().enumerate() {
+        if remaining == 0 || bid.price_x64 < passive_price {
+            break;
+        }
+        let take = remaining.min(bid.base_qty);
+        if take == 0 {
+            continue;
+        }
+        let quote = bid_quote_for_base(take, bid.price_x64)?;
+        if quote == 0 {
+            break;
+        }
+        if count == MAX_ACTIVE_FILLS {
+            return Err(QuoteError::Overflow);
+        }
+        fills[count] = ActiveBidFill {
+            bid_index: u16::try_from(index).map_err(|_| QuoteError::Overflow)?,
+            base_qty: take,
+            quote_qty: quote,
+        };
+        count += 1;
+        remaining -= take;
+        out = out.checked_add(quote).ok_or(QuoteError::Overflow)?;
+    }
+    Ok(ActiveOnlySellPlan {
+        amount_in: base_in - remaining,
+        amount_out: out,
+        fill_count: u8::try_from(count).map_err(|_| QuoteError::Overflow)?,
+        fills,
+    })
+}
+
+/// Plan a quote exact-out sell using the minimum whole base atoms per bid.
+/// Rounding can produce more quote atoms than requested. Callers must use
+/// amount_out (the actual settlement amount) and enforce their max-base limit.
+pub fn plan_sell_active_exact_out(
+    passive_sqrt_price_x64: u128,
+    bids: &[LimitAsk],
+    quote_out: u64,
+) -> Result<ActiveOnlySellPlan, QuoteError> {
+    let passive_price = spot_price_x64(passive_sqrt_price_x64)?;
+    validate_active_bids(bids)?;
+    let mut remaining = quote_out;
+    let mut base_in = 0u64;
+    let mut total_quote = 0u64;
+    let mut fills = [ActiveBidFill::default(); MAX_ACTIVE_FILLS];
+    let mut count = 0usize;
+    for (index, bid) in bids.iter().copied().enumerate() {
+        if remaining == 0 || bid.price_x64 < passive_price {
+            break;
+        }
+        if bid.base_qty == 0 {
+            continue;
+        }
+        let available = bid_quote_for_base(bid.base_qty, bid.price_x64)?;
+        if available == 0 {
+            break;
+        }
+        let (take, quote) = if available <= remaining {
+            (bid.base_qty, available)
+        } else {
+            let mut lo = 1u64;
+            let mut hi = bid.base_qty;
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                if bid_quote_for_base(mid, bid.price_x64)? >= remaining {
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            (lo, bid_quote_for_base(lo, bid.price_x64)?)
+        };
+        if count == MAX_ACTIVE_FILLS {
+            return Err(QuoteError::Overflow);
+        }
+        fills[count] = ActiveBidFill {
+            bid_index: u16::try_from(index).map_err(|_| QuoteError::Overflow)?,
+            base_qty: take,
+            quote_qty: quote,
+        };
+        count += 1;
+        base_in = base_in.checked_add(take).ok_or(QuoteError::Overflow)?;
+        total_quote = total_quote.checked_add(quote).ok_or(QuoteError::Overflow)?;
+        remaining = remaining.saturating_sub(quote);
+    }
+    Ok(ActiveOnlySellPlan {
+        amount_in: base_in,
+        amount_out: total_quote,
+        fill_count: u8::try_from(count).map_err(|_| QuoteError::Overflow)?,
+        fills,
+    })
+}
+
 fn fill_active_ask(ask: LimitAsk, remaining_quote: u64) -> Result<(u64, u64, bool), QuoteError> {
     validate_limit_ask(ask)?;
     let numerator = u128::from(remaining_quote)
