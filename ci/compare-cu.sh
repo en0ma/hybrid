@@ -9,32 +9,33 @@ cargo build-sbf --manifest-path program/Cargo.toml
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-measure() {
-  local label="$1"
-  local test_name="$2"
-  local out="$TMP/$label.log"
+# Run the CU test binary once. Each test prints one structured measurement.
+# Do not rely on generic "consumed" log lines from nested token CPIs.
+LOG="$TMP/cu.log"
+if ! cargo test-sbf --manifest-path program/Cargo.toml --features test-sbf --test cu -- --nocapture --test-threads=1 >"$LOG" 2>&1; then
+  echo "CU suite failed" >&2
+  tail -n 120 "$LOG" >&2
+  exit 1
+fi
 
-  cargo test-sbf --manifest-path program/Cargo.toml --features test-sbf --test cu "$test_name" -- --exact --nocapture 2>&1 | tee "$out" >&2
-
-  python3 - "$out" "$label" <<'PY'
+python3 - "$LOG" "$TMP/measurements.txt" <<'PY'
 import pathlib, re, sys
-log=pathlib.Path(sys.argv[1]).read_text()
-label=sys.argv[2]
-values=[int(x) for x in re.findall(r"consumed\s+(\d+)\s+of\s+\d+\s+compute units", log)]
-if len(values) != 1:
-    raise SystemExit(f"{label}: expected exactly one program CU measurement, found {values}")
-print(f"{label} {values[0]}")
+log = pathlib.Path(sys.argv[1]).read_text()
+expected = ["noop","passive_quote","hybrid_match","multilevel_match","state_backed_match","state_backed_plan","multipage_state_backed_match"]
+matches = re.findall(r"HYBRID_CU ([a-z_]+) ([0-9]+)", log)
+rows = {}
+for name, units in matches:
+    if name in rows:
+        raise SystemExit(f"Duplicate CU measurement: {name}")
+    rows[name] = int(units)
+missing = set(expected) - set(rows)
+unexpected = set(rows) - set(expected)
+if missing or unexpected:
+    raise SystemExit(f"CU measurements mismatch: missing={sorted(missing)} unexpected={sorted(unexpected)}")
+pathlib.Path(sys.argv[2]).write_text(
+    "".join(f"{name} {rows[name]}\\n" for name in expected).replace("\\n", "\n")
+)
 PY
-}
-
-{
-  measure noop measure_noop_cu
-  measure passive_quote measure_passive_quote_cu
-  measure hybrid_match measure_hybrid_match_cu
-  measure multilevel_match measure_multilevel_match_cu
-  measure state_backed_match measure_state_backed_match_cu
-  measure multipage_state_backed_match measure_multipage_state_backed_match_cu
-} > "$TMP/measurements.txt"
 
 python3 - "$TMP/measurements.txt" "$MANIFEST_REPO" <<'PY'
 import json, pathlib, subprocess, sys
