@@ -695,7 +695,9 @@ async fn units_for_buy_swap(opcode: u8) -> u64 {
     maker_state.encode_into(&mut maker_data).unwrap();
 
     let mut program_test = ProgramTest::new("hybrid_program", ID, None);
-    program_test.add_builtin_program("mock_token", TOKEN_PROGRAM_ID, processor!(cu_mock_token));
+    program_test.prefer_bpf(false);
+    program_test.add_program("mock_token", TOKEN_PROGRAM_ID, processor!(cu_mock_token));
+    program_test.prefer_bpf(true);
     for (key, data, owner) in [
         (market, market_data, ID),
         (custody, custody_data, ID),
