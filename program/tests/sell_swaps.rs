@@ -3,7 +3,7 @@
 use hybrid_engine::Q64;
 use hybrid_program::ID;
 use hybrid_state::{
-    BidEntry, AskOwnerPage, BidPage, CustodyState, MakerBalance, MarketHeader, PageLinks,
+    AskOwnerPage, BidEntry, BidPage, CustodyState, MakerBalance, MarketHeader, PageLinks,
     ASK_OWNER_PAGE_BYTES, BID_PAGE_BYTES, CUSTODY_STATE_BYTES, MAKER_BALANCE_BYTES,
     MARKET_FLAG_COLLATERALIZED_ACTIVE, MARKET_HEADER_BYTES,
 };
