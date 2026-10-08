@@ -9,9 +9,11 @@ ci_stage() {
   shift
   local started="$SECONDS"
   echo "::group::CI stage: $name"
-  "$@"
+  local status=0
+  "$@" || status=$?
   echo "::endgroup::"
-  echo "CI_STAGE_SECONDS $name $((SECONDS - started))"
+  echo "CI_STAGE_SECONDS $name $((SECONDS - started)) status=$status"
+  return "$status"
 }
 trap 'echo "CI_TOTAL_SECONDS $((SECONDS - CI_START_SECONDS))"' EXIT
 
