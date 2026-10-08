@@ -3,33 +3,45 @@ set -euo pipefail
 
 echo "== hybrid deterministic CI =="
 
+CI_START_SECONDS="$SECONDS"
+ci_stage() {
+  local name="$1"
+  shift
+  local started="$SECONDS"
+  echo "::group::CI stage: $name"
+  "$@"
+  echo "::endgroup::"
+  echo "CI_STAGE_SECONDS $name $((SECONDS - started))"
+}
+trap 'echo "CI_TOTAL_SECONDS $((SECONDS - CI_START_SECONDS))"' EXIT
+
 if [[ ! -f Cargo.toml ]]; then
   echo "No Cargo.toml yet; Rust/SBF/fuzz/CU stages are not applicable during bootstrap."
   exit 0
 fi
 
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+ci_stage format cargo fmt --all -- --check
+ci_stage clippy cargo clippy --workspace --all-targets -- -D warnings
+ci_stage native-tests cargo test --workspace
 
 if [[ ! -f ci/state-check.sh || ! -f ci/state-budgets.json ]]; then
   echo "Persistent state byte budget files are required."
   exit 1
 fi
-bash ci/state-check.sh
+ci_stage state-budgets bash ci/state-check.sh
 
 command -v cargo-build-sbf >/dev/null 2>&1 || { echo "cargo-build-sbf missing"; exit 1; }
 command -v cargo-test-sbf >/dev/null 2>&1 || { echo "cargo-test-sbf missing"; exit 1; }
 
-cargo build-sbf --manifest-path program/Cargo.toml
+ci_stage sbf-build cargo build-sbf --manifest-path program/Cargo.toml
 
 if [[ ! -f ci/bytecode-check.sh || ! -f ci/bytecode-budgets.json ]]; then
   echo "Bytecode budget files are required once Hybrid contains Rust program code."
   exit 1
 fi
-bash ci/bytecode-check.sh
+ci_stage bytecode-budgets bash ci/bytecode-check.sh
 
-cargo test-sbf --manifest-path program/Cargo.toml --features test-sbf -- --nocapture --test-threads=1
+ci_stage sbf-tests cargo test-sbf --manifest-path program/Cargo.toml --features test-sbf -- --nocapture --test-threads=1
 
 if [[ ! -f fuzz/Cargo.toml ]]; then
   echo "fuzz/Cargo.toml is required once Hybrid contains Rust program code."
@@ -53,4 +65,4 @@ if [[ ! -f ci/cu-check.sh ]]; then
   echo "ci/cu-check.sh is required once Hybrid contains Rust program code."
   exit 1
 fi
-bash ci/cu-check.sh
+ci_stage cu-budget bash ci/cu-check.sh
