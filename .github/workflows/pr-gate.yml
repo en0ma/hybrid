@@ -159,11 +159,20 @@ jobs:
         with:
           path: ~/.local/share/solana/install
           key: ${{ runner.os }}-solana-v4.3.0-v1
+      # Cache archives are immutable. Use a unique write key for each run
+      # and restore the newest compatible pinned-Manifest build.
       - name: Restore pinned Manifest build output
+        id: manifest-build-cache
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/manifest-target
-          key: ${{ runner.os }}-manifest-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-solana-v4.3.0-v1
+          key: ${{ runner.os }}-manifest-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-solana-v4.3.0-v2-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-manifest-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-solana-v4.3.0-v2-
+      - name: Report Manifest cache restoration
+        run: |
+          echo "Manifest cache exact hit: ${{ steps.manifest-build-cache.outputs.cache-hit }}"
+          echo "Manifest baseline SHA: $MANIFEST_COMMIT"
       - name: Test and build pinned Manifest
         env:
           MANIFEST_BASELINE_ONLY: "1"
