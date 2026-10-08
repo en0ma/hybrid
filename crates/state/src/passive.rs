@@ -218,7 +218,8 @@ impl PoolAccount {
         {
             return Err(PassiveAccountingError::InvalidPosition);
         }
-        let market: [u8; 32] = data[16..48].try_into()
+        let market: [u8; 32] = data[16..48]
+            .try_into()
             .map_err(|_| PassiveAccountingError::InvalidPosition)?;
         if market == [0; 32] {
             return Err(PassiveAccountingError::InvalidPosition);
@@ -227,16 +228,31 @@ impl PoolAccount {
             bump: data[9],
             market,
             pool: PassivePool {
-                base_reserve: u64::from_le_bytes(data[48..56].try_into()
-                    .map_err(|_| PassiveAccountingError::InvalidPosition)?),
-                quote_reserve: u64::from_le_bytes(data[56..64].try_into()
-                    .map_err(|_| PassiveAccountingError::InvalidPosition)?),
-                total_liquidity: u128::from_le_bytes(data[64..80].try_into()
-                    .map_err(|_| PassiveAccountingError::InvalidPosition)?),
-                accrued_base_fees: u64::from_le_bytes(data[80..88].try_into()
-                    .map_err(|_| PassiveAccountingError::InvalidPosition)?),
-                accrued_quote_fees: u64::from_le_bytes(data[88..96].try_into()
-                    .map_err(|_| PassiveAccountingError::InvalidPosition)?),
+                base_reserve: u64::from_le_bytes(
+                    data[48..56]
+                        .try_into()
+                        .map_err(|_| PassiveAccountingError::InvalidPosition)?,
+                ),
+                quote_reserve: u64::from_le_bytes(
+                    data[56..64]
+                        .try_into()
+                        .map_err(|_| PassiveAccountingError::InvalidPosition)?,
+                ),
+                total_liquidity: u128::from_le_bytes(
+                    data[64..80]
+                        .try_into()
+                        .map_err(|_| PassiveAccountingError::InvalidPosition)?,
+                ),
+                accrued_base_fees: u64::from_le_bytes(
+                    data[80..88]
+                        .try_into()
+                        .map_err(|_| PassiveAccountingError::InvalidPosition)?,
+                ),
+                accrued_quote_fees: u64::from_le_bytes(
+                    data[88..96]
+                        .try_into()
+                        .map_err(|_| PassiveAccountingError::InvalidPosition)?,
+                ),
             },
         })
     }
@@ -281,13 +297,19 @@ impl PositionAccount {
             return Err(PassiveAccountingError::InvalidPosition);
         }
         let bytes32 = |range: core::ops::Range<usize>| -> Result<[u8; 32], PassiveAccountingError> {
-            data[range].try_into().map_err(|_| PassiveAccountingError::InvalidPosition)
+            data[range]
+                .try_into()
+                .map_err(|_| PassiveAccountingError::InvalidPosition)
         };
         let bytes16 = |range: core::ops::Range<usize>| -> Result<[u8; 16], PassiveAccountingError> {
-            data[range].try_into().map_err(|_| PassiveAccountingError::InvalidPosition)
+            data[range]
+                .try_into()
+                .map_err(|_| PassiveAccountingError::InvalidPosition)
         };
         let bytes8 = |range: core::ops::Range<usize>| -> Result<[u8; 8], PassiveAccountingError> {
-            data[range].try_into().map_err(|_| PassiveAccountingError::InvalidPosition)
+            data[range]
+                .try_into()
+                .map_err(|_| PassiveAccountingError::InvalidPosition)
         };
         let state = Self {
             bump: data[9],
