@@ -554,8 +554,12 @@ fn validate_active_bids(bids: &[LimitAsk]) -> Result<(), QuoteError> {
 }
 
 fn bid_quote_for_base(base: u64, price_x64: u128) -> Result<u64, QuoteError> {
-    let value = mul_q64_floor(u128::from(base), price_x64)?;
+    let value = bid_quote_for_base_wide(base, price_x64)?;
     u64::try_from(value).map_err(|_| QuoteError::Overflow)
+}
+
+fn bid_quote_for_base_wide(base: u64, price_x64: u128) -> Result<u128, QuoteError> {
+    mul_q64_floor(u128::from(base), price_x64)
 }
 
 /// Plan a base exact-in sell against eligible explicit bids only.
@@ -582,7 +586,7 @@ pub fn plan_sell_active_exact_in(
         }
         let quote = bid_quote_for_base(take, bid.price_x64)?;
         if quote == 0 {
-            break;
+            continue;
         }
         if count == MAX_ACTIVE_FILLS {
             return Err(QuoteError::Overflow);
@@ -626,18 +630,18 @@ pub fn plan_sell_active_exact_out(
         if bid.base_qty == 0 {
             continue;
         }
-        let available = bid_quote_for_base(bid.base_qty, bid.price_x64)?;
+        let available = bid_quote_for_base_wide(bid.base_qty, bid.price_x64)?;
         if available == 0 {
-            break;
+            continue;
         }
-        let (take, quote) = if available <= remaining {
-            (bid.base_qty, available)
+        let (take, quote) = if available < u128::from(remaining) {
+            (bid.base_qty, u64::try_from(available).map_err(|_| QuoteError::Overflow)?)
         } else {
             let mut lo = 1u64;
             let mut hi = bid.base_qty;
             while lo < hi {
                 let mid = lo + (hi - lo) / 2;
-                if bid_quote_for_base(mid, bid.price_x64)? >= remaining {
+                if bid_quote_for_base_wide(mid, bid.price_x64)? >= u128::from(remaining) {
                     hi = mid;
                 } else {
                     lo = mid + 1;
@@ -1487,7 +1491,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod sell_plan_regression_tests {
     use super::*;
@@ -1504,7 +1507,10 @@ mod sell_plan_regression_tests {
     fn exact_in_uses_best_bid_then_stops_at_passive() {
         let bids = [bid(Q64, 8), bid(Q64, 7)];
         let plan = plan_sell_active_exact_in(Q64, &bids, 10).unwrap();
-        assert_eq!((plan.amount_in, plan.amount_out, plan.fill_count), (10, 10, 2));
+        assert_eq!(
+            (plan.amount_in, plan.amount_out, plan.fill_count),
+            (10, 10, 2)
+        );
         assert_eq!(plan.fills[0].bid_index, 0);
         assert_eq!(plan.fills[1].base_qty, 2);
     }
@@ -1513,7 +1519,10 @@ mod sell_plan_regression_tests {
     fn exact_out_rounds_minimal_base_and_tracks_actual_quote() {
         let bids = [bid(Q64, 5), bid(Q64, 7)];
         let plan = plan_sell_active_exact_out(Q64, &bids, 9).unwrap();
-        assert_eq!((plan.amount_in, plan.amount_out, plan.fill_count), (9, 9, 2));
+        assert_eq!(
+            (plan.amount_in, plan.amount_out, plan.fill_count),
+            (9, 9, 2)
+        );
         assert_eq!(plan.fills[1].base_qty, 4);
     }
 
