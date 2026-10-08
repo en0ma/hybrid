@@ -471,3 +471,15 @@ principal; it does not distribute range fees or swap gains.
 Do not use these development interfaces for production liquidity
 until fee attribution, range accounting, and transaction tests
 are complete.
+
+### Vault coverage checks for LP token transfers
+
+LP position deposits and redemptions validate SPL Token vault balances
+against both active maker custody totals and passive LP reserves.
+Each operation checks the vaults before the transfer. It checks the
+balances again after the transfer. If a vault has insufficient assets,
+the instruction fails and the whole transaction rolls back.
+
+These checks do not make passive swaps executable. They do not replace
+position-specific fee accounting, correct liquidity mint calculations,
+or on-chain integration tests for malicious token-account inputs.
