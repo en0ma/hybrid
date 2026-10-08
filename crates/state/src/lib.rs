@@ -2121,8 +2121,8 @@ mod bid_fill_regression_tests {
             [7; BID_OWNER_BYTES],
         )
         .unwrap();
-        let before_bids = bids.clone();
-        let before_owners = owners.clone();
+        let before_bids = bids;
+        let before_owners = owners;
         let bad = [hybrid_engine::ActiveBidFill {
             bid_index: 0,
             base_qty: 6,
