@@ -113,6 +113,113 @@ pub fn validate_limit_ask(order: LimitAsk) -> Result<(), QuoteError> {
     Ok(())
 }
 
+/// Multiply two u128 values into little-endian 32-bit limbs.
+/// The extra two limbs leave room for multiplication by Q64.
+fn range_product_q64(a: u128, b: u128) -> [u32; 10] {
+    let mut product = [0u32; 8];
+    for i in 0..4 {
+        let mut carry = 0u64;
+        for j in 0..4 {
+            let existing = u64::from(product[i + j]);
+            let part = ((a >> (i * 32)) & 0xffff_ffff) as u64;
+            let other = ((b >> (j * 32)) & 0xffff_ffff) as u64;
+            let sum =
+                u128::from(part) * u128::from(other) + u128::from(existing) + u128::from(carry);
+            product[i + j] = sum as u32;
+            carry = (sum >> 32) as u64;
+        }
+        product[i + 4] = carry as u32;
+    }
+    let mut result = [0u32; 10];
+    result[2..].copy_from_slice(&product);
+    result
+}
+
+/// Divide up to 320 bits by u128. Return the quotient and remainder.
+/// Track the carry bit before shifting a 128-bit remainder.
+fn div_range_limbs(value: [u32; 10], divisor: u128) -> Result<([u32; 10], u128), QuoteError> {
+    if divisor == 0 {
+        return Err(QuoteError::InvalidPrice);
+    }
+    let mut quotient = [0u32; 10];
+    let mut remainder = 0u128;
+    for bit in (0..320).rev() {
+        let carry = remainder >> 127;
+        remainder = (remainder << 1) | u128::from((value[bit / 32] >> (bit % 32)) & 1);
+        if carry != 0 || remainder >= divisor {
+            remainder = remainder.wrapping_sub(divisor);
+            quotient[bit / 32] |= 1u32 << (bit % 32);
+        }
+    }
+    Ok((quotient, remainder))
+}
+
+/// Exact ceil(L * (upper - lower) * Q64 / lower / upper).
+/// The wide numerator avoids false overflow for large Q64 price bounds.
+fn range_base_ceil(liquidity: u128, lower: u128, upper: u128) -> Result<u64, QuoteError> {
+    let numerator = range_product_q64(liquidity, upper - lower);
+    let (quotient, first_remainder) = div_range_limbs(numerator, lower)?;
+    let (result, second_remainder) = div_range_limbs(quotient, upper)?;
+    if result[2..].iter().any(|digit| *digit != 0) {
+        return Err(QuoteError::Overflow);
+    }
+    let whole = u64::from(result[0]) | (u64::from(result[1]) << 32);
+    let rounded = u64::from(first_remainder != 0 || second_remainder != 0);
+    whole.checked_add(rounded).ok_or(QuoteError::Overflow)
+}
+
+/// Minimum tokens that must back a range position at the current price.
+/// Amounts are rounded up. This calculation does not mint liquidity or move
+/// tokens. The caller must check custody and the position owner.
+pub fn required_range_deposit(
+    state: PassiveState,
+    lower_sqrt_price_x64: u128,
+    upper_sqrt_price_x64: u128,
+) -> Result<(u64, u64), QuoteError> {
+    if state.liquidity == 0 {
+        return Err(QuoteError::ZeroLiquidity);
+    }
+    if lower_sqrt_price_x64 == 0
+        || lower_sqrt_price_x64 >= upper_sqrt_price_x64
+        || state.sqrt_price_x64 == 0
+    {
+        return Err(QuoteError::InvalidPrice);
+    }
+    let current = state.sqrt_price_x64;
+    let base_lower = current.max(lower_sqrt_price_x64);
+    let base = if base_lower >= upper_sqrt_price_x64 {
+        0
+    } else {
+        range_base_ceil(state.liquidity, base_lower, upper_sqrt_price_x64)?
+    };
+    let quote_upper = current.min(upper_sqrt_price_x64);
+    let quote = if quote_upper <= lower_sqrt_price_x64 {
+        0
+    } else {
+        mul_q64_ceil(state.liquidity, quote_upper - lower_sqrt_price_x64)?
+    };
+    Ok((
+        base,
+        u64::try_from(quote).map_err(|_| QuoteError::Overflow)?,
+    ))
+}
+
+/// Reject a position if its declared principal cannot cover its liquidity
+/// at the current price. Excess deposits remain the LP's reserved principal.
+pub fn validate_range_collateral(
+    state: PassiveState,
+    lower_sqrt_price_x64: u128,
+    upper_sqrt_price_x64: u128,
+    base_principal: u64,
+    quote_principal: u64,
+) -> Result<(), QuoteError> {
+    let (base, quote) = required_range_deposit(state, lower_sqrt_price_x64, upper_sqrt_price_x64)?;
+    if base_principal < base || quote_principal < quote {
+        return Err(QuoteError::ZeroLiquidity);
+    }
+    Ok(())
+}
+
 pub fn quote_quote_in_for_base_out(
     state: PassiveState,
     quote_in: u64,
@@ -1733,5 +1840,158 @@ mod passive_sell_quote_tests {
             quote_base_in_for_quote_exact_out(empty, 1),
             Err(QuoteError::ZeroLiquidity)
         );
+    }
+}
+
+#[cfg(test)]
+mod range_collateral_tests {
+    use super::*;
+
+    #[test]
+    fn exact_base_amount_does_not_add_dust() {
+        let result = required_range_deposit(
+            PassiveState {
+                sqrt_price_x64: Q64 / 4,
+                liquidity: 10,
+            },
+            Q64 / 2,
+            Q64,
+        )
+        .unwrap();
+        assert_eq!(result, (10, 0));
+    }
+
+    #[test]
+    fn large_price_bounds_do_not_overflow_intermediate_products() {
+        let result = required_range_deposit(
+            PassiveState {
+                sqrt_price_x64: 1u128 << 94,
+                liquidity: Q64,
+            },
+            1u128 << 95,
+            (1u128 << 96) - 1,
+        )
+        .unwrap();
+        assert_eq!(result.1, 0);
+        assert!(result.0 > 0);
+        assert!(result.0 <= (1u64 << 32));
+    }
+
+    #[test]
+    fn inside_range_requires_both_assets() {
+        let l = Q64 / 100;
+        let (base, quote) = required_range_deposit(
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: l,
+            },
+            Q64 - Q64 / 10,
+            Q64 + Q64 / 10,
+        )
+        .unwrap();
+        assert!(base > 0 && quote > 0);
+        validate_range_collateral(
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: l,
+            },
+            Q64 - Q64 / 10,
+            Q64 + Q64 / 10,
+            base,
+            quote,
+        )
+        .unwrap();
+        assert!(validate_range_collateral(
+            PassiveState {
+                sqrt_price_x64: Q64,
+                liquidity: l
+            },
+            Q64 - Q64 / 10,
+            Q64 + Q64 / 10,
+            base - 1,
+            quote,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn out_of_range_uses_only_one_token() {
+        let l = Q64 / 100;
+        let below = required_range_deposit(
+            PassiveState {
+                sqrt_price_x64: Q64 / 2,
+                liquidity: l,
+            },
+            Q64,
+            Q64 + Q64 / 10,
+        )
+        .unwrap();
+        assert!(below.0 > 0);
+        assert_eq!(below.1, 0);
+        let above = required_range_deposit(
+            PassiveState {
+                sqrt_price_x64: Q64 * 2,
+                liquidity: l,
+            },
+            Q64,
+            Q64 + Q64 / 10,
+        )
+        .unwrap();
+        assert_eq!(above.0, 0);
+        assert!(above.1 > 0);
+    }
+
+    #[test]
+    fn invalid_ranges_and_overflow_are_rejected() {
+        let state = PassiveState {
+            sqrt_price_x64: Q64,
+            liquidity: Q64,
+        };
+        assert_eq!(
+            required_range_deposit(state, Q64, Q64),
+            Err(QuoteError::InvalidPrice)
+        );
+        assert_eq!(
+            required_range_deposit(state, 0, Q64),
+            Err(QuoteError::InvalidPrice)
+        );
+        assert_eq!(
+            required_range_deposit(
+                PassiveState {
+                    liquidity: 0,
+                    ..state
+                },
+                1,
+                Q64
+            ),
+            Err(QuoteError::ZeroLiquidity)
+        );
+        assert!(required_range_deposit(
+            PassiveState {
+                liquidity: u128::MAX,
+                ..state
+            },
+            1,
+            Q64 * 2,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn higher_liquidity_never_reduces_required_deposit() {
+        let mut last = (0, 0);
+        for units in 1..=100u128 {
+            let value = required_range_deposit(
+                PassiveState {
+                    sqrt_price_x64: Q64,
+                    liquidity: units * 10000,
+                },
+                Q64 - Q64 / 4,
+                Q64 + Q64 / 4,
+            )
+            .unwrap();
+            assert!(value.0 >= last.0 && value.1 >= last.1);
+            last = value;
+        }
     }
 }
