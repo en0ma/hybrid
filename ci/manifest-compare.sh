@@ -12,10 +12,16 @@ ACTUAL="$(git -C "$ROOT" rev-parse HEAD)"
 test "$ACTUAL" = "$PIN"
 echo "Manifest baseline: $ACTUAL"
 
-cargo test --manifest-path "$ROOT/Cargo.toml" -p manifest-dex --lib
-cargo build-sbf --manifest-path "$ROOT/programs/manifest/Cargo.toml"
+if [[ "${MANIFEST_COMPARE_ONLY:-0}" != "1" ]]; then
+  # The checkout is short lived. Keep outputs in a persistent directory.
+  MANIFEST_TARGET_DIR="${MANIFEST_TARGET_DIR:-$ROOT/target}"
+  CARGO_TARGET_DIR="$MANIFEST_TARGET_DIR" cargo test --manifest-path "$ROOT/Cargo.toml" -p manifest-dex --lib
+  CARGO_TARGET_DIR="$MANIFEST_TARGET_DIR" cargo build-sbf --manifest-path "$ROOT/programs/manifest/Cargo.toml"
+fi
 
-if [[ -f Cargo.toml ]]; then
+if [[ "${MANIFEST_BASELINE_ONLY:-0}" == "1" ]]; then
+  echo "Pinned Manifest tests and SBF build passed. The CU comparison runs in another required job."
+elif [[ -f Cargo.toml ]]; then
   if [[ ! -f ci/compare-cu.sh ]]; then
     echo "ci/compare-cu.sh is required once Hybrid contains Rust program code."
     exit 1

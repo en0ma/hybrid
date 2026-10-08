@@ -9,9 +9,11 @@ on:
   pull_request_review_comment:
     types: [created, edited, deleted]
 
+# Review activity must not cancel tests for the same code head.
+# Only a newer push can supersede a push-triggered validation run.
 concurrency:
-  group: pr-gate-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: pr-gate-${{ github.event.pull_request.number }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -103,9 +105,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.PR_HEAD_SHA }}
-          fetch-depth: 0
+          fetch-depth: 1
       - name: Assert exact checkout
         run: test "$(git rev-parse HEAD)" = "$PR_HEAD_SHA"
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: hybrid-native-v2
+          cache-on-failure: true
+      - name: Cache Solana CLI and SBF tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/solana/install
+          key: ${{ runner.os }}-solana-v4.3.0-v1
+      - name: Cache fuzz runner
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-fuzz
+          key: ${{ runner.os }}-cargo-fuzz-v1
       - name: Run deterministic core CI
         run: |
           source ci/install-solana.sh
@@ -120,6 +137,8 @@ jobs:
         with:
           ref: ${{ env.PR_HEAD_SHA }}
       - name: Run Surfpool mainnet-fork suite
+        env:
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
         run: bash ci/fork.sh
 
   manifest:
@@ -130,14 +149,68 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.PR_HEAD_SHA }}
-      - name: Build, test and compare against pinned Manifest
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: manifest-baseline-v1
+          cache-on-failure: true
+      - name: Cache Solana CLI and SBF tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/solana/install
+          key: ${{ runner.os }}-solana-v4.3.0-v1
+      # Cache archives are immutable. Use a unique write key for each run
+      # and restore the newest compatible pinned-Manifest build.
+      - name: Restore pinned Manifest build output
+        id: manifest-build-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/manifest-target
+          key: ${{ runner.os }}-manifest-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-solana-v4.3.0-v2-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            ${{ runner.os }}-manifest-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-solana-v4.3.0-v2-
+      - name: Report Manifest cache restoration
+        run: |
+          echo "Manifest cache exact hit: ${{ steps.manifest-build-cache.outputs.cache-hit }}"
+          echo "Manifest baseline SHA: $MANIFEST_COMMIT"
+      - name: Test and build pinned Manifest
+        env:
+          MANIFEST_BASELINE_ONLY: "1"
+          MANIFEST_TARGET_DIR: ${{ runner.temp }}/manifest-target
+        run: |
+          source ci/install-solana.sh
+          bash ci/manifest-compare.sh
+
+  manifest-cu:
+    name: Hybrid CU comparison against pinned Manifest
+    if: github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PR_HEAD_SHA }}
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: hybrid-native-v2
+          cache-on-failure: true
+          # The core lane writes shared dependencies. The CU lane restores them.
+          save-if: "false"
+      - name: Cache Solana CLI and SBF tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/solana/install
+          key: ${{ runner.os }}-solana-v4.3.0-v1
+      - name: Compare CU against pinned Manifest
+        env:
+          MANIFEST_COMPARE_ONLY: "1"
         run: |
           source ci/install-solana.sh
           bash ci/manifest-compare.sh
 
   merge-gate:
     name: Merge gate
-    needs: [review-and-head, core-ci, fork, manifest]
+    needs: [review-and-head, core-ci, fork, manifest, manifest-cu]
     if: always() && github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     steps:
