@@ -2181,6 +2181,22 @@ fn process_open_passive_position(
     position
         .validate()
         .map_err(|_| ProgramError::InvalidInstructionData)?;
+    let market_state = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    if !market_state.collateralized_active() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    hybrid_engine::validate_range_collateral(
+        hybrid_engine::PassiveState {
+            sqrt_price_x64: market_state.sqrt_price_x64,
+            liquidity: position.liquidity,
+        },
+        position.lower_sqrt_price_x64,
+        position.upper_sqrt_price_x64,
+        position.base_principal,
+        position.quote_principal,
+    )
+    .map_err(|_| ProgramError::InsufficientFunds)?;
     let (expected_position, bump) = Pubkey::find_program_address(
         &[
             b"passive-position",
