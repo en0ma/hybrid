@@ -17,6 +17,7 @@ if [[ "${MANIFEST_COMPARE_ONLY:-0}" != "1" ]]; then
   MANIFEST_TARGET_DIR="${MANIFEST_TARGET_DIR:-$ROOT/target}"
   # Only wrap native rustc. Solana's SBF toolchain uses its own compiler.
   # A compiler cache survives Cargo fingerprint rebuilds after a fresh clone.
+  native_started="$SECONDS"
   if [[ "${MANIFEST_NATIVE_SCCACHE:-0}" == "1" ]]; then
     command -v sccache >/dev/null 2>&1 || { echo "sccache missing" >&2; exit 1; }
     CARGO_TARGET_DIR="$MANIFEST_TARGET_DIR" RUSTC_WRAPPER=sccache cargo test --manifest-path "$ROOT/Cargo.toml" -p manifest-dex --lib
@@ -24,7 +25,10 @@ if [[ "${MANIFEST_COMPARE_ONLY:-0}" != "1" ]]; then
   else
     CARGO_TARGET_DIR="$MANIFEST_TARGET_DIR" cargo test --manifest-path "$ROOT/Cargo.toml" -p manifest-dex --lib
   fi
+  echo "MANIFEST_NATIVE_TEST_SECONDS $((SECONDS - native_started))"
+  sbf_started="$SECONDS"
   CARGO_TARGET_DIR="$MANIFEST_TARGET_DIR" cargo build-sbf --manifest-path "$ROOT/programs/manifest/Cargo.toml"
+  echo "MANIFEST_SBF_BUILD_SECONDS $((SECONDS - sbf_started))"
 fi
 
 if [[ "${MANIFEST_BASELINE_ONLY:-0}" == "1" ]]; then
