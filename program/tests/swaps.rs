@@ -257,8 +257,8 @@ fn swap_instruction(f: &Fixture, opcode: u8, amount: u64, limit: u64) -> Instruc
 #[tokio::test]
 async fn exact_in_buy_moves_tokens_settles_makers_and_compacts_book() {
     let f = fixture();
-    let mut context = f.program_test.start_with_context().await;
     let ix = swap_instruction(&f, 15, 250, 250);
+    let mut context = f.program_test.start_with_context().await;
     let blockhash = context.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -360,8 +360,8 @@ async fn exact_in_buy_moves_tokens_settles_makers_and_compacts_book() {
 #[tokio::test]
 async fn exact_out_buy_honors_max_input() {
     let f = fixture();
-    let mut context = f.program_test.start_with_context().await;
     let ix = swap_instruction(&f, 16, 150, 150);
+    let mut context = f.program_test.start_with_context().await;
     let blockhash = context.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -390,8 +390,8 @@ async fn exact_out_buy_honors_max_input() {
 #[tokio::test]
 async fn swap_rejects_when_active_depth_cannot_satisfy_request() {
     let f = fixture();
-    let mut context = f.program_test.start_with_context().await;
     let ix = swap_instruction(&f, 15, 350, 300);
+    let mut context = f.program_test.start_with_context().await;
     let blockhash = context.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
