@@ -113,6 +113,61 @@ pub fn validate_limit_ask(order: LimitAsk) -> Result<(), QuoteError> {
     Ok(())
 }
 
+/// Minimum tokens that must back a range position at the current price.
+/// Amounts are rounded up. This calculation does not mint liquidity or move
+/// tokens. The caller must check custody and the position owner.
+pub fn required_range_deposit(
+    state: PassiveState,
+    lower_sqrt_price_x64: u128,
+    upper_sqrt_price_x64: u128,
+) -> Result<(u64, u64), QuoteError> {
+    if state.liquidity == 0 {
+        return Err(QuoteError::ZeroLiquidity);
+    }
+    if lower_sqrt_price_x64 == 0
+        || lower_sqrt_price_x64 >= upper_sqrt_price_x64
+        || state.sqrt_price_x64 == 0
+    {
+        return Err(QuoteError::InvalidPrice);
+    }
+    let current = state.sqrt_price_x64;
+    let base_lower = current.max(lower_sqrt_price_x64);
+    let base = if base_lower >= upper_sqrt_price_x64 {
+        0
+    } else {
+        passive_base_delta(state.liquidity, base_lower, upper_sqrt_price_x64)?
+            .checked_add(1)
+            .ok_or(QuoteError::Overflow)?
+    };
+    let quote_upper = current.min(upper_sqrt_price_x64);
+    let quote = if quote_upper <= lower_sqrt_price_x64 {
+        0
+    } else {
+        mul_q64_ceil(state.liquidity, quote_upper - lower_sqrt_price_x64)?
+    };
+    Ok((
+        u64::try_from(base).map_err(|_| QuoteError::Overflow)?,
+        u64::try_from(quote).map_err(|_| QuoteError::Overflow)?,
+    ))
+}
+
+/// Reject a position if its declared principal cannot cover its liquidity
+/// at the current price. Excess deposits remain the LP's reserved principal.
+pub fn validate_range_collateral(
+    state: PassiveState,
+    lower_sqrt_price_x64: u128,
+    upper_sqrt_price_x64: u128,
+    base_principal: u64,
+    quote_principal: u64,
+) -> Result<(), QuoteError> {
+    let (base, quote) =
+        required_range_deposit(state, lower_sqrt_price_x64, upper_sqrt_price_x64)?;
+    if base_principal < base || quote_principal < quote {
+        return Err(QuoteError::ZeroLiquidity);
+    }
+    Ok(())
+}
+
 pub fn quote_quote_in_for_base_out(
     state: PassiveState,
     quote_in: u64,
