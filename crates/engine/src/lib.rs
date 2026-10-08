@@ -144,6 +144,86 @@ pub fn quote_quote_in_for_base_out(
     })
 }
 
+/// A conservative, bounded passive sell quote. This quote layer does not
+/// mutate accounts or authorize settlement. Inputs are base atoms and outputs
+/// are quote atoms; the price moves downward.
+pub fn quote_base_in_for_quote_out(state: PassiveState, base_in: u64) -> Result<Quote, QuoteError> {
+    if state.liquidity == 0 {
+        return Err(QuoteError::ZeroLiquidity);
+    }
+    if state.sqrt_price_x64 == 0 {
+        return Err(QuoteError::InvalidPrice);
+    }
+    if base_in == 0 {
+        return Ok(Quote {
+            amount_in: 0,
+            amount_out: 0,
+            next_sqrt_price_x64: state.sqrt_price_x64,
+        });
+    }
+    // For sqrt P' <= sqrt P, base movement is
+    // L * (P - P') * Q64 / (P * P').
+    // Find the largest representable price movement covered by base_in.
+    // This uses checked arithmetic and no approximate floating point.
+    let mut lo = 1u128;
+    let mut hi = state.sqrt_price_x64;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        let required = passive_base_delta(state.liquidity, mid, state.sqrt_price_x64)?;
+        // Reserve one atom against fractional required input to avoid an
+        // optimistic floor granting more price movement than paid for.
+        if mid != state.sqrt_price_x64 && required >= u128::from(base_in) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    let quote_out = mul_q64_floor(state.liquidity, state.sqrt_price_x64 - lo)?;
+    let quote_out = u64::try_from(quote_out).map_err(|_| QuoteError::Overflow)?;
+    Ok(Quote {
+        amount_in: base_in,
+        amount_out: quote_out,
+        next_sqrt_price_x64: lo,
+    })
+}
+
+/// Find the minimum whole base amount whose passive quote covers the requested
+/// exact output. A nonrepresentable target is rejected rather than silently
+/// overcharging the taker. No vault or LP state is changed here.
+pub fn quote_base_in_for_quote_exact_out(
+    state: PassiveState,
+    quote_out: u64,
+) -> Result<Quote, QuoteError> {
+    if state.liquidity == 0 {
+        return Err(QuoteError::ZeroLiquidity);
+    }
+    if state.sqrt_price_x64 == 0 {
+        return Err(QuoteError::InvalidPrice);
+    }
+    if quote_out == 0 {
+        return Ok(Quote {
+            amount_in: 0,
+            amount_out: 0,
+            next_sqrt_price_x64: state.sqrt_price_x64,
+        });
+    }
+    let max = quote_base_in_for_quote_out(state, u64::MAX)?;
+    if max.amount_out < quote_out {
+        return Err(QuoteError::Overflow);
+    }
+    let mut lo = 1u64;
+    let mut hi = u64::MAX;
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if quote_base_in_for_quote_out(state, mid)?.amount_out >= quote_out {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    quote_base_in_for_quote_out(state, lo)
+}
+
 /// Divide `remainder * 2^64` by `denominator` without a wider integer.
 ///
 /// The precondition `remainder < denominator` keeps every doubled remainder
@@ -1595,5 +1675,63 @@ mod sell_plan_regression_tests {
         }];
         let plan = plan_sell_active_exact_out(Q64, &bids, 1).unwrap();
         assert_eq!((plan.amount_in, plan.amount_out), (1, 4));
+    }
+}
+
+#[cfg(test)]
+mod passive_sell_quote_tests {
+    use super::*;
+
+    fn fixture() -> PassiveState {
+        PassiveState {
+            sqrt_price_x64: Q64,
+            liquidity: Q64,
+        }
+    }
+
+    #[test]
+    fn passive_sell_zero_input_preserves_state() {
+        let quote = quote_base_in_for_quote_out(fixture(), 0).unwrap();
+        assert_eq!(quote.amount_in, 0);
+        assert_eq!(quote.amount_out, 0);
+        assert_eq!(quote.next_sqrt_price_x64, Q64);
+    }
+
+    #[test]
+    fn passive_sell_moves_price_downward_and_is_monotone() {
+        let small = quote_base_in_for_quote_out(fixture(), 20).unwrap();
+        let large = quote_base_in_for_quote_out(fixture(), 100).unwrap();
+        assert_eq!(small.amount_in, 20);
+        assert_eq!(large.amount_in, 100);
+        assert!(small.next_sqrt_price_x64 <= Q64);
+        assert!(large.next_sqrt_price_x64 <= small.next_sqrt_price_x64);
+        assert!(large.amount_out >= small.amount_out);
+    }
+
+    #[test]
+    fn passive_sell_exact_out_finds_minimal_input() {
+        let target = 10;
+        let quote = quote_base_in_for_quote_exact_out(fixture(), target).unwrap();
+        assert!(quote.amount_out >= target);
+        if quote.amount_in > 1 {
+            let previous = quote_base_in_for_quote_out(fixture(), quote.amount_in - 1).unwrap();
+            assert!(previous.amount_out < target);
+        }
+    }
+
+    #[test]
+    fn passive_sell_rejects_zero_liquidity() {
+        let empty = PassiveState {
+            sqrt_price_x64: Q64,
+            liquidity: 0,
+        };
+        assert_eq!(
+            quote_base_in_for_quote_out(empty, 1),
+            Err(QuoteError::ZeroLiquidity)
+        );
+        assert_eq!(
+            quote_base_in_for_quote_exact_out(empty, 1),
+            Err(QuoteError::ZeroLiquidity)
+        );
     }
 }
