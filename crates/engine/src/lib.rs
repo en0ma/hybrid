@@ -1547,4 +1547,50 @@ mod sell_plan_regression_tests {
         let plan = plan_sell_active_exact_in(Q64 * 2, &[low], 5).unwrap();
         assert_eq!((plan.amount_in, plan.amount_out), (0, 0));
     }
+
+    #[test]
+    fn zero_notional_bid_does_not_block_later_fills() {
+        let bids = [
+            LimitAsk {
+                price_x64: Q64 / 4,
+                sqrt_price_x64: Q64 / 2,
+                base_qty: 1,
+            },
+            LimitAsk {
+                price_x64: Q64 / 4,
+                sqrt_price_x64: Q64 / 2,
+                base_qty: 8,
+            },
+        ];
+        let exact_in = plan_sell_active_exact_in(Q64 / 2, &bids, 4).unwrap();
+        assert_eq!(exact_in.fill_count, 1);
+        assert_eq!(exact_in.fills[0].bid_index, 1);
+        assert_eq!(exact_in.amount_out, 1);
+        let exact_out = plan_sell_active_exact_out(Q64 / 2, &bids, 1).unwrap();
+        assert_eq!(exact_out.fill_count, 1);
+        assert_eq!(exact_out.fills[0].bid_index, 1);
+        assert_eq!(exact_out.amount_in, 4);
+    }
+
+    #[test]
+    fn exact_out_uses_minimal_base_when_capacity_equals_target() {
+        let bids = [LimitAsk {
+            price_x64: Q64 / 4,
+            sqrt_price_x64: Q64 / 2,
+            base_qty: 7,
+        }];
+        let plan = plan_sell_active_exact_out(Q64 / 2, &bids, 1).unwrap();
+        assert_eq!((plan.amount_in, plan.amount_out), (4, 1));
+    }
+
+    #[test]
+    fn large_bid_notional_allows_small_exact_out() {
+        let bids = [LimitAsk {
+            price_x64: Q64 * 4,
+            sqrt_price_x64: Q64 * 2,
+            base_qty: u64::MAX,
+        }];
+        let plan = plan_sell_active_exact_out(Q64, &bids, 1).unwrap();
+        assert_eq!((plan.amount_in, plan.amount_out), (1, 4));
+    }
 }
