@@ -360,7 +360,10 @@ mod tests {
         bad.base_principal = 1;
         bad.quote_principal = 0;
         assert_eq!(bad.validate(), Err(PassiveAccountingError::InvalidPosition));
-        assert_eq!(pool.deposit(&bad), Err(PassiveAccountingError::InvalidPosition));
+        assert_eq!(
+            pool.deposit(&bad),
+            Err(PassiveAccountingError::InvalidPosition)
+        );
         assert_eq!(pool, PassivePool::default());
 
         let mut small = position();
