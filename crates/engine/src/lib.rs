@@ -524,6 +524,155 @@ pub fn plan_buy_active_exact_out(
     })
 }
 
+/// Sell plans consume bids in descending price-time order. The bid index is
+/// stable until execution applies all fills in reverse index order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ActiveBidFill {
+    pub bid_index: u16,
+    pub base_qty: u64,
+    pub quote_qty: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ActiveOnlySellPlan {
+    pub amount_in: u64,
+    pub amount_out: u64,
+    pub fill_count: u8,
+    pub fills: [ActiveBidFill; MAX_ACTIVE_FILLS],
+}
+
+fn validate_active_bids(bids: &[LimitAsk]) -> Result<(), QuoteError> {
+    for bid in bids {
+        validate_limit_ask(*bid)?;
+    }
+    for pair in bids.windows(2) {
+        if pair[0].price_x64 < pair[1].price_x64 {
+            return Err(QuoteError::InvalidPrice);
+        }
+    }
+    Ok(())
+}
+
+fn bid_quote_for_base(base: u64, price_x64: u128) -> Result<u64, QuoteError> {
+    let value = bid_quote_for_base_wide(base, price_x64)?;
+    u64::try_from(value).map_err(|_| QuoteError::Overflow)
+}
+
+fn bid_quote_for_base_wide(base: u64, price_x64: u128) -> Result<u128, QuoteError> {
+    mul_q64_floor(u128::from(base), price_x64)
+}
+
+/// Plan a base exact-in sell against eligible explicit bids only.
+/// Resting bids own equality with the passive marginal price.
+/// Quote proceeds round down. Zero-quote dust cannot remove resting orders.
+pub fn plan_sell_active_exact_in(
+    passive_sqrt_price_x64: u128,
+    bids: &[LimitAsk],
+    base_in: u64,
+) -> Result<ActiveOnlySellPlan, QuoteError> {
+    let passive_price = spot_price_x64(passive_sqrt_price_x64)?;
+    validate_active_bids(bids)?;
+    let mut remaining = base_in;
+    let mut out = 0u64;
+    let mut fills = [ActiveBidFill::default(); MAX_ACTIVE_FILLS];
+    let mut count = 0usize;
+    for (index, bid) in bids.iter().copied().enumerate() {
+        if remaining == 0 || bid.price_x64 < passive_price {
+            break;
+        }
+        let take = remaining.min(bid.base_qty);
+        if take == 0 {
+            continue;
+        }
+        let quote = bid_quote_for_base(take, bid.price_x64)?;
+        if quote == 0 {
+            continue;
+        }
+        if count == MAX_ACTIVE_FILLS {
+            return Err(QuoteError::Overflow);
+        }
+        fills[count] = ActiveBidFill {
+            bid_index: u16::try_from(index).map_err(|_| QuoteError::Overflow)?,
+            base_qty: take,
+            quote_qty: quote,
+        };
+        count += 1;
+        remaining -= take;
+        out = out.checked_add(quote).ok_or(QuoteError::Overflow)?;
+    }
+    Ok(ActiveOnlySellPlan {
+        amount_in: base_in - remaining,
+        amount_out: out,
+        fill_count: u8::try_from(count).map_err(|_| QuoteError::Overflow)?,
+        fills,
+    })
+}
+
+/// Plan a quote exact-out sell using the minimum whole base atoms per bid.
+/// Rounding can produce more quote atoms than requested. Callers must use
+/// amount_out (the actual settlement amount) and enforce their max-base limit.
+pub fn plan_sell_active_exact_out(
+    passive_sqrt_price_x64: u128,
+    bids: &[LimitAsk],
+    quote_out: u64,
+) -> Result<ActiveOnlySellPlan, QuoteError> {
+    let passive_price = spot_price_x64(passive_sqrt_price_x64)?;
+    validate_active_bids(bids)?;
+    let mut remaining = quote_out;
+    let mut base_in = 0u64;
+    let mut total_quote = 0u64;
+    let mut fills = [ActiveBidFill::default(); MAX_ACTIVE_FILLS];
+    let mut count = 0usize;
+    for (index, bid) in bids.iter().copied().enumerate() {
+        if remaining == 0 || bid.price_x64 < passive_price {
+            break;
+        }
+        if bid.base_qty == 0 {
+            continue;
+        }
+        let available = bid_quote_for_base_wide(bid.base_qty, bid.price_x64)?;
+        if available == 0 {
+            continue;
+        }
+        let (take, quote) = if available < u128::from(remaining) {
+            (
+                bid.base_qty,
+                u64::try_from(available).map_err(|_| QuoteError::Overflow)?,
+            )
+        } else {
+            let mut lo = 1u64;
+            let mut hi = bid.base_qty;
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                if bid_quote_for_base_wide(mid, bid.price_x64)? >= u128::from(remaining) {
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            (lo, bid_quote_for_base(lo, bid.price_x64)?)
+        };
+        if count == MAX_ACTIVE_FILLS {
+            return Err(QuoteError::Overflow);
+        }
+        fills[count] = ActiveBidFill {
+            bid_index: u16::try_from(index).map_err(|_| QuoteError::Overflow)?,
+            base_qty: take,
+            quote_qty: quote,
+        };
+        count += 1;
+        base_in = base_in.checked_add(take).ok_or(QuoteError::Overflow)?;
+        total_quote = total_quote.checked_add(quote).ok_or(QuoteError::Overflow)?;
+        remaining = remaining.saturating_sub(quote);
+    }
+    Ok(ActiveOnlySellPlan {
+        amount_in: base_in,
+        amount_out: total_quote,
+        fill_count: u8::try_from(count).map_err(|_| QuoteError::Overflow)?,
+        fills,
+    })
+}
+
 fn fill_active_ask(ask: LimitAsk, remaining_quote: u64) -> Result<(u64, u64, bool), QuoteError> {
     validate_limit_ask(ask)?;
     let numerator = u128::from(remaining_quote)
@@ -1342,5 +1491,109 @@ mod tests {
             with_tombstone.fully_consumed_asks,
             without_tombstone.fully_consumed_asks + 1
         );
+    }
+}
+
+#[cfg(test)]
+mod sell_plan_regression_tests {
+    use super::*;
+
+    fn bid(price: u128, quantity: u64) -> LimitAsk {
+        LimitAsk {
+            price_x64: price,
+            sqrt_price_x64: if price == Q64 * 4 { Q64 * 2 } else { Q64 },
+            base_qty: quantity,
+        }
+    }
+
+    #[test]
+    fn exact_in_uses_best_bid_then_stops_at_passive() {
+        let bids = [bid(Q64, 8), bid(Q64, 7)];
+        let plan = plan_sell_active_exact_in(Q64, &bids, 10).unwrap();
+        assert_eq!(
+            (plan.amount_in, plan.amount_out, plan.fill_count),
+            (10, 10, 2)
+        );
+        assert_eq!(plan.fills[0].bid_index, 0);
+        assert_eq!(plan.fills[1].base_qty, 2);
+    }
+
+    #[test]
+    fn exact_out_rounds_minimal_base_and_tracks_actual_quote() {
+        let bids = [bid(Q64, 5), bid(Q64, 7)];
+        let plan = plan_sell_active_exact_out(Q64, &bids, 9).unwrap();
+        assert_eq!(
+            (plan.amount_in, plan.amount_out, plan.fill_count),
+            (9, 9, 2)
+        );
+        assert_eq!(plan.fills[1].base_qty, 4);
+    }
+
+    #[test]
+    fn sell_plans_reject_unsorted_bids_and_report_partial_depth() {
+        let reversed = [bid(Q64, 1), bid(Q64 * 4, 1)];
+        assert_eq!(
+            plan_sell_active_exact_in(Q64, &reversed, 1),
+            Err(QuoteError::InvalidPrice)
+        );
+        let plan = plan_sell_active_exact_out(Q64, &[bid(Q64, 2)], 10).unwrap();
+        assert_eq!((plan.amount_in, plan.amount_out), (2, 2));
+    }
+
+    #[test]
+    fn sell_plans_do_not_spend_bids_below_passive_price() {
+        let low = LimitAsk {
+            price_x64: Q64,
+            sqrt_price_x64: Q64,
+            base_qty: 10,
+        };
+        let plan = plan_sell_active_exact_in(Q64 * 2, &[low], 5).unwrap();
+        assert_eq!((plan.amount_in, plan.amount_out), (0, 0));
+    }
+
+    #[test]
+    fn zero_notional_bid_does_not_block_later_fills() {
+        let bids = [
+            LimitAsk {
+                price_x64: Q64 / 4,
+                sqrt_price_x64: Q64 / 2,
+                base_qty: 1,
+            },
+            LimitAsk {
+                price_x64: Q64 / 4,
+                sqrt_price_x64: Q64 / 2,
+                base_qty: 8,
+            },
+        ];
+        let exact_in = plan_sell_active_exact_in(Q64 / 2, &bids, 4).unwrap();
+        assert_eq!(exact_in.fill_count, 1);
+        assert_eq!(exact_in.fills[0].bid_index, 1);
+        assert_eq!(exact_in.amount_out, 1);
+        let exact_out = plan_sell_active_exact_out(Q64 / 2, &bids, 1).unwrap();
+        assert_eq!(exact_out.fill_count, 1);
+        assert_eq!(exact_out.fills[0].bid_index, 1);
+        assert_eq!(exact_out.amount_in, 4);
+    }
+
+    #[test]
+    fn exact_out_uses_minimal_base_when_capacity_equals_target() {
+        let bids = [LimitAsk {
+            price_x64: Q64 / 4,
+            sqrt_price_x64: Q64 / 2,
+            base_qty: 7,
+        }];
+        let plan = plan_sell_active_exact_out(Q64 / 2, &bids, 1).unwrap();
+        assert_eq!((plan.amount_in, plan.amount_out), (4, 1));
+    }
+
+    #[test]
+    fn large_bid_notional_allows_small_exact_out() {
+        let bids = [LimitAsk {
+            price_x64: Q64 * 4,
+            sqrt_price_x64: Q64 * 2,
+            base_qty: u64::MAX,
+        }];
+        let plan = plan_sell_active_exact_out(Q64, &bids, 1).unwrap();
+        assert_eq!((plan.amount_in, plan.amount_out), (1, 4));
     }
 }
