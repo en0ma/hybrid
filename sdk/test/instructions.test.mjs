@@ -74,7 +74,7 @@ test("maker collateral transfers use exact ten-byte layout", () => {
 test("passive position encodes all 73 bytes and authenticated close", () => {
   const a = accounts(["market","custody","pool","position","owner","baseSource",
     "quoteSource","baseVault","quoteVault","baseMint","quoteMint","tokenProgram",
-    "systemProgram","baseDestination","quoteDestination","vaultAuthority"]);
+    "systemProgram","payer","baseDestination","quoteDestination","vaultAuthority"]);
   const open = openPassivePosition(id,a, {
     nonce: 9n, lowerSqrtPriceX64: 1n << 63n, upperSqrtPriceX64: 1n << 65n,
     liquidity: 100n, baseDeposit: 12n, quoteDeposit: 13n,
