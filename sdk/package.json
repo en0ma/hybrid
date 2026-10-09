@@ -4,7 +4,15 @@
   "private": true,
   "type": "module",
   "description": "Alpha ABI instruction descriptors for Hybrid Solana DEX",
-  "exports": { ".": "./src/instructions.mjs" },
-  "scripts": { "test": "node --test test/*.test.mjs" },
-  "engines": { "node": ">=20" }
+  "exports": {
+    ".": "./src/instructions.mjs",
+    "./maker": "./src/maker.mjs",
+    "./state": "./src/state.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
 }
