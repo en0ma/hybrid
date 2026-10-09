@@ -48,7 +48,7 @@ function instruction(programId, accounts, roles, data) {
 
 const activeOrderRoles = [
   ["market", "w"], ["page", "w"], ["ownerPage", "w"],
-  ["maker", "s"], ["makerBalance", "w"],
+  ["makerBalance", "w"], ["maker", "s"],
 ];
 
 export function placeOrder(programId, accounts, { side, priceX64, sqrtPriceX64, baseQty }) {
@@ -158,7 +158,7 @@ export function openPassivePosition(programId, accounts, {
 export function closePassivePosition(programId, accounts, { nonce }) {
   return instruction(programId, accounts, [
     ["market", ""], ["custody", ""], ["pool", "w"], ["position", "w"],
-    ["owner", "s"], ["baseVault", "w"], ["quoteVault", "w"],
+    ["owner", "ws"], ["baseVault", "w"], ["quoteVault", "w"],
     ["baseDestination", "w"], ["quoteDestination", "w"], ["baseMint", ""],
     ["quoteMint", ""], ["vaultAuthority", ""], ["tokenProgram", ""],
   ], [Buffer.from([21]), le(nonce, 8, "nonce")]);
