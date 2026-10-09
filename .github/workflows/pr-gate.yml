@@ -163,7 +163,7 @@ jobs:
       # and restore the newest compatible pinned-Manifest build.
       - name: Restore pinned Manifest build output
         id: manifest-build-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/manifest-target
           key: ${{ runner.os }}-manifest-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-solana-v4.3.0-v2-${{ github.run_id }}-${{ github.run_attempt }}
@@ -175,7 +175,7 @@ jobs:
           echo "Manifest baseline SHA: $MANIFEST_COMMIT"
       - name: Restore Manifest compiler cache
         id: manifest-compiler-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/manifest-sccache
           key: ${{ runner.os }}-manifest-sccache-v0.16.0-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-${{ github.run_id }}-${{ github.run_attempt }}
@@ -200,6 +200,18 @@ jobs:
         run: |
           source ci/install-solana.sh
           bash ci/manifest-compare.sh
+      - name: Save pinned Manifest build output
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/manifest-target
+          key: ${{ runner.os }}-manifest-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-solana-v4.3.0-v2-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Save Manifest compiler cache
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/manifest-sccache
+          key: ${{ runner.os }}-manifest-sccache-v0.16.0-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-${{ github.run_id }}-${{ github.run_attempt }}
 
   manifest-cu:
     name: Hybrid CU comparison against pinned Manifest
