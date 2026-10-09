@@ -42,7 +42,7 @@ export async function planAuthenticatedMakerUpdate(connection, {
     plan,
     descriptors:buildMakerReconciliation(programId,{
       ask:{market,page:askPage,ownerPage:askOwnerPage,maker,makerBalance},
-      bid:{market,page:bidPage,ownerPage:bidOwnerPage,maker,makerBalance:undefined},
+      bid:{market,page:bidPage,ownerPage:bidOwnerPage,maker,makerBalance},
     },plan),
   };
 }
