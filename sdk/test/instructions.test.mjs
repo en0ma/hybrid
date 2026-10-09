@@ -27,10 +27,10 @@ test("maker place/cancel encode exact page-zero alpha ABI", () => {
     assert.equal(place.data.readBigUInt64LE(33), 42n);
     assert.equal(place.data.readBigUInt64LE(25), 1n);
     assert.deepEqual(place.keys.map(k => k.pubkey), [
-      "test-market","test-page","test-ownerPage","test-maker","test-makerBalance",
+      "test-market","test-page","test-ownerPage","test-makerBalance","test-maker",
     ]);
-    assert.equal(place.keys[3].isSigner, true);
-    assert.equal(place.keys[4].isWritable, true);
+    assert.equal(place.keys[3].isWritable, true);
+    assert.equal(place.keys[4].isSigner, true);
     const cancel = cancelOrder(id, order, { side, sequence: 65537n });
     assert.equal(cancel.data.length, 9);
     assert.equal(cancel.data[0], cancelOp);
@@ -90,6 +90,7 @@ test("passive position encodes all 73 bytes and authenticated close", () => {
   assert.equal(close.data.length,9);
   assert.equal(close.data[0],21);
   assert.equal(close.keys[4].isSigner,true);
+  assert.equal(close.keys[4].isWritable,true);
   assert.equal(close.keys[12].pubkey,"test-tokenProgram");
   assert.equal(initPassivePool(id,a).data[0],19);
   assert.equal(initMakerBalance(id,{...a, maker:"maker", makerBalance:"balance",payer:"payer"}).data[0],12);
