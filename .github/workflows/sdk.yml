@@ -1,7 +1,6 @@
 name: Client SDK
 on:
   pull_request:
-    branches: [main]
     paths:
       - "sdk/**"
       - ".github/workflows/sdk.yml"
