@@ -55,6 +55,7 @@ export function decodeOrderPage(data, side) {
   const len=b.readUInt16LE(0);
   if(len>32)throw new Error("Invalid page length");
   const entries=[];
+  const sequences=new Set();
   for(let i=0;i<32;i++){
     const e=parseEntry(b,16+i*48);
     if(i>=len){
@@ -64,6 +65,19 @@ export function decodeOrderPage(data, side) {
     if(!e.priceX64||!e.sqrtPriceX64||!e.baseQty||!e.sequence){
       throw new Error("Invalid order entry");
     }
+    // Match hybrid_engine::validate_limit_ask: floor(s*s/Q64) <= price
+    // and floor((s+1)*(s+1)/Q64) > price, with checked u128 bounds.
+    const max128=(1n<<128n)-1n;
+    const spot=(sqrt)=>(sqrt*sqrt)>>64n;
+    if(e.sqrtPriceX64===max128||spot(e.sqrtPriceX64)>max128||
+       spot(e.sqrtPriceX64+1n)>max128||
+       spot(e.sqrtPriceX64)>e.priceX64||
+       spot(e.sqrtPriceX64+1n)<=e.priceX64){
+      throw new Error("Noncanonical cached sqrt price");
+    }
+    const key=String(e.sequence);
+    if(sequences.has(key))throw new Error("Duplicate order sequence");
+    sequences.add(key);
     if(entries.length){
       const p=entries.at(-1);
       const correctlySorted=side==="ask"
