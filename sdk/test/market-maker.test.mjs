@@ -52,3 +52,19 @@ test("a mixed RPC slot fails closed",async()=>{
  const {connection,opts}=fixture({secondSlot:101});
  await assert.rejects(planAuthenticatedMakerUpdate(connection,{...opts,desired:[]}),/Mixed RPC slots/);
 });
+
+test("maker bid removal includes writable balance and final maker signer",async()=>{
+ const {connection,opts}=fixture();
+ // Maker 7 is not the resting bid owner, so a new desired bid must be placed.
+ const result=await planAuthenticatedMakerUpdate(connection,{
+  ...opts,desired:[
+    {side:"ask",priceX64:Q,sqrtPriceX64:Q,baseQty:10n},
+    {side:"bid",priceX64:Q,sqrtPriceX64:Q,baseQty:4n},
+  ],
+ });
+ assert.deepEqual(result.descriptors.map(ix=>ix.data[0]),[8]);
+ assert.equal(result.descriptors[0].keys[3].pubkey,opts.makerBalance);
+ assert.equal(result.descriptors[0].keys[3].isWritable,true);
+ assert.equal(result.descriptors[0].keys[4].pubkey,opts.maker);
+ assert.equal(result.descriptors[0].keys[4].isSigner,true);
+});
