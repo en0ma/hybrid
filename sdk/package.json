@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/instructions.mjs",
     "./maker": "./src/maker.mjs",
-    "./state": "./src/state.mjs"
+    "./state": "./src/state.mjs",
+    "./rpc": "./src/rpc.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
