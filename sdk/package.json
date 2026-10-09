@@ -6,7 +6,8 @@
   "description": "Alpha ABI instruction descriptors for Hybrid Solana DEX",
   "exports": {
     ".": "./src/instructions.mjs",
-    "./maker": "./src/maker.mjs"
+    "./maker": "./src/maker.mjs",
+    "./state": "./src/state.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
