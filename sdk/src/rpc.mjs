@@ -5,6 +5,12 @@ function keyEquals(left, right) {
   if (typeof left.equals === "function") return Boolean(left.equals(right));
   return String(left) === String(right);
 }
+function pubkeyBytes(key) {
+  const bytes = typeof key?.toBytes === "function" ? key.toBytes() :
+    (Buffer.isBuffer(key) || key instanceof Uint8Array ? key : null);
+  if (!bytes || bytes.length !== 32) throw new TypeError("Expected a 32-byte PublicKey");
+  return Buffer.from(bytes);
+}
 function dataBytes(value) {
   if (value == null) throw new Error("Missing account data");
   // Accept binary account data, not RPC JSON encoded base64 pairs.
@@ -61,12 +67,15 @@ export async function loadActivePageSnapshot(connection, {
   const sidecar = decodeOwnerPage(requireAccount(ownerInfo, "ownerPage", programId), book);
   if (side === "ask") {
     if (book.entries.length !== header.askCount) throw new Error("Ask count mismatch");
-    if (!header.askOwnerKeyBytes.equals(Buffer.from(ownerPage.toBytes?.() ?? []))) {
+    if (!header.askOwnerKeyBytes.equals(pubkeyBytes(ownerPage))) {
       // For a real PublicKey, require exact binding, not just page compatibility.
       throw new Error("Ask sidecar binding mismatch");
     }
-  } else if (book.entries.length !== header.bidCount) {
-    throw new Error("Bid count mismatch");
+  } else {
+    if (book.entries.length !== header.bidCount) throw new Error("Bid count mismatch");
+    if (!header.bidOwnerTagBytes.equals(pubkeyBytes(ownerPage).subarray(0, 16))) {
+      throw new Error("Bid sidecar binding mismatch");
+    }
   }
   return {
     slot:response.context.slot,
