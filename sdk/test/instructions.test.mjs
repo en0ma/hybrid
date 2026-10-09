@@ -25,7 +25,7 @@ test("maker place/cancel encode exact page-zero alpha ABI", () => {
     assert.equal(place.data.length, 41);
     assert.equal(place.data[0], placeOp);
     assert.equal(place.data.readBigUInt64LE(33), 42n);
-    assert.equal(place.data.readBigUInt64LE(17), 1n);
+    assert.equal(place.data.readBigUInt64LE(25), 1n);
     assert.deepEqual(place.keys.map(k => k.pubkey), [
       "test-market","test-page","test-ownerPage","test-maker","test-makerBalance",
     ]);
