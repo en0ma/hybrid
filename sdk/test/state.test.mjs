@@ -58,3 +58,16 @@ test("enforce canonical ask/bid price-time ordering",()=>{
   assert.throws(()=>decodeOrderPage(p,side),/Out-of-order/);
  }
 });
+
+test("reject inconsistent cached sqrt-price even when order quantities are valid",()=>{
+ const b=page("ask");
+ put128(b,32,q+1n);
+ assert.throws(()=>decodeOrderPage(b,"ask"),/Noncanonical/);
+});
+test("reject duplicate order IDs even when prices are correctly sorted",()=>{
+ const b=page("ask");b.writeUInt16LE(2,0);
+ put128(b,16+48,q+2n);put128(b,32+48,q+1n);
+ b.writeBigUInt64LE(20n,48+48);
+ b.writeBigUInt64LE(2n,56+48);
+ assert.throws(()=>decodeOrderPage(b,"ask"),/Duplicate order sequence/);
+});
