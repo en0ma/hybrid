@@ -174,12 +174,18 @@ jobs:
           echo "Manifest cache exact hit: ${{ steps.manifest-build-cache.outputs.cache-hit }}"
           echo "Manifest baseline SHA: $MANIFEST_COMMIT"
       - name: Restore Manifest compiler cache
+        id: manifest-compiler-cache
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/manifest-sccache
           key: ${{ runner.os }}-manifest-sccache-v0.16.0-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             ${{ runner.os }}-manifest-sccache-v0.16.0-d04b7aa90b098ba64ebcdf398e9a24d89a9114d8-
+      - name: Report compiler cache source
+        run: |
+          echo "MANIFEST_COMPILER_CACHE_HIT=${{ steps.manifest-compiler-cache.outputs.cache-hit }}"
+          echo "MANIFEST_COMPILER_CACHE_KEY=${{ steps.manifest-compiler-cache.outputs.cache-matched-key }}"
+          echo "MANIFEST_TARGET_CACHE_KEY=${{ steps.manifest-build-cache.outputs.cache-matched-key }}"
       - name: Install native Rust compiler cache
         uses: mozilla-actions/sccache-action@v0.0.11
         with:
