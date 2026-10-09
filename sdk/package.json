@@ -8,7 +8,8 @@
     ".": "./src/instructions.mjs",
     "./maker": "./src/maker.mjs",
     "./state": "./src/state.mjs",
-    "./rpc": "./src/rpc.mjs"
+    "./rpc": "./src/rpc.mjs",
+    "./market-maker": "./src/market-maker.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
