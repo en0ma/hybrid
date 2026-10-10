@@ -490,3 +490,45 @@ async fn buy_rejects_linked_page_without_changing_custody() {
         );
     }
 }
+
+fn linked_book_instruction(f: &Fixture) -> Instruction {
+    Instruction {
+        program_id: ID,
+        accounts: vec![
+            AccountMeta::new_readonly(f.market, false),
+            AccountMeta::new_readonly(f.ask_page, false),
+            AccountMeta::new_readonly(f.owner_page, false),
+        ],
+        data: vec![22, 0, 1],
+    }
+}
+
+#[tokio::test]
+async fn onchain_linked_book_preflight_accepts_canonical_head() {
+    let f = fixture();
+    let ix = linked_book_instruction(&f);
+    let mut context = f.program_test.start_with_context().await;
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+}
+
+#[tokio::test]
+async fn onchain_linked_book_preflight_rejects_incomplete_chain() {
+    let f = fixture_with_links(Some(1));
+    let ix = linked_book_instruction(&f);
+    let mut context = f.program_test.start_with_context().await;
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer],
+        hash,
+    );
+    assert!(context.banks_client.process_transaction(tx).await.is_err());
+}

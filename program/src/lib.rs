@@ -104,8 +104,101 @@ pub fn process_instruction(
         Some(19) => process_init_passive_pool(_program_id, _accounts, data),
         Some(20) => process_open_passive_position(_program_id, _accounts, data),
         Some(21) => process_close_passive_position(_program_id, _accounts, data),
+        Some(22) => process_validate_linked_book(_program_id, _accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
+}
+
+/// Read-only on-chain preflight for a future mutable cross-page swap ABI.
+/// Accounts: market, then (order page, owner sidecar) pairs in canonical order.
+/// data: [22, side (0 ask / 1 bid), page count]. No token movements.
+#[inline(never)]
+fn process_validate_linked_book(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if data.len() != 3 || (data[1] != 0 && data[1] != 1) {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let count = usize::from(data[2]);
+    if count == 0 || count > 8 || accounts.len() != 1 + 2 * count {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
+    if accounts.iter().any(|account| account.owner != program_id) {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    let market = hybrid_state::MarketHeader::decode_from(&accounts[0].try_borrow_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    if !market.collateralized_active() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let mut total = 0usize;
+    if data[1] == 0 {
+        let mut pages = Vec::with_capacity(count);
+        for index in 0..count {
+            let page_account = &accounts[1 + 2 * index];
+            let sidecar_account = &accounts[2 + 2 * index];
+            let index_bytes = (index as u32).to_le_bytes();
+            let (expected, _) = Pubkey::find_program_address(
+                &[b"ask-page", accounts[0].key.as_ref(), &index_bytes],
+                program_id,
+            );
+            if *page_account.key != expected || page_account.key == sidecar_account.key {
+                return Err(ProgramError::InvalidSeeds);
+            }
+            if index == 0 && market.reserved2 != sidecar_account.key.to_bytes() {
+                return Err(ProgramError::InvalidSeeds);
+            }
+            let page = load_active_ask_page(page_account)?;
+            let owners = load_owner_page_box(sidecar_account)?;
+            owners
+                .validate_parallel(&page)
+                .map_err(|_| ProgramError::InvalidAccountData)?;
+            total = total
+                .checked_add(page.len())
+                .ok_or(ProgramError::InvalidAccountData)?;
+            pages.push(*page);
+        }
+        hybrid_state::validate_ask_chain(&pages).map_err(|_| ProgramError::InvalidAccountData)?;
+        if total != market.ask_count as usize {
+            return Err(ProgramError::InvalidAccountData);
+        }
+    } else {
+        let mut pages = Vec::with_capacity(count);
+        for index in 0..count {
+            let page_account = &accounts[1 + 2 * index];
+            let sidecar_account = &accounts[2 + 2 * index];
+            let index_bytes = (index as u32).to_le_bytes();
+            let (expected, _) = Pubkey::find_program_address(
+                &[b"bid-page", accounts[0].key.as_ref(), &index_bytes],
+                program_id,
+            );
+            if *page_account.key != expected || page_account.key == sidecar_account.key {
+                return Err(ProgramError::InvalidSeeds);
+            }
+            if index == 0 && market.bid_owner_tag() != owner_tag(sidecar_account.key) {
+                return Err(ProgramError::InvalidSeeds);
+            }
+            let page = load_active_bid_page(page_account)?;
+            let owners = load_owner_page_box(sidecar_account)?;
+            if owners.len() != page.len()
+                || owners.links() != page.links()
+                || owners.as_slice().contains(&[0; 32])
+            {
+                return Err(ProgramError::InvalidAccountData);
+            }
+            total = total
+                .checked_add(page.len())
+                .ok_or(ProgramError::InvalidAccountData)?;
+            pages.push(*page);
+        }
+        hybrid_state::validate_bid_chain(&pages).map_err(|_| ProgramError::InvalidAccountData)?;
+        if total != market.bid_count() as usize {
+            return Err(ProgramError::InvalidAccountData);
+        }
+    }
+    Ok(())
 }
 
 const TOKEN_PROGRAM_ID: Pubkey =
