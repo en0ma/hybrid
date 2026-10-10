@@ -47,7 +47,7 @@ fn amount(account: &Account) -> u64 {
 }
 
 struct Fixture {
-    test: ProgramTest,
+    test: Option<ProgramTest>,
     market: Pubkey,
     custody: Pubkey,
     balance: Pubkey,
@@ -136,7 +136,7 @@ fn fixture() -> Fixture {
     );
 
     Fixture {
-        test,
+        test: Some(test),
         market,
         custody,
         balance,
@@ -231,8 +231,8 @@ async fn execute(
 
 #[tokio::test]
 async fn maker_deposits_and_withdraws_both_real_tokens() {
-    let f = fixture();
-    let mut context = f.test.start_with_context().await;
+    let mut f = fixture();
+    let mut context = f.test.take().unwrap().start_with_context().await;
     execute(&mut context, &f, 13, 0, 120).await.unwrap();
     execute(&mut context, &f, 13, 1, 230).await.unwrap();
     let (custody, maker, amounts) = read(&mut context, &f).await;
@@ -252,8 +252,8 @@ async fn maker_deposits_and_withdraws_both_real_tokens() {
 
 #[tokio::test]
 async fn insufficient_free_balance_rolls_back_without_token_movements() {
-    let f = fixture();
-    let mut context = f.test.start_with_context().await;
+    let mut f = fixture();
+    let mut context = f.test.take().unwrap().start_with_context().await;
     execute(&mut context, &f, 13, 0, 90).await.unwrap();
     let before = read(&mut context, &f).await;
     assert!(execute(&mut context, &f, 14, 0, 91).await.is_err());
@@ -263,8 +263,8 @@ async fn insufficient_free_balance_rolls_back_without_token_movements() {
 
 #[tokio::test]
 async fn insufficient_source_tokens_rolls_back_without_custody_credit() {
-    let f = fixture();
-    let mut context = f.test.start_with_context().await;
+    let mut f = fixture();
+    let mut context = f.test.take().unwrap().start_with_context().await;
     let before = read(&mut context, &f).await;
     assert!(execute(&mut context, &f, 13, 1, 801).await.is_err());
     let after = read(&mut context, &f).await;
