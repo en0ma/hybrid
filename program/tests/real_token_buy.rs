@@ -124,7 +124,9 @@ fn fixture_with_linked(linked: bool) -> Fixture {
     owners.set_links(PageLinks::new(0, None, linked.then_some(1)));
     owners.len = if linked { 1 } else { 2 };
     owners.owners[0] = maker_a.to_bytes();
-    owners.owners[1] = maker_b.to_bytes();
+    if !linked {
+        owners.owners[1] = maker_b.to_bytes();
+    }
     let mut owner_data = vec![0u8; ASK_OWNER_PAGE_BYTES];
     owners.encode_into(&mut owner_data).unwrap();
 
