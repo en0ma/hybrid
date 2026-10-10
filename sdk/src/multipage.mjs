@@ -39,7 +39,7 @@ export async function loadLinkedBookSnapshot(connection, {
     if (!pair || !pair.page || !pair.ownerPage || !validIndex(pair.index)) {
       throw new TypeError("Invalid page/sidecar pair");
     }
-    if (seen.has(pair.index) || (index === 0 && pair.index !== 0)) {
+    if (seen.has(pair.index) || pair.index !== index) {
       throw new Error("Duplicate index or missing page zero");
     }
     seen.add(pair.index);
@@ -72,7 +72,7 @@ export async function loadLinkedBookSnapshot(connection, {
     const page = decodeOrderPage(account(1+i*2,"page"),side);
     const entries = decodeOwnerPage(account(2+i*2,"sidecar"),page);
     const links = page.links;
-    if (links.pageIndex !== pair.index ||
+    if (links.pageIndex !== i ||
         links.prevPage !== (previous?.links.pageIndex ?? null) ||
         links.nextPage !== (pages[i+1]?.index ?? null)) {
       throw new Error("Broken page/owner chain or incomplete traversal");
@@ -85,6 +85,9 @@ export async function loadLinkedBookSnapshot(connection, {
       if (side === "bid" && !header.bidOwnerTagBytes.equals(sidecar.subarray(0,16))) {
         throw new Error("Invalid bid head sidecar binding");
       }
+    }
+    if (i > 0 && i + 1 < pages.length && entries.length === 0) {
+      throw new Error("Empty intermediate order page");
     }
     for (const entry of entries) {
       const last = all.at(-1);
