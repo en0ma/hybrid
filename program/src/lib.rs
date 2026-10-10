@@ -18,6 +18,7 @@ declare_id!("US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx");
 solana_program::entrypoint!(process_instruction);
 
 mod multipage_buy;
+mod multipage_sell;
 
 pub fn process_instruction(
     _program_id: &Pubkey,
@@ -108,6 +109,7 @@ pub fn process_instruction(
         Some(21) => process_close_passive_position(_program_id, _accounts, data),
         Some(22) => process_validate_linked_book(_program_id, _accounts, data),
         Some(23) | Some(24) => multipage_buy::process_multipage_buy(_program_id, _accounts, data),
+        Some(25) | Some(26) => multipage_sell::process_multipage_sell(_program_id, _accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
