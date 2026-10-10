@@ -87,9 +87,19 @@ pub(super) fn process_multipage_buy(
             &[b"ask-page", market_account.key.as_ref(), &index_bytes],
             program_id,
         );
-        if *page_account.key != expected_page
-            || (index == 0 && market.reserved2 != owner_account.key.to_bytes())
-        {
+        // Head sidecar is authenticated by the market header. Every later
+        // sidecar must be a canonical market/index PDA, never an arbitrary
+        // program-owned sidecar with compatible link metadata.
+        let valid_owner = if index == 0 {
+            market.reserved2 == owner_account.key.to_bytes()
+        } else {
+            let (expected_owner, _) = Pubkey::find_program_address(
+                &[b"ask-owner-page", market_account.key.as_ref(), &index_bytes],
+                program_id,
+            );
+            *owner_account.key == expected_owner
+        };
+        if *page_account.key != expected_page || !valid_owner {
             return Err(ProgramError::InvalidSeeds);
         }
         let page = load_active_ask_page(page_account)?;
