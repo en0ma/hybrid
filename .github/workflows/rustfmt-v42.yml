@@ -2,7 +2,7 @@ name: Temporary Rustfmt V42
 on:
   pull_request:
     paths:
-      - 'staging/multipage_ask.rs.txt'
+      - 'staging/**'
       - '.github/workflows/rustfmt-v42.yml'
   workflow_dispatch:
 jobs:
@@ -13,9 +13,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Format staged Rust and print encoded source
+      - name: Verify formatted module wiring and staged primitive
         run: |
-          echo 'BEGIN_FORMATTED_V42'
-          rustfmt --edition 2021 --emit stdout staging/multipage_ask.rs.txt | base64 -w0
-          echo
-          echo 'END_FORMATTED_V42'
+          rustfmt --edition 2021 --emit stdout staging/state_lib.rs.txt | tail -n +3 | diff -u staging/state_lib.rs.txt -
+          rustfmt --edition 2021 --emit stdout staging/multipage_ask.rs.txt | tail -n +3 | diff -u crates/state/src/multipage_ask.rs -
