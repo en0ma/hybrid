@@ -1,4 +1,3 @@
-
 use crate::{AskEntry, AskOwnerPage, AskPage, StateError, ASKS_PER_PAGE};
 
 /// Atomically apply global-index active fills and repack canonical linked pages.
