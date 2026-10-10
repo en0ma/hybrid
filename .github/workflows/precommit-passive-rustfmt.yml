@@ -1,0 +1,22 @@
+name: Precommit Rustfmt Passive Custody
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format staged passive test before Rust commit
+        run: |
+          cp ci/staging/real_token_passive_custody.rs.txt /tmp/real_token_passive_custody.rs
+          rustfmt --edition 2021 /tmp/real_token_passive_custody.rs
+          echo '===FORMATTED_START==='
+          base64 -w0 /tmp/real_token_passive_custody.rs
+          echo
+          echo '===FORMATTED_END==='
