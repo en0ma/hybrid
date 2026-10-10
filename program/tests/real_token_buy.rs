@@ -95,7 +95,8 @@ fn fixture_with_linked_priced(linked: bool, priced: bool) -> Fixture {
     let (maker_b_balance, maker_b_bump) =
         Pubkey::find_program_address(&[b"maker-balance", market.as_ref(), maker_b.as_ref()], &ID);
 
-    let mut market_header = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    let mut market_header =
+        MarketHeader::new(1, if priced { Q64 * 2 } else { Q64 }, 1_000_000, 1, 1);
     market_header.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
     market_header.ask_count = 2;
     market_header.next_sequence = 3;
