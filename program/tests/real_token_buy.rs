@@ -564,3 +564,75 @@ async fn linked_buy_rejects_forged_sidecar_and_rolls_back() {
     assert_eq!(token_amount(&quote.data), 1_000);
     assert_eq!(token_amount(&base.data), 0);
 }
+
+#[tokio::test]
+async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
+    let f = fixture_with_linked(true);
+    let ix = multipage_buy_instruction(&f, 24, 250, 250, true);
+    let mut context = f.program_test.start_with_context().await;
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.taker],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let head = context
+        .banks_client
+        .get_account(f.ask_page)
+        .await
+        .unwrap()
+        .unwrap();
+    let head = AskPage::decode_from(&head.data).unwrap();
+    assert_eq!(head.len(), 1);
+    assert_eq!(head.links(), PageLinks::new(0, None, None));
+    assert_eq!(head.as_slice()[0].sequence, 2);
+    assert_eq!(head.as_slice()[0].base_qty, 50);
+
+    let owners = context
+        .banks_client
+        .get_account(f.owner_page)
+        .await
+        .unwrap()
+        .unwrap();
+    let owners = AskOwnerPage::decode_from(&owners.data).unwrap();
+    assert_eq!(owners.len(), 1);
+    assert_eq!(owners.links(), PageLinks::new(0, None, None));
+
+    let retired = context
+        .banks_client
+        .get_account(f.ask_page_1)
+        .await
+        .unwrap()
+        .unwrap();
+    let retired = AskPage::decode_from(&retired.data).unwrap();
+    assert_eq!(retired.len(), 0);
+    assert_eq!(retired.links(), PageLinks::new(1, None, None));
+
+    let retired_owners = context
+        .banks_client
+        .get_account(f.owner_page_1)
+        .await
+        .unwrap()
+        .unwrap();
+    let retired_owners = AskOwnerPage::decode_from(&retired_owners.data).unwrap();
+    assert_eq!(retired_owners.len(), 0);
+    assert_eq!(retired_owners.links(), PageLinks::new(1, None, None));
+
+    let quote = context
+        .banks_client
+        .get_account(f.taker_quote)
+        .await
+        .unwrap()
+        .unwrap();
+    let base = context
+        .banks_client
+        .get_account(f.taker_base)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(token_amount(&quote.data), 750);
+    assert_eq!(token_amount(&base.data), 250);
+}
