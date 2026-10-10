@@ -1,0 +1,193 @@
+use crate::{BidEntry, BidOwnerPage, BidPage, StateError, BIDS_PER_PAGE};
+
+/// Atomically apply global-index active fills and repack canonical linked pages.
+/// The caller writes the returned pages only after settlement checks succeed.
+pub fn apply_linked_bid_fills(
+    pages: &[BidPage],
+    sidecars: &[BidOwnerPage],
+    fills: &[hybrid_engine::ActiveBidFill],
+) -> Result<(Vec<BidPage>, Vec<BidOwnerPage>, usize), StateError> {
+    if pages.is_empty() || pages.len() > 8 || pages.len() != sidecars.len() {
+        return Err(StateError::Corrupt);
+    }
+    crate::validate_bid_chain(pages)?;
+    for (page, sidecar) in pages.iter().zip(sidecars) {
+        if sidecar.len() != page.len()
+            || sidecar.links() != page.links()
+            || sidecar.as_slice().contains(&[0; 32])
+        {
+            return Err(StateError::Corrupt);
+        }
+    }
+
+    let mut entries: Vec<(BidEntry, [u8; 32])> = Vec::new();
+    for (page, sidecar) in pages.iter().zip(sidecars) {
+        entries.extend(
+            page.as_slice()
+                .iter()
+                .copied()
+                .zip(sidecar.as_slice().iter().copied()),
+        );
+    }
+    let initial_len = entries.len();
+    let mut previous = None;
+    for fill in fills {
+        let index = usize::from(fill.bid_index);
+        if fill.base_qty == 0
+            || fill.quote_qty == 0
+            || index >= initial_len
+            || previous.is_some_and(|prior| index <= prior)
+            || entries[index].0.base_qty < fill.base_qty
+        {
+            return Err(StateError::Corrupt);
+        }
+        previous = Some(index);
+    }
+
+    for fill in fills.iter().rev() {
+        let index = usize::from(fill.bid_index);
+        let remaining = entries[index].0.base_qty - fill.base_qty;
+        if remaining == 0 {
+            entries.remove(index);
+        } else {
+            entries[index].0.base_qty = remaining;
+        }
+    }
+
+    let mut result_pages = Vec::with_capacity(pages.len());
+    let mut result_sidecars = Vec::with_capacity(pages.len());
+    let surviving_page_count = entries.len().max(1).div_ceil(BIDS_PER_PAGE);
+    for index in 0..surviving_page_count {
+        let mut page = BidPage::default();
+        let mut owners = BidOwnerPage::default();
+        let links = crate::PageLinks::new(
+            index as u32,
+            index.checked_sub(1).map(|value| value as u32),
+            (index + 1 < surviving_page_count).then_some((index + 1) as u32),
+        );
+        page.set_links(links);
+        owners.set_links(links);
+        let start = index * BIDS_PER_PAGE;
+        let end = entries.len().min(start + BIDS_PER_PAGE);
+        if start < end {
+            for &(entry, owner) in &entries[start..end] {
+                crate::insert_owned_bid(&mut page, &mut owners, entry, owner)?;
+            }
+        }
+        result_pages.push(page);
+        result_sidecars.push(owners);
+    }
+    // The caller must retire the released page/sidecar accounts after a successful write.
+    crate::validate_bid_chain(&result_pages)?;
+    for (page, owners) in result_pages.iter().zip(&result_sidecars) {
+        if owners.len() != page.len()
+            || owners.links() != page.links()
+            || owners.as_slice().contains(&[0; 32])
+        {
+            return Err(StateError::Corrupt);
+        }
+    }
+    Ok((result_pages, result_sidecars, initial_len - entries.len()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hybrid_engine::Q64;
+
+    fn linked_pair(
+        index: u32,
+        prev: Option<u32>,
+        next: Option<u32>,
+        qty: u64,
+        sequence: u64,
+    ) -> (BidPage, BidOwnerPage) {
+        let links = crate::PageLinks::new(index, prev, next);
+        let mut page = BidPage::default();
+        let mut owners = BidOwnerPage::default();
+        page.set_links(links);
+        owners.set_links(links);
+        let sqrt = if index == 0 { Q64 * 2 } else { Q64 };
+        let price = if index == 0 { Q64 * 4 } else { Q64 };
+        crate::insert_owned_bid(
+            &mut page,
+            &mut owners,
+            BidEntry {
+                price_x64: price,
+                sqrt_price_x64: sqrt,
+                base_qty: qty,
+                sequence,
+            },
+            [index as u8 + 1; 32],
+        )
+        .unwrap();
+        (page, owners)
+    }
+
+    #[test]
+    fn fills_across_boundary_and_compacts_owner_sidecars() {
+        let (p0, o0) = linked_pair(0, None, Some(1), 100, 1);
+        let (p1, o1) = linked_pair(1, Some(0), None, 200, 2);
+        let fills = [
+            hybrid_engine::ActiveBidFill {
+                bid_index: 0,
+                base_qty: 100,
+                quote_qty: 100,
+            },
+            hybrid_engine::ActiveBidFill {
+                bid_index: 1,
+                base_qty: 50,
+                quote_qty: 200,
+            },
+        ];
+        let (pages, owners, removed) =
+            apply_linked_bid_fills(&[p0, p1], &[o0, o1], &fills).unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(pages[0].len(), 1);
+        assert_eq!(pages[0].entries[0].base_qty, 150);
+        assert_eq!(pages[0].entries[0].sequence, 2);
+        assert_eq!(owners[0].owners[0], [2; 32]);
+        assert_eq!(pages.len(), 1);
+        assert_eq!(owners.len(), 1);
+    }
+
+    #[test]
+    fn retires_multiple_trailing_pages_after_compaction() {
+        let (p0, o0) = linked_pair(0, None, Some(1), 100, 1);
+        let (p1, o1) = linked_pair(1, Some(0), Some(2), 200, 2);
+        let (p2, o2) = linked_pair(2, Some(1), None, 300, 3);
+        let fills = [
+            hybrid_engine::ActiveBidFill {
+                bid_index: 0,
+                base_qty: 100,
+                quote_qty: 100,
+            },
+            hybrid_engine::ActiveBidFill {
+                bid_index: 1,
+                base_qty: 200,
+                quote_qty: 800,
+            },
+        ];
+        let (pages, owners, removed) =
+            apply_linked_bid_fills(&[p0, p1, p2], &[o0, o1, o2], &fills).unwrap();
+        assert_eq!(removed, 2);
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].entries[0].sequence, 3);
+        assert_eq!(owners[0].owners[0], [3; 32]);
+        assert_eq!(pages[0].links(), crate::PageLinks::new(0, None, None));
+    }
+
+    #[test]
+    fn rejects_overfill_without_mutating_input() {
+        let (p0, o0) = linked_pair(0, None, Some(1), 100, 1);
+        let (p1, o1) = linked_pair(1, Some(0), None, 200, 2);
+        let fills = [hybrid_engine::ActiveBidFill {
+            bid_index: 1,
+            base_qty: 201,
+            quote_qty: 804,
+        }];
+        assert!(apply_linked_bid_fills(&[p0, p1], &[o0, o1], &fills).is_err());
+        assert_eq!(p0.entries[0].base_qty, 100);
+        assert_eq!(p1.entries[0].base_qty, 200);
+    }
+}
