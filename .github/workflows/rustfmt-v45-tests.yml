@@ -1,0 +1,19 @@
+name: Temporary Rustfmt V45 Sell Tests
+on:
+  pull_request:
+    paths:
+      - 'staging/real_token_sell_v45.rs.txt'
+      - '.github/workflows/rustfmt-v45-tests.yml'
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: |
+          echo BEGIN_SELL_TEST_FMT
+          rustfmt --edition 2021 --emit stdout staging/real_token_sell_v45.rs.txt | tail -n +3 | base64 -w0
+          echo
+          echo END_SELL_TEST_FMT
