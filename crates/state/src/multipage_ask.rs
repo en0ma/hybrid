@@ -51,10 +51,15 @@ pub fn apply_linked_ask_fills(
 
     let mut result_pages = Vec::with_capacity(pages.len());
     let mut result_sidecars = Vec::with_capacity(pages.len());
-    for index in 0..pages.len() {
+    let surviving_page_count = entries.len().max(1).div_ceil(ASKS_PER_PAGE);
+    for index in 0..surviving_page_count {
         let mut page = AskPage::default();
         let mut owners = AskOwnerPage::default();
-        let links = pages[index].links();
+        let links = crate::PageLinks::new(
+            index as u32,
+            (index > 0).then_some((index - 1) as u32),
+            (index + 1 < surviving_page_count).then_some((index + 1) as u32),
+        );
         page.set_links(links);
         owners.set_links(links);
         let start = index * ASKS_PER_PAGE;
@@ -67,8 +72,7 @@ pub fn apply_linked_ask_fills(
         result_pages.push(page);
         result_sidecars.push(owners);
     }
-    // More than one trailing empty linked page would create an empty middle.
-    // Reject instead of writing a chain that later readers cannot validate.
+    // The caller must retire the released page/sidecar accounts after a successful write.
     crate::validate_ask_chain(&result_pages)?;
     for (page, owners) in result_pages.iter().zip(&result_sidecars) {
         owners.validate_parallel(page)?;
@@ -133,8 +137,34 @@ mod tests {
         assert_eq!(pages[0].entries[0].base_qty, 150);
         assert_eq!(pages[0].entries[0].sequence, 2);
         assert_eq!(owners[0].owners[0], [2; 32]);
-        assert_eq!(pages[1].len(), 0);
-        assert_eq!(owners[1].len(), 0);
+        assert_eq!(pages.len(), 1);
+        assert_eq!(owners.len(), 1);
+    }
+
+    #[test]
+    fn retires_multiple_trailing_pages_after_compaction() {
+        let (p0, o0) = linked_pair(0, None, Some(1), 100, 1);
+        let (p1, o1) = linked_pair(1, Some(0), Some(2), 200, 2);
+        let (p2, o2) = linked_pair(2, Some(1), None, 300, 3);
+        let fills = [
+            hybrid_engine::ActiveFill {
+                ask_index: 0,
+                base_qty: 100,
+                quote_qty: 100,
+            },
+            hybrid_engine::ActiveFill {
+                ask_index: 1,
+                base_qty: 200,
+                quote_qty: 800,
+            },
+        ];
+        let (pages, owners, removed) =
+            apply_linked_ask_fills(&[p0, p1, p2], &[o0, o1, o2], &fills).unwrap();
+        assert_eq!(removed, 2);
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].entries[0].sequence, 3);
+        assert_eq!(owners[0].owners[0], [3; 32]);
+        assert_eq!(pages[0].links(), crate::PageLinks::new(0, None, None));
     }
 
     #[test]
