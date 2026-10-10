@@ -64,6 +64,10 @@ fn fixture() -> Fixture {
 }
 
 fn fixture_with_linked(linked: bool) -> Fixture {
+    fixture_with_linked_priced(linked, false)
+}
+
+fn fixture_with_linked_priced(linked: bool, priced: bool) -> Fixture {
     let market = Pubkey::new_unique();
     let (custody, custody_bump) = Pubkey::find_program_address(&[b"custody", market.as_ref()], &ID);
     let (ask_page, _) =
@@ -175,8 +179,8 @@ fn fixture_with_linked(linked: bool) -> Fixture {
         page_1.set_links(PageLinks::new(1, Some(0), None));
         page_1
             .insert(AskEntry {
-                price_x64: Q64,
-                sqrt_price_x64: Q64,
+                price_x64: if priced { Q64 * 4 } else { Q64 },
+                sqrt_price_x64: if priced { Q64 * 2 } else { Q64 },
                 base_qty: 200,
                 sequence: 2,
             })
@@ -567,8 +571,8 @@ async fn linked_buy_rejects_forged_sidecar_and_rolls_back() {
 
 #[tokio::test]
 async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
-    let f = fixture_with_linked(true);
-    let ix = multipage_buy_instruction(&f, 24, 250, 250, true);
+    let f = fixture_with_linked_priced(true, true);
+    let ix = multipage_buy_instruction(&f, 24, 125, 200, true);
     let mut context = f.program_test.start_with_context().await;
     let hash = context.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
@@ -589,7 +593,7 @@ async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
     assert_eq!(head.len(), 1);
     assert_eq!(head.links(), PageLinks::new(0, None, None));
     assert_eq!(head.as_slice()[0].sequence, 2);
-    assert_eq!(head.as_slice()[0].base_qty, 50);
+    assert_eq!(head.as_slice()[0].base_qty, 175);
 
     let owners = context
         .banks_client
@@ -600,6 +604,16 @@ async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
     let owners = AskOwnerPage::decode_from(&owners.data).unwrap();
     assert_eq!(owners.len(), 1);
     assert_eq!(owners.links(), PageLinks::new(0, None, None));
+    let maker_b = context
+        .banks_client
+        .get_account(f.maker_b_balance)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        owners.as_slice()[0],
+        MakerBalance::decode_from(&maker_b.data).unwrap().owner
+    );
 
     let retired = context
         .banks_client
@@ -633,6 +647,6 @@ async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(token_amount(&quote.data), 750);
-    assert_eq!(token_amount(&base.data), 250);
+    assert_eq!(token_amount(&quote.data), 800);
+    assert_eq!(token_amount(&base.data), 125);
 }
