@@ -59,3 +59,37 @@ test("rejects unowned sidecars, wrong counts and duplicate indices",async()=>{
   const c=fixtures();c.args.pages[1].index=0;
   await assert.rejects(loadLinkedBookSnapshot(c.connection,c.args),/Duplicate index/);
 });
+
+test("rejects skipped canonical indices and empty intermediate pages",async()=>{
+  const gaps=fixtures();
+  gaps.args.pages[1].index=2;
+  await assert.rejects(loadLinkedBookSnapshot(gaps.connection,gaps.args),/Duplicate index or missing page zero/);
+
+  const middle=fixtures();
+  const p=Buffer.alloc(1552),o=Buffer.alloc(1040);
+  for(const b of [p,o]) {
+    b.writeUInt32LE(1,2);
+    b.writeUInt32LE(0,6);
+    b.writeUInt32LE(2,10);
+  }
+  const finalPage=Buffer.from(middle.value[3].data);
+  const finalOwner=Buffer.from(middle.value[4].data);
+  for(const b of [finalPage,finalOwner]) {
+    b.writeUInt32LE(2,2);
+    b.writeUInt32LE(1,6);
+    b.writeUInt32LE(0xffffffff,10);
+  }
+  const headPage=middle.value[1].data;
+  const headOwner=middle.value[2].data;
+  headPage.writeUInt32LE(1,10);
+  headOwner.writeUInt32LE(1,10);
+  middle.args.pages.push({index:2,page:key(5),ownerPage:key(11)});
+  middle.connection.getMultipleAccountsInfoAndContext=async()=>({
+    context:{slot:101},value:[
+      middle.value[0],middle.value[1],middle.value[2],
+      {owner:middle.args.programId,data:p},{owner:middle.args.programId,data:o},
+      {owner:middle.args.programId,data:finalPage},{owner:middle.args.programId,data:finalOwner},
+    ],
+  });
+  await assert.rejects(loadLinkedBookSnapshot(middle.connection,middle.args),/Empty intermediate/);
+});
