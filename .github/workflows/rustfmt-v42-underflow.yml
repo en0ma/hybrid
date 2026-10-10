@@ -1,0 +1,20 @@
+name: Temporary Rustfmt V42 Underflow
+on:
+  pull_request:
+    paths:
+      - 'staging/multipage_ask_underflow.rs.txt'
+      - '.github/workflows/rustfmt-v42-underflow.yml'
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format staged patch
+        run: |
+          echo BEGIN_RUSTFMT_UNDERFLOW
+          rustfmt --edition 2021 --emit stdout staging/multipage_ask_underflow.rs.txt | tail -n +3 | base64 -w0
+          echo
+          echo END_RUSTFMT_UNDERFLOW
