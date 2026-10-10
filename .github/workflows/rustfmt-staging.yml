@@ -1,0 +1,29 @@
+name: Rustfmt staging for real SPL Token tests
+on:
+  push:
+    branches: [test/real-spl-token-swaps-v36]
+permissions:
+  contents: read
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format staged Rust source before commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp program/tests/real_token_buy.rs.txt /tmp/real_token_buy.rs
+          cp program/tests/real_token_sell.rs.txt /tmp/real_token_sell.rs
+          rustfmt --edition 2021 /tmp/real_token_buy.rs /tmp/real_token_sell.rs
+          echo '===RUSTFMT_BUY_START==='
+          base64 -w0 /tmp/real_token_buy.rs
+          echo
+          echo '===RUSTFMT_BUY_END==='
+          echo '===RUSTFMT_SELL_START==='
+          base64 -w0 /tmp/real_token_sell.rs
+          echo
+          echo '===RUSTFMT_SELL_END==='
