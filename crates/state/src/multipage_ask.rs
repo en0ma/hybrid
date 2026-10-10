@@ -57,7 +57,7 @@ pub fn apply_linked_ask_fills(
         let mut owners = AskOwnerPage::default();
         let links = crate::PageLinks::new(
             index as u32,
-            (index > 0).then_some((index - 1) as u32),
+            index.checked_sub(1).map(|value| value as u32),
             (index + 1 < surviving_page_count).then_some((index + 1) as u32),
         );
         page.set_links(links);
