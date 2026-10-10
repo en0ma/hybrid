@@ -2,6 +2,8 @@ name: Rustfmt staging for real SPL Token tests
 on:
   push:
     branches: [test/real-spl-token-swaps-v36]
+  pull_request:
+    branches: [main]
 permissions:
   contents: read
 jobs:
