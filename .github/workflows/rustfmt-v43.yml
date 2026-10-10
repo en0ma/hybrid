@@ -17,3 +17,4 @@ jobs:
           rustfmt --edition 2021 --emit stdout staging/multipage_buy.rs.txt | tail -n +3 | base64 -w0
           echo
           echo END_FORMATTED_V43
+          rustfmt --edition 2021 --config skip_children=true --emit stdout staging/program_lib_v43.rs.txt | tail -n +3 | diff -u staging/program_lib_v43.rs.txt -
