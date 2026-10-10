@@ -1,0 +1,22 @@
+name: Precommit Rustfmt PDA Fix
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format source before Rust commit
+        run: |
+          cp ci/staging/lib.rs.txt /tmp/lib.rs
+          rustfmt --edition 2021 /tmp/lib.rs
+          echo "===FORMATTED_START==="
+          base64 -w0 /tmp/lib.rs
+          echo
+          echo "===FORMATTED_END==="
