@@ -1,0 +1,21 @@
+name: Temporary Rustfmt V42
+on:
+  pull_request:
+    paths:
+      - 'staging/multipage_ask.rs.txt'
+      - '.github/workflows/rustfmt-v42.yml'
+  workflow_dispatch:
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format staged Rust and print encoded source
+        run: |
+          echo 'BEGIN_FORMATTED_V42'
+          rustfmt --edition 2021 --emit stdout staging/multipage_ask.rs.txt | base64 -w0
+          echo
+          echo 'END_FORMATTED_V42'
