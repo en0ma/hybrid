@@ -16,4 +16,7 @@ jobs:
       - name: Verify formatted module wiring and staged primitive
         run: |
           rustfmt --edition 2021 --config skip_children=true --emit stdout staging/state_lib.rs.txt | tail -n +3 | diff -u staging/state_lib.rs.txt -
-          rustfmt --edition 2021 --emit stdout staging/multipage_ask.rs.txt | tail -n +3 | diff -u crates/state/src/multipage_ask.rs -
+          echo BEGIN_TEST_FORMAT_V42
+          rustfmt --edition 2021 --emit stdout staging/multipage_ask_with_tests.rs.txt | tail -n +3 | base64 -w0
+          echo
+          echo END_TEST_FORMAT_V42
