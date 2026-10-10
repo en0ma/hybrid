@@ -18,6 +18,7 @@ hybrid-state.workspace = true
 solana-program.workspace = true
 
 [dev-dependencies]
+spl-token = "=9.0.0"
 solana-program-test.workspace = true
 solana-account.workspace = true
 solana-instruction.workspace = true

@@ -254,7 +254,7 @@ fn transfer_checked<'a>(
             AccountMeta::new(*source.key, false),
             AccountMeta::new_readonly(*mint.key, false),
             AccountMeta::new(*destination.key, false),
-            AccountMeta::new_readonly(*authority.key, signer_seeds.is_none()),
+            AccountMeta::new_readonly(*authority.key, true),
         ],
         data,
     };
@@ -291,7 +291,7 @@ fn transfer_tokens<'a>(
         accounts: vec![
             AccountMeta::new(*source.key, false),
             AccountMeta::new(*destination.key, false),
-            AccountMeta::new_readonly(*authority.key, signer_seeds.is_none()),
+            AccountMeta::new_readonly(*authority.key, true),
         ],
         data,
     };
