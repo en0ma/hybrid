@@ -47,6 +47,8 @@ struct Fixture {
     custody: Pubkey,
     ask_page: Pubkey,
     owner_page: Pubkey,
+    ask_page_1: Pubkey,
+    owner_page_1: Pubkey,
     taker: Keypair,
     taker_quote: Pubkey,
     taker_base: Pubkey,
@@ -58,11 +60,21 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
+    fixture_with_linked(false)
+}
+
+fn fixture_with_linked(linked: bool) -> Fixture {
     let market = Pubkey::new_unique();
     let (custody, custody_bump) = Pubkey::find_program_address(&[b"custody", market.as_ref()], &ID);
     let (ask_page, _) =
         Pubkey::find_program_address(&[b"ask-page", market.as_ref(), &0u32.to_le_bytes()], &ID);
     let owner_page = Pubkey::new_unique();
+    let (ask_page_1, _) =
+        Pubkey::find_program_address(&[b"ask-page", market.as_ref(), &1u32.to_le_bytes()], &ID);
+    let (owner_page_1, _) = Pubkey::find_program_address(
+        &[b"ask-owner-page", market.as_ref(), &1u32.to_le_bytes()],
+        &ID,
+    );
     let (vault_authority, _) =
         Pubkey::find_program_address(&[b"vault-authority", market.as_ref()], &ID);
     let base_mint = Pubkey::new_unique();
@@ -88,7 +100,7 @@ fn fixture() -> Fixture {
     market_header.encode_into(&mut market_data).unwrap();
 
     let mut asks = AskPage::default();
-    asks.set_links(PageLinks::new(0, None, None));
+    asks.set_links(PageLinks::new(0, None, linked.then_some(1)));
     asks.insert(AskEntry {
         price_x64: Q64,
         sqrt_price_x64: Q64,
@@ -96,21 +108,25 @@ fn fixture() -> Fixture {
         sequence: 1,
     })
     .unwrap();
-    asks.insert(AskEntry {
-        price_x64: Q64,
-        sqrt_price_x64: Q64,
-        base_qty: 200,
-        sequence: 2,
-    })
-    .unwrap();
+    if !linked {
+        asks.insert(AskEntry {
+            price_x64: Q64,
+            sqrt_price_x64: Q64,
+            base_qty: 200,
+            sequence: 2,
+        })
+        .unwrap();
+    }
     let mut ask_data = vec![0u8; ASK_PAGE_BYTES];
     asks.encode_into(&mut ask_data).unwrap();
 
     let mut owners = AskOwnerPage::default();
-    owners.set_links(PageLinks::new(0, None, None));
-    owners.len = 2;
+    owners.set_links(PageLinks::new(0, None, linked.then_some(1)));
+    owners.len = if linked { 1 } else { 2 };
     owners.owners[0] = maker_a.to_bytes();
-    owners.owners[1] = maker_b.to_bytes();
+    if !linked {
+        owners.owners[1] = maker_b.to_bytes();
+    }
     let mut owner_data = vec![0u8; ASK_OWNER_PAGE_BYTES];
     owners.encode_into(&mut owner_data).unwrap();
 
@@ -154,6 +170,28 @@ fn fixture() -> Fixture {
     program_test.add_account(custody, account(custody_data, ID));
     program_test.add_account(ask_page, account(ask_data, ID));
     program_test.add_account(owner_page, account(owner_data, ID));
+    if linked {
+        let mut page_1 = AskPage::default();
+        page_1.set_links(PageLinks::new(1, Some(0), None));
+        page_1
+            .insert(AskEntry {
+                price_x64: Q64,
+                sqrt_price_x64: Q64,
+                base_qty: 200,
+                sequence: 2,
+            })
+            .unwrap();
+        let mut page_data = vec![0; ASK_PAGE_BYTES];
+        page_1.encode_into(&mut page_data).unwrap();
+        program_test.add_account(ask_page_1, account(page_data, ID));
+        let mut sidecar_1 = AskOwnerPage::default();
+        sidecar_1.set_links(PageLinks::new(1, Some(0), None));
+        sidecar_1.len = 1;
+        sidecar_1.owners[0] = maker_b.to_bytes();
+        let mut sidecar_data = vec![0; ASK_OWNER_PAGE_BYTES];
+        sidecar_1.encode_into(&mut sidecar_data).unwrap();
+        program_test.add_account(owner_page_1, account(sidecar_data, ID));
+    }
     program_test.add_account(maker_a_balance, account(maker_a_data, ID));
     program_test.add_account(maker_b_balance, account(maker_b_data, ID));
     program_test.add_account(
@@ -192,6 +230,8 @@ fn fixture() -> Fixture {
         custody,
         ask_page,
         owner_page,
+        ask_page_1,
+        owner_page_1,
         taker,
         taker_quote,
         taker_base,
@@ -390,4 +430,137 @@ async fn swap_rejects_when_active_depth_cannot_satisfy_request() {
         .unwrap();
     assert_eq!(token_amount(&taker_quote.data), 1_000);
     assert_eq!(token_amount(&taker_base.data), 0);
+}
+
+fn multipage_buy_instruction(
+    f: &Fixture,
+    opcode: u8,
+    amount: u64,
+    limit: u64,
+    authentic_sidecar: bool,
+) -> Instruction {
+    let mut data = vec![opcode, 2];
+    data.extend_from_slice(&amount.to_le_bytes());
+    data.extend_from_slice(&limit.to_le_bytes());
+    Instruction {
+        program_id: ID,
+        accounts: vec![
+            AccountMeta::new(f.market, false),
+            AccountMeta::new(f.custody, false),
+            AccountMeta::new_readonly(f.taker.pubkey(), true),
+            AccountMeta::new(f.taker_quote, false),
+            AccountMeta::new(f.taker_base, false),
+            AccountMeta::new(f.quote_vault, false),
+            AccountMeta::new(f.base_vault, false),
+            AccountMeta::new_readonly(f.vault_authority, false),
+            AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+            AccountMeta::new(f.ask_page, false),
+            AccountMeta::new(f.owner_page, false),
+            AccountMeta::new(f.ask_page_1, false),
+            AccountMeta::new(
+                if authentic_sidecar {
+                    f.owner_page_1
+                } else {
+                    f.owner_page
+                },
+                false,
+            ),
+            AccountMeta::new(f.maker_a_balance, false),
+            AccountMeta::new(f.maker_b_balance, false),
+        ],
+        data,
+    }
+}
+
+#[tokio::test]
+async fn linked_buy_crosses_page_boundary_with_real_spl_token() {
+    let f = fixture_with_linked(true);
+    let ix = multipage_buy_instruction(&f, 23, 250, 250, true);
+    let mut context = f.program_test.start_with_context().await;
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.taker],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let quote = context
+        .banks_client
+        .get_account(f.taker_quote)
+        .await
+        .unwrap()
+        .unwrap();
+    let base = context
+        .banks_client
+        .get_account(f.taker_base)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(token_amount(&quote.data), 750);
+    assert_eq!(token_amount(&base.data), 250);
+    let maker_a = context
+        .banks_client
+        .get_account(f.maker_a_balance)
+        .await
+        .unwrap()
+        .unwrap();
+    let maker_b = context
+        .banks_client
+        .get_account(f.maker_b_balance)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        MakerBalance::decode_from(&maker_a.data)
+            .unwrap()
+            .locked_base,
+        0
+    );
+    assert_eq!(
+        MakerBalance::decode_from(&maker_b.data)
+            .unwrap()
+            .locked_base,
+        50
+    );
+    let page = context
+        .banks_client
+        .get_account(f.ask_page)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        AskPage::decode_from(&page.data).unwrap().as_slice()[0].base_qty,
+        50
+    );
+}
+
+#[tokio::test]
+async fn linked_buy_rejects_forged_sidecar_and_rolls_back() {
+    let f = fixture_with_linked(true);
+    let ix = multipage_buy_instruction(&f, 23, 250, 250, false);
+    let mut context = f.program_test.start_with_context().await;
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.taker],
+        hash,
+    );
+    assert!(context.banks_client.process_transaction(tx).await.is_err());
+    let quote = context
+        .banks_client
+        .get_account(f.taker_quote)
+        .await
+        .unwrap()
+        .unwrap();
+    let base = context
+        .banks_client
+        .get_account(f.taker_base)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(token_amount(&quote.data), 1_000);
+    assert_eq!(token_amount(&base.data), 0);
 }
