@@ -215,6 +215,24 @@ fn close_ix(f: &Fixture, owner: Pubkey, base_destination: Pubkey) -> Instruction
     }
 }
 
+async fn snapshot(ctx: &mut solana_program_test::ProgramTestContext, f: &Fixture) -> Vec<Vec<u8>> {
+    let mut result = Vec::new();
+    for key in [
+        f.market,
+        f.custody,
+        f.pool,
+        f.position,
+        f.base_vault,
+        f.quote_vault,
+        f.base_dest,
+        f.quote_dest,
+    ] {
+        let account = ctx.banks_client.get_account(key).await.unwrap().unwrap();
+        result.push(account.data);
+    }
+    result
+}
+
 #[tokio::test]
 async fn close_redeems_principal_without_spending_active_collateral() {
     let f = fixture(120, 180);
@@ -274,6 +292,7 @@ async fn short_vault_rejects_close_and_preserves_position() {
     let f = fixture(119, 180);
     let ix = close_ix(&f, f.owner.pubkey(), f.base_dest);
     let mut ctx = f.test.start_with_context().await;
+    let before = snapshot(&mut ctx, &f).await;
     let hash = ctx.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -282,6 +301,8 @@ async fn short_vault_rejects_close_and_preserves_position() {
         hash,
     );
     assert!(ctx.banks_client.process_transaction(tx).await.is_err());
+    assert_eq!(snapshot(&mut ctx, &f).await, before);
+
     let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
     assert_eq!(
         PoolAccount::decode_from(&pool.data)
@@ -310,6 +331,7 @@ async fn aliased_destination_rejects_close_without_mutation() {
     let f = fixture(120, 180);
     let ix = close_ix(&f, f.owner.pubkey(), f.base_vault);
     let mut ctx = f.test.start_with_context().await;
+    let before = snapshot(&mut ctx, &f).await;
     let hash = ctx.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -318,6 +340,8 @@ async fn aliased_destination_rejects_close_without_mutation() {
         hash,
     );
     assert!(ctx.banks_client.process_transaction(tx).await.is_err());
+    assert_eq!(snapshot(&mut ctx, &f).await, before);
+
     let position = ctx
         .banks_client
         .get_account(f.position)
