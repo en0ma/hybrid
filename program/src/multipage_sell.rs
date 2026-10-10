@@ -4,8 +4,8 @@ const MULTIPAGE_SELL_FIXED: usize = 9;
 
 /// Opcodes 25 and 26: bounded linked-book exact-in and exact-out sells.
 /// ABI: [opcode, page_count, amount:u64 LE, limit:u64 LE].
-/// Accounts: market, custody, taker, taker-quote, taker-base,
-/// quote-vault, base-vault, vault-authority, token-program,
+/// Accounts: market, custody, taker, taker-base, taker-quote,
+/// base-vault, quote-vault, vault-authority, token-program,
 /// (bid-page, owner-sidecar) * page_count, then maker-balance PDAs.
 #[inline(never)]
 pub(super) fn process_multipage_sell(
