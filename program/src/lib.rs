@@ -1623,6 +1623,12 @@ fn process_buy_swap(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) 
     if market.ask_count as usize != asks.len() {
         return Err(ProgramError::InvalidAccountData);
     }
+    // Legacy swap accounts contain only page 0. Reject linked books rather
+    // than settling a prefix while leaving subsequent pages untouched.
+    let links = asks.links();
+    if links.page_index != 0 || links.prev_page.is_some() || links.next_page.is_some() {
+        return Err(ProgramError::InvalidAccountData);
+    }
 
     let mut custody = load_custody(program_id, market_account, custody_account)?;
     if quote_vault.key.to_bytes() != custody.quote_vault

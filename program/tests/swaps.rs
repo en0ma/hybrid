@@ -84,7 +84,7 @@ struct Fixture {
     maker_b_balance: Pubkey,
 }
 
-fn fixture() -> Fixture {
+fn fixture_with_links(next_page: Option<u32>) -> Fixture {
     let market = Pubkey::new_unique();
     let (custody, custody_bump) = Pubkey::find_program_address(&[b"custody", market.as_ref()], &ID);
     let (ask_page, _) =
@@ -115,7 +115,7 @@ fn fixture() -> Fixture {
     market_header.encode_into(&mut market_data).unwrap();
 
     let mut asks = AskPage::default();
-    asks.set_links(PageLinks::new(0, None, None));
+    asks.set_links(PageLinks::new(0, None, next_page));
     asks.insert(AskEntry {
         price_x64: Q64,
         sqrt_price_x64: Q64,
@@ -134,7 +134,7 @@ fn fixture() -> Fixture {
     asks.encode_into(&mut ask_data).unwrap();
 
     let mut owners = AskOwnerPage::default();
-    owners.set_links(PageLinks::new(0, None, None));
+    owners.set_links(PageLinks::new(0, None, next_page));
     owners.len = 2;
     owners.owners[0] = maker_a.to_bytes();
     owners.owners[1] = maker_b.to_bytes();
@@ -228,6 +228,10 @@ fn fixture() -> Fixture {
         maker_a_balance,
         maker_b_balance,
     }
+}
+
+fn fixture() -> Fixture {
+    fixture_with_links(None)
 }
 
 fn swap_instruction(f: &Fixture, opcode: u8, amount: u64, limit: u64) -> Instruction {
@@ -417,4 +421,72 @@ async fn swap_rejects_when_active_depth_cannot_satisfy_request() {
         .unwrap();
     assert_eq!(token_amount(&taker_quote.data), 1_000);
     assert_eq!(token_amount(&taker_base.data), 0);
+}
+
+#[tokio::test]
+async fn buy_rejects_linked_page_without_changing_custody() {
+    let f = fixture_with_links(Some(1));
+    let ix = swap_instruction(&f, 15, 100, 100);
+    let mut context = f.program_test.start_with_context().await;
+    let before_custody = context
+        .banks_client
+        .get_account(f.custody)
+        .await
+        .unwrap()
+        .unwrap()
+        .data;
+    let before_market = context
+        .banks_client
+        .get_account(f.market)
+        .await
+        .unwrap()
+        .unwrap()
+        .data;
+    let before_page = context
+        .banks_client
+        .get_account(f.ask_page)
+        .await
+        .unwrap()
+        .unwrap()
+        .data;
+    let before_owner = context
+        .banks_client
+        .get_account(f.owner_page)
+        .await
+        .unwrap()
+        .unwrap()
+        .data;
+    let before_taker = context
+        .banks_client
+        .get_account(f.taker_base)
+        .await
+        .unwrap()
+        .unwrap()
+        .data;
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.taker],
+        hash,
+    );
+    assert!(context.banks_client.process_transaction(tx).await.is_err());
+    for (key, before) in [
+        (f.custody, before_custody),
+        (f.market, before_market),
+        (f.ask_page, before_page),
+        (f.owner_page, before_owner),
+        (f.taker_base, before_taker),
+    ] {
+        assert_eq!(
+            context
+                .banks_client
+                .get_account(key)
+                .await
+                .unwrap()
+                .unwrap()
+                .data,
+            before,
+        );
+    }
 }
