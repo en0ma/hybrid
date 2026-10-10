@@ -20,8 +20,11 @@ work end to end.
 - Test transactions with distinct maker, taker, and fee-payer identities.
 - Assert *both* serialized Hybrid state and unpacked SPL Token account
   balances/owners after each transaction.
-- Compare complete pre/post account data and balances on expected failure;
-  assert atomic rollback and absence of unauthorized token movements.
+- Compare complete pre/post program-owned account data and SPL Token account
+  balances on expected failure; assert atomic instruction rollback and absence
+  of unauthorized token movements. Transaction fees may still be charged to
+  the fee payer even when an instruction fails; assert the fee payer lamport
+  delta separately from program state and token custody.
 - Keep the existing mock-based tests as fast regression coverage, but run
   the real-token tests in the mandatory SBF CI lane.
 
@@ -31,11 +34,13 @@ work end to end.
 | --- | --- |
 | Create custody + maker balances | Vault mints and PDA authority validated |
 | Deposit base/quote | Real SPL transfer + free balance + custody totals reconcile |
+| Withdraw free base/quote | Opcode 14 PDA-signed SPL transfers, free-balance deduction, custody-total changes and destination validation |
 | Place/cancel asks and bids | Required collateral locked/released; vault tokens unchanged |
 | Buy exact-in / exact-out | Taker token deltas match ask fills, maker quote credits and vault balances |
 | Sell exact-in / exact-out | Taker token deltas match bid fills, maker base credits and vault balances |
 | Partial fills / multiple makers | Remaining page quantities and owner sidecars stay aligned |
-| Slippage, underfunding, insufficient depth | All relevant accounts identical before and after failed transaction |
+| Slippage, underfunding, insufficient depth | Program and token accounts unchanged after failed transaction; fee payer lamport delta checked separately |
+| Withdraw more than free balance | Transaction fails with no token transfer, collateral changes or custody-total mutation |
 | Wrong mint / forged vault authority | Reject without moving funds |
 | Wrong maker balance / sidecar | Reject without moving funds |
 | Taker account alias / wrong owner | Reject without moving funds |
