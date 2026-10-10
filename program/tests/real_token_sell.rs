@@ -64,6 +64,10 @@ fn sell_fixture() -> Fixture {
 }
 
 fn linked_sell_fixture(linked: bool) -> Fixture {
+    linked_sell_fixture_priced(linked, false)
+}
+
+fn linked_sell_fixture_priced(linked: bool, priced: bool) -> Fixture {
     let market = Pubkey::new_unique();
     let (custody, custody_bump) = Pubkey::find_program_address(&[b"custody", market.as_ref()], &ID);
     let (ask_page, _) =
@@ -91,7 +95,8 @@ fn linked_sell_fixture(linked: bool) -> Fixture {
     let (maker_b_balance, maker_b_bump) =
         Pubkey::find_program_address(&[b"maker-balance", market.as_ref(), maker_b.as_ref()], &ID);
 
-    let mut market_header = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    let mut market_header =
+        MarketHeader::new(1, if priced { Q64 / 2 } else { Q64 }, 1_000_000, 1, 1);
     market_header.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
     market_header.set_bid_count(2);
     market_header.next_sequence = 3;
@@ -175,8 +180,8 @@ fn linked_sell_fixture(linked: bool) -> Fixture {
         page_1.set_links(PageLinks::new(1, Some(0), None));
         page_1
             .insert(BidEntry {
-                price_x64: Q64,
-                sqrt_price_x64: Q64,
+                price_x64: if priced { Q64 / 4 } else { Q64 },
+                sqrt_price_x64: if priced { Q64 / 2 } else { Q64 },
                 base_qty: 200,
                 sequence: 2,
             })
@@ -511,4 +516,86 @@ async fn linked_sell_rejects_forged_bid_sidecar_without_tokens() {
         .unwrap();
     assert_eq!(token_amount(&base.data), 1_000);
     assert_eq!(token_amount(&quote.data), 0);
+}
+
+#[tokio::test]
+async fn linked_exact_out_sell_retires_page_and_preserves_owner_mapping() {
+    let f = linked_sell_fixture_priced(true, true);
+    let ix = linked_sell_instruction(&f, 26, 125, 200, true);
+    let mut context = f.program_test.start_with_context().await;
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.taker],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let head = context
+        .banks_client
+        .get_account(f.ask_page)
+        .await
+        .unwrap()
+        .unwrap();
+    let head = BidPage::decode_from(&head.data).unwrap();
+    assert_eq!(head.len(), 1);
+    assert_eq!(head.links(), PageLinks::new(0, None, None));
+    assert_eq!(head.as_slice()[0].sequence, 2);
+    assert_eq!(head.as_slice()[0].base_qty, 100);
+
+    let owners = context
+        .banks_client
+        .get_account(f.owner_page)
+        .await
+        .unwrap()
+        .unwrap();
+    let owners = AskOwnerPage::decode_from(&owners.data).unwrap();
+    assert_eq!(owners.len(), 1);
+    assert_eq!(owners.links(), PageLinks::new(0, None, None));
+    let maker_b = context
+        .banks_client
+        .get_account(f.maker_b_balance)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        owners.as_slice()[0],
+        MakerBalance::decode_from(&maker_b.data).unwrap().owner
+    );
+
+    let retired = context
+        .banks_client
+        .get_account(f.bid_page_1)
+        .await
+        .unwrap()
+        .unwrap();
+    let retired = BidPage::decode_from(&retired.data).unwrap();
+    assert_eq!(retired.len(), 0);
+    assert_eq!(retired.links(), PageLinks::new(1, None, None));
+
+    let retired_owners = context
+        .banks_client
+        .get_account(f.owner_page_1)
+        .await
+        .unwrap()
+        .unwrap();
+    let retired_owners = AskOwnerPage::decode_from(&retired_owners.data).unwrap();
+    assert_eq!(retired_owners.len(), 0);
+    assert_eq!(retired_owners.links(), PageLinks::new(1, None, None));
+
+    let base = context
+        .banks_client
+        .get_account(f.taker_base)
+        .await
+        .unwrap()
+        .unwrap();
+    let quote = context
+        .banks_client
+        .get_account(f.taker_quote)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(token_amount(&base.data), 800);
+    assert_eq!(token_amount(&quote.data), 125);
 }
