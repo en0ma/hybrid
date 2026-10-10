@@ -51,7 +51,7 @@ fn initialized_mint() -> Vec<u8> {
 }
 
 struct Fixture {
-    test: ProgramTest,
+    test: Option<ProgramTest>,
     owner: Keypair,
     market: Pubkey,
     custody: Pubkey,
@@ -174,7 +174,7 @@ fn fixture(available_base: u64, available_quote: u64) -> Fixture {
     );
 
     Fixture {
-        test,
+        test: Some(test),
         owner,
         market,
         custody,
@@ -235,9 +235,9 @@ async fn snapshot(ctx: &mut solana_program_test::ProgramTestContext, f: &Fixture
 
 #[tokio::test]
 async fn close_redeems_principal_without_spending_active_collateral() {
-    let f = fixture(120, 180);
+    let mut f = fixture(120, 180);
     let ix = close_ix(&f, f.owner.pubkey(), f.base_dest);
-    let mut ctx = f.test.start_with_context().await;
+    let mut ctx = f.test.take().unwrap().start_with_context().await;
     let hash = ctx.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -289,9 +289,9 @@ async fn close_redeems_principal_without_spending_active_collateral() {
 
 #[tokio::test]
 async fn short_vault_rejects_close_and_preserves_position() {
-    let f = fixture(119, 180);
+    let mut f = fixture(119, 180);
     let ix = close_ix(&f, f.owner.pubkey(), f.base_dest);
-    let mut ctx = f.test.start_with_context().await;
+    let mut ctx = f.test.take().unwrap().start_with_context().await;
     let before = snapshot(&mut ctx, &f).await;
     let hash = ctx.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
@@ -328,9 +328,9 @@ async fn short_vault_rejects_close_and_preserves_position() {
 
 #[tokio::test]
 async fn aliased_destination_rejects_close_without_mutation() {
-    let f = fixture(120, 180);
+    let mut f = fixture(120, 180);
     let ix = close_ix(&f, f.owner.pubkey(), f.base_vault);
-    let mut ctx = f.test.start_with_context().await;
+    let mut ctx = f.test.take().unwrap().start_with_context().await;
     let before = snapshot(&mut ctx, &f).await;
     let hash = ctx.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
