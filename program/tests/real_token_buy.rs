@@ -651,3 +651,81 @@ async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
     assert_eq!(token_amount(&quote.data), 800);
     assert_eq!(token_amount(&base.data), 125);
 }
+
+#[tokio::test]
+async fn linked_buy_then_legacy_buy_consumes_compacted_head_with_real_tokens() {
+    let f = fixture_with_linked(true);
+    let first = multipage_buy_instruction(&f, 23, 250, 250, true);
+    let mut context = f.program_test.start_with_context().await;
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[first],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.taker],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let head = context
+        .banks_client
+        .get_account(f.ask_page)
+        .await
+        .unwrap()
+        .unwrap();
+    let head = AskPage::decode_from(&head.data).unwrap();
+    assert_eq!(head.links(), PageLinks::new(0, None, None));
+    assert_eq!(head.len(), 1);
+    assert_eq!(head.as_slice()[0].base_qty, 50);
+
+    let second = swap_instruction(&f, 15, 50, 50);
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[second],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.taker],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let market = context
+        .banks_client
+        .get_account(f.market)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        MarketHeader::decode_from(&market.data).unwrap().ask_count,
+        0
+    );
+    let head = context
+        .banks_client
+        .get_account(f.ask_page)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(AskPage::decode_from(&head.data).unwrap().len(), 0);
+    let maker = context
+        .banks_client
+        .get_account(f.maker_b_balance)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        MakerBalance::decode_from(&maker.data).unwrap().locked_base,
+        0
+    );
+    let quote = context
+        .banks_client
+        .get_account(f.taker_quote)
+        .await
+        .unwrap()
+        .unwrap();
+    let base = context
+        .banks_client
+        .get_account(f.taker_base)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(token_amount(&quote.data), 700);
+    assert_eq!(token_amount(&base.data), 300);
+}
