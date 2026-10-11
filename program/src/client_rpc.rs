@@ -178,7 +178,7 @@ mod tests {
         accounts[1] = Some(account(keys[0], 10));
         assert!(matches!(
             ordered_accounts(&keys, accounts.clone(), 10),
-            Err(SnapshotError::MissingAccount)
+            Err(SnapshotError::DuplicateAccount)
         ));
         let duplicate = [keys[0], keys[0], keys[2], keys[3], keys[4]];
         let accounts = duplicate.map(|k| Some(account(k, 10)));
