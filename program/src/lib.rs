@@ -17,6 +17,7 @@ declare_id!("US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx");
 #[cfg(not(feature = "no-entrypoint"))]
 solana_program::entrypoint!(process_instruction);
 
+mod linked_maker;
 mod multipage_buy;
 mod multipage_sell;
 mod page_lifecycle;
@@ -112,6 +113,9 @@ pub fn process_instruction(
         Some(23) | Some(24) => multipage_buy::process_multipage_buy(_program_id, _accounts, data),
         Some(25) | Some(26) => multipage_sell::process_multipage_sell(_program_id, _accounts, data),
         Some(27) | Some(28) => page_lifecycle::process_page_lifecycle(_program_id, _accounts, data),
+        Some(29) | Some(30) | Some(31) | Some(32) => {
+            linked_maker::process_linked_maker(_program_id, _accounts, data)
+        }
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }

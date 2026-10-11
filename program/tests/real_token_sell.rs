@@ -44,6 +44,7 @@ fn token_amount(data: &[u8]) -> u64 {
 struct Fixture {
     program_test: ProgramTest,
     market: Pubkey,
+    market_signer: Keypair,
     custody: Pubkey,
     ask_page: Pubkey,
     owner_page: Pubkey,
@@ -57,6 +58,8 @@ struct Fixture {
     vault_authority: Pubkey,
     maker_a_balance: Pubkey,
     maker_b_balance: Pubkey,
+    maker_a_signer: Keypair,
+    maker_b_signer: Keypair,
 }
 
 fn sell_fixture() -> Fixture {
@@ -68,7 +71,8 @@ fn linked_sell_fixture(linked: bool) -> Fixture {
 }
 
 fn linked_sell_fixture_priced(linked: bool, priced: bool) -> Fixture {
-    let market = Pubkey::new_unique();
+    let market_signer = Keypair::new();
+    let market = market_signer.pubkey();
     let (custody, custody_bump) = Pubkey::find_program_address(&[b"custody", market.as_ref()], &ID);
     let (ask_page, _) =
         Pubkey::find_program_address(&[b"bid-page", market.as_ref(), &0u32.to_le_bytes()], &ID);
@@ -88,8 +92,10 @@ fn linked_sell_fixture_priced(linked: bool, priced: bool) -> Fixture {
     let taker = Keypair::new();
     let taker_quote = Pubkey::new_unique();
     let taker_base = Pubkey::new_unique();
-    let maker_a = Pubkey::new_unique();
-    let maker_b = Pubkey::new_unique();
+    let maker_a_signer = Keypair::new();
+    let maker_b_signer = Keypair::new();
+    let maker_a = maker_a_signer.pubkey();
+    let maker_b = maker_b_signer.pubkey();
     let (maker_a_balance, maker_a_bump) =
         Pubkey::find_program_address(&[b"maker-balance", market.as_ref(), maker_a.as_ref()], &ID);
     let (maker_b_balance, maker_b_bump) =
@@ -232,6 +238,7 @@ fn linked_sell_fixture_priced(linked: bool, priced: bool) -> Fixture {
     Fixture {
         program_test,
         market,
+        market_signer,
         custody,
         ask_page,
         owner_page,
@@ -245,6 +252,8 @@ fn linked_sell_fixture_priced(linked: bool, priced: bool) -> Fixture {
         vault_authority,
         maker_a_balance,
         maker_b_balance,
+        maker_a_signer,
+        maker_b_signer,
     }
 }
 
@@ -814,4 +823,221 @@ async fn detached_sell_page_closes_to_market_and_recreates_canonical_tail() {
     let owners = AskOwnerPage::decode_from(&owners.data).unwrap();
     assert_eq!(owners.len(), 0);
     assert_eq!(owners.links(), PageLinks::new(1, None, None));
+}
+
+fn linked_maker_ix(
+    f: &Fixture,
+    opcode: u8,
+    page_index: u8,
+    owner: Option<Pubkey>,
+    data: &[u8],
+) -> Instruction {
+    let mut bytes = vec![opcode, 1];
+    if opcode == 30 || opcode == 31 {
+        bytes.push(page_index);
+    }
+    bytes.extend_from_slice(data);
+    let mut accounts = vec![
+        AccountMeta::new(f.market, opcode == 29 || opcode == 32),
+        AccountMeta::new(f.ask_page, false),
+        AccountMeta::new(f.owner_page, false),
+        AccountMeta::new(f.bid_page_1, false),
+        AccountMeta::new(f.owner_page_1, false),
+    ];
+    if let Some(maker) = owner {
+        let balance = if maker == f.maker_a_signer.pubkey() {
+            f.maker_a_balance
+        } else {
+            f.maker_b_balance
+        };
+        accounts.push(AccountMeta::new(balance, false));
+        accounts.push(AccountMeta::new_readonly(maker, true));
+    }
+    Instruction {
+        program_id: ID,
+        accounts,
+        data: bytes,
+    }
+}
+
+#[tokio::test]
+async fn linked_sell_maker_cancel_detach_reattach_add_and_swap_with_real_tokens() {
+    let f = linked_sell_fixture(true);
+    let maker_a = f.maker_a_signer.pubkey();
+    let maker_b = f.maker_b_signer.pubkey();
+
+    let cancel_tail = linked_maker_ix(&f, 31, 1, Some(maker_b), &2u64.to_le_bytes());
+    let forged_cancel = linked_maker_ix(&f, 31, 1, Some(maker_a), &2u64.to_le_bytes());
+    let detach = linked_maker_ix(&f, 32, 0, None, &[]);
+    let cancel_head = Instruction {
+        program_id: ID,
+        accounts: vec![
+            AccountMeta::new(f.market, false),
+            AccountMeta::new(f.ask_page, false),
+            AccountMeta::new(f.owner_page, false),
+            AccountMeta::new(f.maker_a_balance, false),
+            AccountMeta::new_readonly(maker_a, true),
+        ],
+        data: {
+            let mut d = vec![9];
+            d.extend_from_slice(&1u64.to_le_bytes());
+            d
+        },
+    };
+    let attach = linked_maker_ix(&f, 29, 0, None, &[]);
+    let order_payload = {
+        let mut p = Vec::new();
+        p.extend_from_slice(&Q64.to_le_bytes());
+        p.extend_from_slice(&Q64.to_le_bytes());
+        p.extend_from_slice(&50u64.to_le_bytes());
+        p
+    };
+    let add_head = linked_maker_ix(&f, 30, 0, Some(maker_a), &order_payload);
+    let add_tail = linked_maker_ix(&f, 30, 1, Some(maker_b), &order_payload);
+    let swap = linked_sell_instruction(&f, 25, 100, 100, true);
+
+    let mut context = f.program_test.start_with_context().await;
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[forged_cancel],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.maker_a_signer],
+        hash,
+    );
+    assert!(context.banks_client.process_transaction(tx).await.is_err());
+
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[cancel_tail],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.maker_b_signer],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+    let balance = context
+        .banks_client
+        .get_account(f.maker_b_balance)
+        .await
+        .unwrap()
+        .unwrap();
+    let balance = MakerBalance::decode_from(&balance.data).unwrap();
+    assert_eq!(balance.locked_quote, 0);
+
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[detach],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.market_signer],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[cancel_head],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.maker_a_signer],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[attach],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.market_signer],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[add_head],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.maker_a_signer],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[add_tail],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.maker_b_signer],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let market = context
+        .banks_client
+        .get_account(f.market)
+        .await
+        .unwrap()
+        .unwrap();
+    let market = MarketHeader::decode_from(&market.data).unwrap();
+    assert_eq!(market.bid_count(), 2);
+    let tail = context
+        .banks_client
+        .get_account(f.bid_page_1)
+        .await
+        .unwrap()
+        .unwrap();
+    let tail = BidPage::decode_from(&tail.data).unwrap();
+    assert_eq!(tail.len(), 1);
+    assert_eq!(tail.links(), PageLinks::new(1, Some(0), None));
+
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[swap],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.taker],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let market = context
+        .banks_client
+        .get_account(f.market)
+        .await
+        .unwrap()
+        .unwrap();
+    let market = MarketHeader::decode_from(&market.data).unwrap();
+    assert_eq!(market.bid_count(), 0);
+    let maker_a_balance = context
+        .banks_client
+        .get_account(f.maker_a_balance)
+        .await
+        .unwrap()
+        .unwrap();
+    let maker_b_balance = context
+        .banks_client
+        .get_account(f.maker_b_balance)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        MakerBalance::decode_from(&maker_a_balance.data)
+            .unwrap()
+            .locked_quote,
+        0
+    );
+    assert_eq!(
+        MakerBalance::decode_from(&maker_b_balance.data)
+            .unwrap()
+            .locked_quote,
+        0
+    );
+    let taker_base = context
+        .banks_client
+        .get_account(f.taker_base)
+        .await
+        .unwrap()
+        .unwrap();
+    let taker_quote = context
+        .banks_client
+        .get_account(f.taker_quote)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(token_amount(&taker_base.data), 900);
+    assert_eq!(token_amount(&taker_quote.data), 100);
 }

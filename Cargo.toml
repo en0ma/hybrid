@@ -32,3 +32,8 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
+
+# Keep the deployed program within the strict 256 KiB ELF guard without
+# relaxing SBF instruction, compute-unit, or Manifest checks.
+[profile.release.package.hybrid-program]
+opt-level = "z"
