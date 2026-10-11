@@ -28,8 +28,7 @@ impl ExecutionLimit {
         if self.expected_amount == 0 || self.slippage_bps > 10_000 {
             return Err(TraderError::InvalidSlippage);
         }
-        let numerator = u128::from(self.expected_amount)
-            * u128::from(10_000 - self.slippage_bps);
+        let numerator = u128::from(self.expected_amount) * u128::from(10_000 - self.slippage_bps);
         Ok((numerator / 10_000) as u64)
     }
 
@@ -38,10 +37,8 @@ impl ExecutionLimit {
         if self.expected_amount == 0 || self.slippage_bps > 10_000 {
             return Err(TraderError::InvalidSlippage);
         }
-        let numerator =
-            u128::from(self.expected_amount) * u128::from(10_000 + self.slippage_bps);
-        u64::try_from(numerator.div_ceil(10_000))
-            .map_err(|_| TraderError::InvalidSlippage)
+        let numerator = u128::from(self.expected_amount) * u128::from(10_000 + self.slippage_bps);
+        u64::try_from(numerator.div_ceil(10_000)).map_err(|_| TraderError::InvalidSlippage)
     }
 }
 
