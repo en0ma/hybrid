@@ -1,5 +1,6 @@
-pub mod range_position;
 #![forbid(unsafe_code)]
+
+pub mod range_position;
 
 pub const Q64: u128 = 1u128 << 64;
 const Q64_MASK: u128 = Q64 - 1;
