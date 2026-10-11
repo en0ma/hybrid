@@ -2,6 +2,7 @@
 //! This does not advertise passive reserves as executable swap liquidity.
 use crate::client::{custody, maker_balance, BuildError, LinkedSwap};
 use crate::client_rpc::{MarketRpcSnapshot, SnapshotError};
+use hybrid_state::AskOwnerPage;
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -10,6 +11,7 @@ pub enum TraderError {
     WrongMarketCustody,
     MakerFanout,
     DuplicateMaker,
+    MakerNotInBook,
     MissingLiquidity,
     InvalidSlippage,
     Build(BuildError),
@@ -90,6 +92,33 @@ pub fn plan_active_swap(request: TraderRequest<'_>) -> Result<TraderPlan, Trader
         .any(|(i, maker)| request.maker_owners[i + 1..].contains(maker))
     {
         return Err(TraderError::DuplicateMaker);
+    }
+    // Account PDAs alone do not prove these makers are part of this book.
+    // Authenticate the actual owner sidecars through the snapshot audit above,
+    // then reject unrelated or fabricated owner inputs before building the IX.
+    let head_owners = AskOwnerPage::decode_from(&request.snapshot.head_owner.data)
+        .map_err(|_| TraderError::StaleOrInvalidBook(SnapshotError::InvalidMarket(
+            crate::client_audit::AuditError::BadSidecar,
+        )))?;
+    let tail_owners = if report.is_linked {
+        Some(
+            AskOwnerPage::decode_from(&request.snapshot.tail_owner.data)
+                .map_err(|_| TraderError::StaleOrInvalidBook(SnapshotError::InvalidMarket(
+                    crate::client_audit::AuditError::BadSidecar,
+                )))?,
+        )
+    } else {
+        None
+    };
+    for maker in request.maker_owners {
+        let identity = maker.to_bytes();
+        if !head_owners.as_slice().contains(&identity)
+            && !tail_owners
+                .as_ref()
+                .is_some_and(|owners| owners.as_slice().contains(&identity))
+        {
+            return Err(TraderError::MakerNotInBook);
+        }
     }
     let maker_balances: Vec<_> = request
         .maker_owners
