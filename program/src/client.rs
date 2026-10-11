@@ -233,6 +233,33 @@ impl TwoPageBook {
     }
 }
 
+/// Opcode 22: read-only on-chain validation of linked page and sidecar chains.
+pub fn linked_book_preflight(
+    market: Pubkey,
+    side: Side,
+    pages: &[PageAccounts],
+) -> Result<Instruction, BuildError> {
+    if pages.is_empty() || pages.len() > 8 {
+        return Err(BuildError::InvalidPageCount);
+    }
+    let mut keys = vec![market];
+    for p in pages {
+        keys.push(p.page);
+        keys.push(p.owner);
+    }
+    ensure_unique(&keys)?;
+    let mut accounts = vec![AccountMeta::new_readonly(market, false)];
+    for p in pages {
+        accounts.push(AccountMeta::new_readonly(p.page, false));
+        accounts.push(AccountMeta::new_readonly(p.owner, false));
+    }
+    Ok(Instruction {
+        program_id: ID,
+        accounts,
+        data: vec![22, side.tag(), pages.len() as u8],
+    })
+}
+
 /// Accounts for a bounded exact-in/out SPL Token swap. For buys the taker and
 /// vault order is quote then base; for sells, base then quote.
 pub struct LinkedSwap {
@@ -261,7 +288,7 @@ impl LinkedSwap {
         if self.pages.is_empty() || self.pages.len() > 8 {
             return Err(BuildError::InvalidPageCount);
         }
-        if self.maker_balances.is_empty() || self.maker_balances.len() > 32 {
+        if self.maker_balances.is_empty() || self.maker_balances.len() > 8 {
             return Err(BuildError::MissingMakerAccounts);
         }
         if amount == 0 || limit == 0 {
@@ -442,6 +469,20 @@ mod tests {
             s.instruction(Side::Ask, false, 0, 10).err(),
             Some(BuildError::InvalidAmount)
         );
+        let check = linked_book_preflight(market, Side::Ask, &s.pages).unwrap();
+        assert_eq!(check.data, vec![22, 0, 1]);
+        assert_eq!(check.accounts.len(), 3);
+        assert!(check
+            .accounts
+            .iter()
+            .all(|m| !m.is_writable && !m.is_signer));
+        s.maker_balances
+            .extend((0..8).map(|_| Pubkey::new_unique()));
+        assert_eq!(
+            s.instruction(Side::Ask, false, 1, 1).err(),
+            Some(BuildError::MissingMakerAccounts)
+        );
+        s.maker_balances.truncate(1);
         s.pages.clear();
         assert_eq!(
             s.instruction(Side::Ask, false, 1, 10).err(),
