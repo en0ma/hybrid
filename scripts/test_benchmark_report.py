@@ -35,6 +35,13 @@ class BenchmarkReportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             read_rows(path)
 
+    def test_rejects_surplus_csv_fields(self):
+        path = self.write_rows([
+            ["Hybrid", "one-page", "buy", "100", "12", "400", "log", "extra"]
+        ])
+        with self.assertRaises(ValueError):
+            read_rows(path)
+
     def test_rejects_missing_source(self):
         path = self.write_rows([
             ["Hybrid", "one-page", "sell", "1200", "12", "400", ""]
