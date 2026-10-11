@@ -116,7 +116,11 @@ pub(super) fn process_linked_maker(
             }
             _ => return Err(ProgramError::InvalidAccountData),
         }
-        hybrid_state::validate_ask_chain(&[*head,*tail]).map_err(|_|ProgramError::InvalidAccountData)?;
+        head.validate_order().map_err(|_|ProgramError::InvalidAccountData)?;
+        tail.validate_order().map_err(|_|ProgramError::InvalidAccountData)?;
+        if head.links().next_page == Some(1) {
+            head.validate_next(&tail).map_err(|_|ProgramError::InvalidAccountData)?;
+        }
         head.encode_into(&mut accounts[1].try_borrow_mut_data()?).map_err(|_|ProgramError::InvalidAccountData)?;
         ho.encode_into(&mut accounts[2].try_borrow_mut_data()?).map_err(|_|ProgramError::InvalidAccountData)?;
         tail.encode_into(&mut accounts[3].try_borrow_mut_data()?).map_err(|_|ProgramError::InvalidAccountData)?;
@@ -190,7 +194,11 @@ pub(super) fn process_linked_maker(
             }
             _ => return Err(ProgramError::InvalidAccountData),
         }
-        hybrid_state::validate_bid_chain(&[*head,*tail]).map_err(|_|ProgramError::InvalidAccountData)?;
+        head.validate_order().map_err(|_|ProgramError::InvalidAccountData)?;
+        tail.validate_order().map_err(|_|ProgramError::InvalidAccountData)?;
+        if head.links().next_page == Some(1) {
+            head.validate_next(&tail).map_err(|_|ProgramError::InvalidAccountData)?;
+        }
         head.encode_into(&mut accounts[1].try_borrow_mut_data()?).map_err(|_|ProgramError::InvalidAccountData)?;
         ho.encode_into(&mut accounts[2].try_borrow_mut_data()?).map_err(|_|ProgramError::InvalidAccountData)?;
         tail.encode_into(&mut accounts[3].try_borrow_mut_data()?).map_err(|_|ProgramError::InvalidAccountData)?;
