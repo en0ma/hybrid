@@ -175,9 +175,7 @@ impl<'a> TwoPageSnapshot<'a> {
         }
         // Maker placement uses this sequence directly; it must be strictly
         // newer than every existing order on either page.
-        if header.next_sequence == 0
-            || sequences.iter().any(|seq| *seq >= header.next_sequence)
-        {
+        if header.next_sequence == 0 || sequences.iter().any(|seq| *seq >= header.next_sequence) {
             return Err(AuditError::DuplicateSequence);
         }
         let linked = head_links == PageLinks::new(0, None, Some(1))
