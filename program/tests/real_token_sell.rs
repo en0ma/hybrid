@@ -604,6 +604,7 @@ async fn linked_exact_out_sell_retires_page_and_preserves_owner_mapping() {
 async fn linked_sell_then_legacy_sell_consumes_compacted_head_with_real_tokens() {
     let f = linked_sell_fixture(true);
     let first = linked_sell_instruction(&f, 25, 250, 250, true);
+    let second = sell_instruction(&f, 17, 50, 50);
     let mut context = f.program_test.start_with_context().await;
     let hash = context.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
@@ -625,7 +626,6 @@ async fn linked_sell_then_legacy_sell_consumes_compacted_head_with_real_tokens()
     assert_eq!(head.len(), 1);
     assert_eq!(head.as_slice()[0].base_qty, 50);
 
-    let second = sell_instruction(&f, 17, 50, 50);
     let hash = context.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
         &[second],
