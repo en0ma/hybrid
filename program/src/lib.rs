@@ -19,6 +19,8 @@ solana_program::entrypoint!(process_instruction);
 
 #[cfg(not(target_os = "solana"))]
 pub mod client;
+#[cfg(not(target_os = "solana"))]
+pub mod client_audit;
 mod linked_maker;
 mod multipage_buy;
 mod multipage_sell;
