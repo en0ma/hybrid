@@ -1328,3 +1328,57 @@ async fn buy_swap_reconciles_real_spl_vaults_and_all_maker_liabilities() {
     assert_eq!(before_base - base, 250);
     assert_eq!(quote - before_quote, 250);
 }
+
+#[tokio::test]
+async fn buy_rejects_forged_vault_without_any_state_or_token_mutation() {
+    let f = fixture();
+    let mut ix = swap_instruction(&f, 15, 250, 250);
+    // The taker's real token account cannot impersonate the market vault.
+    ix.accounts[8].pubkey = f.taker_base;
+    // A state substitution must not pass even if its token account is valid.
+    let observed = [
+        f.market,
+        f.custody,
+        f.ask_page,
+        f.owner_page,
+        f.maker_a_balance,
+        f.maker_b_balance,
+        f.base_vault,
+        f.quote_vault,
+        f.taker_base,
+        f.taker_quote,
+    ];
+    let mut context = f.program_test.start_with_context().await;
+    let mut before = Vec::new();
+    for key in observed {
+        before.push(
+            context
+                .banks_client
+                .get_account(key)
+                .await
+                .unwrap()
+                .unwrap()
+                .data,
+        );
+    }
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.taker],
+        hash,
+    );
+    assert!(context.banks_client.process_transaction(tx).await.is_err());
+    for (key, original) in observed.into_iter().zip(before) {
+        assert_eq!(
+            context
+                .banks_client
+                .get_account(key)
+                .await
+                .unwrap()
+                .unwrap()
+                .data,
+            original
+        );
+    }
+}
