@@ -66,17 +66,16 @@ pub fn reconcile_maker(
     if has_unconfirmed_mutation {
         return Err(ReconcileError::UnconfirmedMutation);
     }
-    if targets
-        .iter()
-        .any(|t| t.index > 1
+    if targets.iter().any(|t| {
+        t.index > 1
             || t.base_qty == 0
             || validate_limit_ask(LimitAsk {
                 price_x64: t.price_x64,
                 sqrt_price_x64: t.sqrt_price_x64,
                 base_qty: t.base_qty,
             })
-            .is_err())
-    {
+            .is_err()
+    }) {
         return Err(ReconcileError::InvalidTarget);
     }
     if resting.iter().enumerate().any(|(i, order)| {
