@@ -34,6 +34,11 @@ pub(super) fn process_linked_maker(
             return Err(ProgramError::InvalidAccountData);
         }
     }
+    // Linking or unlinking a market's canonical book requires the market's
+    // original signing authority; an arbitrary payer cannot grief makers.
+    if (data[0] == 29 || data[0] == 32) && !accounts[0].is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
     let side = data[1];
     for (index, offset) in [(0u32, 1usize), (1u32, 3usize)] {
         let n = index.to_le_bytes();
@@ -86,6 +91,12 @@ pub(super) fn process_linked_maker(
             .map_err(|_| ProgramError::InvalidAccountData)?;
         to.validate_parallel(&tail)
             .map_err(|_| ProgramError::InvalidAccountData)?;
+        if head.len().checked_add(tail.len()) != Some(market.ask_count as usize) {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if head.len().checked_add(tail.len()) != Some(market.bid_count() as usize) {
+            return Err(ProgramError::InvalidAccountData);
+        }
         let linked = head.links() == hybrid_state::PageLinks::new(0, None, Some(1))
             && tail.links() == hybrid_state::PageLinks::new(1, Some(0), None);
         let detached = head.links() == hybrid_state::PageLinks::new(0, None, None)
