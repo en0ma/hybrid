@@ -927,7 +927,7 @@ async fn linked_sell_maker_cancel_detach_reattach_add_and_swap_with_real_tokens(
     let tx = Transaction::new_signed_with_payer(
         &[detach],
         Some(&context.payer.pubkey()),
-        &[&context.payer],
+        &[&context.payer, &f.market_signer],
         hash,
     );
     context.banks_client.process_transaction(tx).await.unwrap();
@@ -945,7 +945,7 @@ async fn linked_sell_maker_cancel_detach_reattach_add_and_swap_with_real_tokens(
     let tx = Transaction::new_signed_with_payer(
         &[attach],
         Some(&context.payer.pubkey()),
-        &[&context.payer],
+        &[&context.payer, &f.market_signer],
         hash,
     );
     context.banks_client.process_transaction(tx).await.unwrap();
