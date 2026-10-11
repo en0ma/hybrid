@@ -4,9 +4,17 @@
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SubmissionPhase {
     Idle,
-    Prepared { snapshot_slot: u64 },
-    Submitted { signature: [u8; 64], last_valid_block_height: u64 },
-    Confirmed { signature: [u8; 64], confirmed_slot: u64 },
+    Prepared {
+        snapshot_slot: u64,
+    },
+    Submitted {
+        signature: [u8; 64],
+        last_valid_block_height: u64,
+    },
+    Confirmed {
+        signature: [u8; 64],
+        confirmed_slot: u64,
+    },
     Expired,
 }
 
