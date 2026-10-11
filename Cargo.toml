@@ -36,4 +36,4 @@ strip = "symbols"
 # Keep the deployed program within the strict 256 KiB ELF guard without
 # relaxing SBF instruction, compute-unit, or Manifest checks.
 [profile.release.package.hybrid-program]
-opt-level = "s"
+opt-level = "z"
