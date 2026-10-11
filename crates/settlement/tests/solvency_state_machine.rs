@@ -86,7 +86,10 @@ fn two_sided_multi_maker_lifecycle_preserves_vault_coverage() {
     assert_eq!(vault, Assets::default());
 }
 
-type FailureCase = (fn(&mut MakerBalance) -> Result<(), SettlementError>, SettlementError);
+type FailureCase = (
+    fn(&mut MakerBalance) -> Result<(), SettlementError>,
+    SettlementError,
+);
 
 #[test]
 fn failures_do_not_mutate_collateral_or_simulated_vaults() {
