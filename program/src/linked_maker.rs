@@ -94,9 +94,6 @@ pub(super) fn process_linked_maker(
         if head.len().checked_add(tail.len()) != Some(market.ask_count as usize) {
             return Err(ProgramError::InvalidAccountData);
         }
-        if head.len().checked_add(tail.len()) != Some(market.bid_count() as usize) {
-            return Err(ProgramError::InvalidAccountData);
-        }
         let linked = head.links() == hybrid_state::PageLinks::new(0, None, Some(1))
             && tail.links() == hybrid_state::PageLinks::new(1, Some(0), None);
         let detached = head.links() == hybrid_state::PageLinks::new(0, None, None)
@@ -244,6 +241,9 @@ pub(super) fn process_linked_maker(
             || ho.links() != head.links()
             || to.links() != tail.links()
         {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if head.len().checked_add(tail.len()) != Some(market.bid_count() as usize) {
             return Err(ProgramError::InvalidAccountData);
         }
         let linked = head.links() == hybrid_state::PageLinks::new(0, None, Some(1))
