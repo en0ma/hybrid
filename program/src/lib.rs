@@ -34,9 +34,9 @@ pub mod client_store;
 #[cfg(not(target_os = "solana"))]
 pub mod client_submission;
 #[cfg(not(target_os = "solana"))]
-pub mod client_transport;
-#[cfg(not(target_os = "solana"))]
 pub mod client_trader;
+#[cfg(not(target_os = "solana"))]
+pub mod client_transport;
 mod linked_maker;
 mod multipage_buy;
 mod multipage_sell;
