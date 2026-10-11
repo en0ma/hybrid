@@ -17,6 +17,8 @@ declare_id!("US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx");
 #[cfg(not(feature = "no-entrypoint"))]
 solana_program::entrypoint!(process_instruction);
 
+#[cfg(not(target_os = "solana"))]
+pub mod client;
 mod linked_maker;
 mod multipage_buy;
 mod multipage_sell;
