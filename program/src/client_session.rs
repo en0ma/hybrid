@@ -41,7 +41,8 @@ impl MakerSession {
     pub fn prepare(&mut self, snapshot_slot: u64) -> Result<(), SessionError> {
         self.can_requote()?;
         let mut next = self.tracker;
-        next.prepare(snapshot_slot).map_err(SessionError::Submission)?;
+        next.prepare(snapshot_slot)
+            .map_err(SessionError::Submission)?;
         persist(&self.path, &next).map_err(SessionError::Store)?;
         self.tracker = next;
         Ok(())
@@ -106,14 +107,20 @@ mod tests {
         ));
         fs::create_dir(&directory).unwrap();
         let path = directory.join("journal");
-        assert!(matches!(MakerSession::open(&path), Err(SessionError::Store(_))));
+        assert!(matches!(
+            MakerSession::open(&path),
+            Err(SessionError::Store(_))
+        ));
         initialize(&path).unwrap();
         let mut session = MakerSession::open(&path).unwrap();
         session.prepare(100).unwrap();
         session.mark_submitted([12; 64], 500).unwrap();
         drop(session);
         let mut resumed = MakerSession::open(&path).unwrap();
-        assert!(matches!(resumed.can_requote(), Err(SessionError::PendingRecovery)));
+        assert!(matches!(
+            resumed.can_requote(),
+            Err(SessionError::PendingRecovery)
+        ));
         assert!(matches!(
             resumed.expire(501, false),
             Err(SessionError::Submission(SubmissionError::NotExpired))
@@ -121,7 +128,10 @@ mod tests {
         resumed.confirm([12; 64], 102).unwrap();
         assert!(resumed.can_requote().is_ok());
         resumed.prepare(102).unwrap();
-        assert!(matches!(resumed.can_requote(), Err(SessionError::PendingRecovery)));
+        assert!(matches!(
+            resumed.can_requote(),
+            Err(SessionError::PendingRecovery)
+        ));
         fs::remove_dir_all(directory).unwrap();
     }
 }
