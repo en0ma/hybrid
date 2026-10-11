@@ -96,16 +96,19 @@ pub fn plan_active_swap(request: TraderRequest<'_>) -> Result<TraderPlan, Trader
     // Account PDAs alone do not prove these makers are part of this book.
     // Authenticate the actual owner sidecars through the snapshot audit above,
     // then reject unrelated or fabricated owner inputs before building the IX.
-    let head_owners = AskOwnerPage::decode_from(&request.snapshot.head_owner.data)
-        .map_err(|_| TraderError::StaleOrInvalidBook(SnapshotError::InvalidMarket(
-            crate::client_audit::AuditError::BadSidecar,
-        )))?;
+    let head_owners =
+        AskOwnerPage::decode_from(&request.snapshot.head_owner.data).map_err(|_| {
+            TraderError::StaleOrInvalidBook(SnapshotError::InvalidMarket(
+                crate::client_audit::AuditError::BadSidecar,
+            ))
+        })?;
     let tail_owners = if report.is_linked {
         Some(
-            AskOwnerPage::decode_from(&request.snapshot.tail_owner.data)
-                .map_err(|_| TraderError::StaleOrInvalidBook(SnapshotError::InvalidMarket(
+            AskOwnerPage::decode_from(&request.snapshot.tail_owner.data).map_err(|_| {
+                TraderError::StaleOrInvalidBook(SnapshotError::InvalidMarket(
                     crate::client_audit::AuditError::BadSidecar,
-                )))?,
+                ))
+            })?,
         )
     } else {
         None
