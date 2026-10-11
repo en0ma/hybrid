@@ -2,6 +2,7 @@
 //! Intent planning is advisory: refresh the authenticated snapshot and simulate
 //! every instruction before signing/sending; never retry a submission blindly.
 use crate::client::{BuildError, TwoPageBook};
+use hybrid_engine::{validate_limit_ask, LimitAsk};
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,7 +68,14 @@ pub fn reconcile_maker(
     }
     if targets
         .iter()
-        .any(|t| t.index > 1 || t.base_qty == 0 || t.price_x64 == 0 || t.sqrt_price_x64 == 0)
+        .any(|t| t.index > 1
+            || t.base_qty == 0
+            || validate_limit_ask(LimitAsk {
+                price_x64: t.price_x64,
+                sqrt_price_x64: t.sqrt_price_x64,
+                base_qty: t.base_qty,
+            })
+            .is_err())
     {
         return Err(ReconcileError::InvalidTarget);
     }
@@ -174,6 +182,29 @@ mod tests {
         assert_eq!(plan.placements.len(), 1);
         assert_eq!(plan.cancellations[0].data[0], 31);
         assert_eq!(plan.placements[0].data[0], 30);
+    }
+
+    #[test]
+    fn rejects_noncanonical_sqrt_cache_before_building_transactions() {
+        let book = TwoPageBook::new(Pubkey::new_unique(), Pubkey::new_unique(), Side::Ask);
+        let maker = Pubkey::new_unique();
+        for (price_x64, sqrt_price_x64) in [(Q64, Q64 + 1), (Q64 * 4, Q64), (0, Q64)] {
+            assert!(matches!(
+                reconcile_maker(
+                    book,
+                    maker,
+                    &[],
+                    &[TargetQuote {
+                        index: 0,
+                        price_x64,
+                        sqrt_price_x64,
+                        base_qty: 10,
+                    }],
+                    false,
+                ),
+                Err(ReconcileError::InvalidTarget)
+            ));
+        }
     }
 
     #[test]
