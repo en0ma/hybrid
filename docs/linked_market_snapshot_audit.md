@@ -20,7 +20,7 @@ A decoded account is not proof that the market authority can sign. Preserve the 
 
 ## Safe decisions
 
-Use the returned `AuditReport` before creating instructions from the `TwoPageBook` builder. `NextAction::AttachEmpty` means both pages are empty and detached, so a properly signed attach can be attempted. `DetachEmpty` means the tail is linked and empty; a properly signed detach can be attempted. `CancelOrFill` means tail orders remain and must be dealt with before detachment. `HeadOrders` means an empty detached tail must **not** be attached around live head orders.
+Use the returned `AuditReport` before creating instructions from the `TwoPageBook` builder. `report.can_attach` means both pages are empty and detached, so a properly signed attach can be attempted. A detached, empty page-1 pair returns `NextAction::CloseDetached` to indicate rent reclamation is possible independently of attachment eligibility. `DetachEmpty` means the tail is linked and empty; a properly signed detach can be attempted. `CancelOrFill` means tail orders remain and must be dealt with before detachment. `HeadOrders` means an empty detached tail must **not** be attached around live head orders.
 
 **Important:** The report is advisory, not permission to transact. State may change between RPC read, transaction simulation and execution. Refresh the snapshot after swaps, cancellations, page compaction or any failed transaction. Explicitly check signatures, collateral balance and the resulting on-chain state; the program is the ultimate validator.
 
