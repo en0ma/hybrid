@@ -8,8 +8,6 @@ No fabricated Phoenix/OpenBook/Manifest measurements are permitted.
 import argparse
 import csv
 import json
-import os
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
