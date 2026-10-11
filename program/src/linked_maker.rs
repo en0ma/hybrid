@@ -42,17 +42,27 @@ pub(super) fn process_linked_maker(
         } else {
             b"bid-page".as_slice()
         };
-        let owner_seed = if side == 0 {
-            b"ask-owner-page".as_slice()
-        } else {
-            b"bid-owner-page".as_slice()
-        };
         let expected =
             Pubkey::find_program_address(&[seed, accounts[0].key.as_ref(), &n], program_id).0;
-        let owner =
-            Pubkey::find_program_address(&[owner_seed, accounts[0].key.as_ref(), &n], program_id).0;
-        if *accounts[offset].key != expected || *accounts[offset + 1].key != owner {
+        if *accounts[offset].key != expected {
             return Err(ProgramError::InvalidSeeds);
+        }
+        // The original head sidecar is committed in the market header,
+        // not required to use a PDA. Only page-1 sidecars are canonical PDAs.
+        if index == 1 {
+            let owner_seed = if side == 0 {
+                b"ask-owner-page".as_slice()
+            } else {
+                b"bid-owner-page".as_slice()
+            };
+            let owner = Pubkey::find_program_address(
+                &[owner_seed, accounts[0].key.as_ref(), &n],
+                program_id,
+            )
+            .0;
+            if *accounts[offset + 1].key != owner {
+                return Err(ProgramError::InvalidSeeds);
+            }
         }
     }
     let mut market = hybrid_state::MarketHeader::decode_from(&accounts[0].try_borrow_data()?)
