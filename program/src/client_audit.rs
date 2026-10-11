@@ -232,11 +232,13 @@ mod tests {
         AskEntry, ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES, BID_PAGE_BYTES,
         MARKET_FLAG_COLLATERALIZED_ACTIVE, MARKET_HEADER_BYTES,
     };
+    type FixtureAccounts = (Pubkey, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Pubkey);
+
     fn valid(
         side: Side,
         linked: bool,
         count: usize,
-    ) -> (Pubkey, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Pubkey) {
+    ) -> FixtureAccounts {
         let market = Pubkey::new_unique();
         let head_owner = Pubkey::new_unique();
         let mut header = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
@@ -308,6 +310,8 @@ mod tests {
         to.encode_into(&mut ot).unwrap();
         (market, mh, a, b, oh, ot, head_owner)
     }
+    // A test adapter preserves explicit keys and backing byte slices across lifetimes.
+    #[allow(clippy::too_many_arguments)]
     fn test_snapshot<'a>(
         market: Pubkey,
         side: Side,
