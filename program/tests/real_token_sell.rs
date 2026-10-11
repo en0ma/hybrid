@@ -1044,13 +1044,24 @@ async fn linked_sell_maker_cancel_detach_reattach_add_and_swap_with_real_tokens(
 
 #[tokio::test]
 async fn linked_sell_maker_rejects_unauthorized_and_forged_accounts_atomically() {
-    let f = linked_sell_fixture(true);
+    let mut f = linked_sell_fixture(true);
+    // A program-owned, structurally valid but noncanonical sidecar must
+    // reach the PDA-authentication guard rather than fail the owner check.
+    let forged_owner = Pubkey::new_unique();
+    let mut sidecar = AskOwnerPage::default();
+    sidecar.set_links(PageLinks::new(1, Some(0), None));
+    sidecar.len = 1;
+    sidecar.owners[0] = f.maker_b_signer.pubkey().to_bytes();
+    let mut sidecar_bytes = vec![0; ASK_OWNER_PAGE_BYTES];
+    sidecar.encode_into(&mut sidecar_bytes).unwrap();
+    f.program_test
+        .add_account(forged_owner, account(sidecar_bytes, ID));
     let maker = f.maker_b_signer.pubkey();
     let mut unauthorized_detach = linked_maker_ix(&f, 32, 0, None, &[]);
     unauthorized_detach.accounts[0].is_signer = false;
     let authorized_nonempty_detach = linked_maker_ix(&f, 32, 0, None, &[]);
     let mut forged_sidecar = linked_maker_ix(&f, 31, 1, Some(maker), &2u64.to_le_bytes());
-    forged_sidecar.accounts[4].pubkey = Pubkey::new_unique();
+    forged_sidecar.accounts[4].pubkey = forged_owner;
     let invalid_page = linked_maker_ix(&f, 31, 2, Some(maker), &2u64.to_le_bytes());
     let mut aliased_page = linked_maker_ix(&f, 31, 1, Some(maker), &2u64.to_le_bytes());
     aliased_page.accounts[3].pubkey = f.ask_page;
