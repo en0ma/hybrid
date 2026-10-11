@@ -4,9 +4,9 @@
 
 ## Baseline and dependencies
 
-- Repository: `en0ma/hybrid`, baseline merge of PR #51 at `82a469d4c90ec51489c30608a3dbdfa72e1c14dc`.
+- Repository: `en0ma/hybrid`, baseline merge of PR #54 at `46da2403ebf5ea592fd0456da17411977e3083f2`.
 - Existing active collateralized bid/ask swaps, linked maker lifecycle, host-only two-page auditor, passive LP principal infrastructure.
-- This branch is created independently from main to support sequential merges. Rebase after preceding milestone(s) merge and reverify full exact-head CI.
+- This branch was reset onto the PR #54 merge commit before benchmark implementation; reverify full exact-head CI after subsequent changes.
 - Do not relax 262,144-byte on-chain ELF limit, CU gates, ownership/PDA/signature checks or vault accounting.
 
 ## Architectural workstreams
