@@ -25,6 +25,8 @@ pub mod client_audit;
 pub mod client_maker;
 #[cfg(not(target_os = "solana"))]
 pub mod client_rpc;
+#[cfg(not(target_os = "solana"))]
+pub mod client_submission;
 mod linked_maker;
 mod multipage_buy;
 mod multipage_sell;
