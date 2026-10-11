@@ -308,6 +308,47 @@ mod tests {
         to.encode_into(&mut ot).unwrap();
         (market, mh, a, b, oh, ot, head_owner)
     }
+    fn test_snapshot<'a>(
+        market: Pubkey,
+        side: Side,
+        head_owner: Pubkey,
+        head_page: Pubkey,
+        tail: PageAccounts,
+        market_data: &'a [u8],
+        head: &'a [u8],
+        tail_data: &'a [u8],
+        head_owner_data: &'a [u8],
+        tail_owner_data: &'a [u8],
+    ) -> TwoPageSnapshot<'a> {
+        TwoPageSnapshot {
+            market: AccountView {
+                key: market,
+                owner: crate::ID,
+                data: market_data,
+            },
+            head: AccountView {
+                key: head_page,
+                owner: crate::ID,
+                data: head,
+            },
+            head_owner: AccountView {
+                key: head_owner,
+                owner: crate::ID,
+                data: head_owner_data,
+            },
+            tail: AccountView {
+                key: tail.page,
+                owner: crate::ID,
+                data: tail_data,
+            },
+            tail_owner: AccountView {
+                key: tail.owner,
+                owner: crate::ID,
+                data: tail_owner_data,
+            },
+            side,
+        }
+    }
     #[test]
     fn audit_detects_safe_link_transitions_and_tampering() {
         for side in [Side::Ask, Side::Bid] {
@@ -320,41 +361,26 @@ mod tests {
                 let (market, mut mh, h, t, ho, to, owner) = valid(side, linked, count);
                 let hp = canonical_page(market, side, 0);
                 let tp = canonical_page(market, side, 1);
-                let snap = |market_data: &[u8]| TwoPageSnapshot {
-                    market: AccountView {
-                        key: market,
-                        owner: crate::ID,
-                        data: market_data,
-                    },
-                    head: AccountView {
-                        key: hp.page,
-                        owner: crate::ID,
-                        data: &h,
-                    },
-                    head_owner: AccountView {
-                        key: owner,
-                        owner: crate::ID,
-                        data: &ho,
-                    },
-                    tail: AccountView {
-                        key: tp.page,
-                        owner: crate::ID,
-                        data: &t,
-                    },
-                    tail_owner: AccountView {
-                        key: tp.owner,
-                        owner: crate::ID,
-                        data: &to,
-                    },
-                    side,
-                };
-                let result = snap(&mh).audit().unwrap();
+                let result = test_snapshot(market, side, owner, hp.page, tp, &mh, &h, &t, &ho, &to)
+                    .audit()
+                    .unwrap();
                 assert_eq!(result.next_action, expected);
                 assert_eq!(result.total_orders, count);
-                assert_eq!(snap(&mh).builder().unwrap().tail.page, tp.page);
+                assert_eq!(
+                    test_snapshot(market, side, owner, hp.page, tp, &mh, &h, &t, &ho, &to)
+                        .builder()
+                        .unwrap()
+                        .tail
+                        .page,
+                    tp.page
+                );
                 mh[12..16].copy_from_slice(&999u32.to_le_bytes());
                 if side == Side::Ask {
-                    assert_eq!(snap(&mh).audit(), Err(AuditError::InconsistentCount));
+                    assert_eq!(
+                        test_snapshot(market, side, owner, hp.page, tp, &mh, &h, &t, &ho, &to)
+                            .audit(),
+                        Err(AuditError::InconsistentCount)
+                    );
                 }
             }
         }
