@@ -32,6 +32,7 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
+panic = "abort"
 
 # Keep the deployed program within the strict 256 KiB ELF guard without
 # relaxing SBF instruction, compute-unit, or Manifest checks.
