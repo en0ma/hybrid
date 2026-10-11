@@ -1232,7 +1232,6 @@ async fn linked_buy_maker_rejects_unauthorized_and_forged_accounts_atomically() 
     );
 }
 
-
 #[tokio::test]
 async fn buy_swap_reconciles_real_spl_vaults_and_all_maker_liabilities() {
     let f = fixture();
