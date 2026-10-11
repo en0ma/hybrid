@@ -23,7 +23,7 @@ def read_rows(path):
             raise ValueError("unexpected CSV header")
         rows = []
         for number, row in enumerate(reader, start=2):
-            if any(value is None for value in row.values()):
+            if None in row or any(value is None for value in row.values()):
                 raise ValueError(f"CSV row {number} has missing fields")
             for field in ("protocol", "scenario", "operation", "source"):
                 if not row[field].strip():
