@@ -44,6 +44,7 @@ fn token_amount(data: &[u8]) -> u64 {
 struct Fixture {
     program_test: ProgramTest,
     market: Pubkey,
+    market_signer: Keypair,
     custody: Pubkey,
     ask_page: Pubkey,
     owner_page: Pubkey,
@@ -70,7 +71,8 @@ fn fixture_with_linked(linked: bool) -> Fixture {
 }
 
 fn fixture_with_linked_priced(linked: bool, priced: bool) -> Fixture {
-    let market = Pubkey::new_unique();
+    let market_signer = Keypair::new();
+    let market = market_signer.pubkey();
     let (custody, custody_bump) = Pubkey::find_program_address(&[b"custody", market.as_ref()], &ID);
     let (ask_page, _) =
         Pubkey::find_program_address(&[b"ask-page", market.as_ref(), &0u32.to_le_bytes()], &ID);
@@ -236,6 +238,7 @@ fn fixture_with_linked_priced(linked: bool, priced: bool) -> Fixture {
     Fixture {
         program_test,
         market,
+        market_signer,
         custody,
         ask_page,
         owner_page,
