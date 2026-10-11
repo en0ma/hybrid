@@ -1194,28 +1194,65 @@ async fn sell_swap_reconciles_real_spl_vaults_and_maker_liabilities() {
     );
     context.banks_client.process_transaction(tx).await.unwrap();
     let custody = CustodyState::decode_from(
-        &context.banks_client.get_account(f.custody).await.unwrap().unwrap().data,
-    ).unwrap();
+        &context
+            .banks_client
+            .get_account(f.custody)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    )
+    .unwrap();
     let base = token_amount(
-        &context.banks_client.get_account(f.base_vault).await.unwrap().unwrap().data,
+        &context
+            .banks_client
+            .get_account(f.base_vault)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
     );
     let quote = token_amount(
-        &context.banks_client.get_account(f.quote_vault).await.unwrap().unwrap().data,
+        &context
+            .banks_client
+            .get_account(f.quote_vault)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
     );
     let a = MakerBalance::decode_from(
-        &context.banks_client.get_account(f.maker_a_balance).await.unwrap().unwrap().data,
-    ).unwrap();
+        &context
+            .banks_client
+            .get_account(f.maker_a_balance)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    )
+    .unwrap();
     let b = MakerBalance::decode_from(
-        &context.banks_client.get_account(f.maker_b_balance).await.unwrap().unwrap().data,
-    ).unwrap();
+        &context
+            .banks_client
+            .get_account(f.maker_b_balance)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    )
+    .unwrap();
     assert_eq!(base, custody.total_base);
     assert_eq!(quote, custody.total_quote);
     assert_eq!(base, 250);
     assert_eq!(quote, 750);
-    let required_base = u128::from(a.free_base) + u128::from(a.locked_base)
-        + u128::from(b.free_base) + u128::from(b.locked_base);
-    let required_quote = u128::from(a.free_quote) + u128::from(a.locked_quote)
-        + u128::from(b.free_quote) + u128::from(b.locked_quote);
+    let required_base = u128::from(a.free_base)
+        + u128::from(a.locked_base)
+        + u128::from(b.free_base)
+        + u128::from(b.locked_base);
+    let required_quote = u128::from(a.free_quote)
+        + u128::from(a.locked_quote)
+        + u128::from(b.free_quote)
+        + u128::from(b.locked_quote);
     assert!(u128::from(base) >= required_base);
     assert!(u128::from(quote) >= required_quote);
 }
