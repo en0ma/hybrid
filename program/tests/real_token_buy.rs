@@ -1093,3 +1093,130 @@ async fn linked_buy_maker_cancel_detach_reattach_add_and_swap_with_real_tokens()
     assert_eq!(token_amount(&taker_base.data), 100);
     assert_eq!(token_amount(&taker_quote.data), 900);
 }
+
+#[tokio::test]
+async fn linked_buy_maker_rejects_unauthorized_and_forged_accounts_atomically() {
+    let f = fixture_with_linked(true);
+    let maker = f.maker_b_signer.pubkey();
+    let mut unauthorized_detach = linked_maker_ix(&f, 32, 0, None, &[]);
+    unauthorized_detach.accounts[0].is_signer = false;
+    let authorized_nonempty_detach = linked_maker_ix(&f, 32, 0, None, &[]);
+    let mut forged_sidecar = linked_maker_ix(&f, 31, 1, Some(maker), &2u64.to_le_bytes());
+    forged_sidecar.accounts[4].pubkey = Pubkey::new_unique();
+    let invalid_page = linked_maker_ix(&f, 31, 2, Some(maker), &2u64.to_le_bytes());
+    let mut aliased_page = linked_maker_ix(&f, 31, 1, Some(maker), &2u64.to_le_bytes());
+    aliased_page.accounts[3].pubkey = f.ask_page;
+    let mut context = f.program_test.start_with_context().await;
+
+    let before_market = context
+        .banks_client
+        .get_account(f.market)
+        .await
+        .unwrap()
+        .unwrap()
+        .data;
+    let before_head = context
+        .banks_client
+        .get_account(f.ask_page)
+        .await
+        .unwrap()
+        .unwrap()
+        .data;
+    let before_tail = context
+        .banks_client
+        .get_account(f.ask_page_1)
+        .await
+        .unwrap()
+        .unwrap()
+        .data;
+    let before_owner = context
+        .banks_client
+        .get_account(f.owner_page_1)
+        .await
+        .unwrap()
+        .unwrap()
+        .data;
+    let before_balance = context
+        .banks_client
+        .get_account(f.maker_b_balance)
+        .await
+        .unwrap()
+        .unwrap()
+        .data;
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[unauthorized_detach],
+        Some(&context.payer.pubkey()),
+        &[&context.payer],
+        hash,
+    );
+    assert!(context.banks_client.process_transaction(tx).await.is_err());
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[authorized_nonempty_detach],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.market_signer],
+        hash,
+    );
+    assert!(context.banks_client.process_transaction(tx).await.is_err());
+    for ix in [forged_sidecar, invalid_page, aliased_page] {
+        let hash = context.get_new_latest_blockhash().await.unwrap();
+        let tx = Transaction::new_signed_with_payer(
+            &[ix],
+            Some(&context.payer.pubkey()),
+            &[&context.payer, &f.maker_b_signer],
+            hash,
+        );
+        assert!(context.banks_client.process_transaction(tx).await.is_err());
+    }
+    assert_eq!(
+        context
+            .banks_client
+            .get_account(f.market)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+        before_market
+    );
+    assert_eq!(
+        context
+            .banks_client
+            .get_account(f.ask_page)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+        before_head
+    );
+    assert_eq!(
+        context
+            .banks_client
+            .get_account(f.ask_page_1)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+        before_tail
+    );
+    assert_eq!(
+        context
+            .banks_client
+            .get_account(f.owner_page_1)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+        before_owner
+    );
+    assert_eq!(
+        context
+            .banks_client
+            .get_account(f.maker_b_balance)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+        before_balance
+    );
+}
