@@ -1179,3 +1179,133 @@ async fn linked_sell_maker_rejects_unauthorized_and_forged_accounts_atomically()
         before_balance
     );
 }
+
+#[tokio::test]
+async fn sell_swap_reconciles_real_spl_vaults_and_maker_liabilities() {
+    let f = sell_fixture();
+    let ix = sell_instruction(&f, 17, 250, 250);
+    let mut context = f.program_test.start_with_context().await;
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.taker],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+    let custody = CustodyState::decode_from(
+        &context
+            .banks_client
+            .get_account(f.custody)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    )
+    .unwrap();
+    let base = token_amount(
+        &context
+            .banks_client
+            .get_account(f.base_vault)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    );
+    let quote = token_amount(
+        &context
+            .banks_client
+            .get_account(f.quote_vault)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    );
+    let a = MakerBalance::decode_from(
+        &context
+            .banks_client
+            .get_account(f.maker_a_balance)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    )
+    .unwrap();
+    let b = MakerBalance::decode_from(
+        &context
+            .banks_client
+            .get_account(f.maker_b_balance)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    )
+    .unwrap();
+    assert_eq!(base, custody.total_base);
+    assert_eq!(quote, custody.total_quote);
+    assert_eq!(base, 250);
+    assert_eq!(quote, 750);
+    let required_base = u128::from(a.free_base)
+        + u128::from(a.locked_base)
+        + u128::from(b.free_base)
+        + u128::from(b.locked_base);
+    let required_quote = u128::from(a.free_quote)
+        + u128::from(a.locked_quote)
+        + u128::from(b.free_quote)
+        + u128::from(b.locked_quote);
+    assert!(u128::from(base) >= required_base);
+    assert!(u128::from(quote) >= required_quote);
+}
+
+#[tokio::test]
+async fn sell_rejects_forged_vault_without_any_state_or_token_mutation() {
+    let f = sell_fixture();
+    let mut ix = sell_instruction(&f, 17, 250, 250);
+    // A valid taker token account cannot impersonate the custody quote vault.
+    ix.accounts[8].pubkey = f.taker_quote;
+    let observed = [
+        f.market,
+        f.custody,
+        f.ask_page,
+        f.owner_page,
+        f.maker_a_balance,
+        f.maker_b_balance,
+        f.base_vault,
+        f.quote_vault,
+        f.taker_base,
+        f.taker_quote,
+    ];
+    let mut context = f.program_test.start_with_context().await;
+    let mut before = Vec::new();
+    for key in observed {
+        before.push(
+            context
+                .banks_client
+                .get_account(key)
+                .await
+                .unwrap()
+                .unwrap()
+                .data,
+        );
+    }
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.taker],
+        hash,
+    );
+    assert!(context.banks_client.process_transaction(tx).await.is_err());
+    for (key, original) in observed.into_iter().zip(before) {
+        assert_eq!(
+            context
+                .banks_client
+                .get_account(key)
+                .await
+                .unwrap()
+                .unwrap()
+                .data,
+            original
+        );
+    }
+}

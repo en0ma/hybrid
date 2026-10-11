@@ -1231,3 +1231,154 @@ async fn linked_buy_maker_rejects_unauthorized_and_forged_accounts_atomically() 
         before_balance
     );
 }
+
+#[tokio::test]
+async fn buy_swap_reconciles_real_spl_vaults_and_all_maker_liabilities() {
+    let f = fixture();
+    let ix = swap_instruction(&f, 15, 250, 250);
+    let mut context = f.program_test.start_with_context().await;
+    let read = |data: Vec<u8>| MakerBalance::decode_from(&data).unwrap();
+    let before_base = token_amount(
+        &context
+            .banks_client
+            .get_account(f.base_vault)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    );
+    let before_quote = token_amount(
+        &context
+            .banks_client
+            .get_account(f.quote_vault)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    );
+    let blockhash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.taker],
+        blockhash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let custody = CustodyState::decode_from(
+        &context
+            .banks_client
+            .get_account(f.custody)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    )
+    .unwrap();
+    let base = token_amount(
+        &context
+            .banks_client
+            .get_account(f.base_vault)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    );
+    let quote = token_amount(
+        &context
+            .banks_client
+            .get_account(f.quote_vault)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    );
+    let maker_a = read(
+        context
+            .banks_client
+            .get_account(f.maker_a_balance)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    );
+    let maker_b = read(
+        context
+            .banks_client
+            .get_account(f.maker_b_balance)
+            .await
+            .unwrap()
+            .unwrap()
+            .data,
+    );
+    let accounted_base = [maker_a, maker_b]
+        .iter()
+        .map(|m| u128::from(m.free_base) + u128::from(m.locked_base))
+        .sum::<u128>();
+    let accounted_quote = [maker_a, maker_b]
+        .iter()
+        .map(|m| u128::from(m.free_quote) + u128::from(m.locked_quote))
+        .sum::<u128>();
+    assert_eq!(u128::from(base), u128::from(custody.total_base));
+    assert_eq!(u128::from(quote), u128::from(custody.total_quote));
+    // The fixture has intentionally unassigned excess base in custody.
+    // Assert coverage, not false equality with the two configured makers.
+    assert!(u128::from(base) >= accounted_base);
+    assert!(u128::from(quote) >= accounted_quote);
+    assert_eq!(before_base - base, 250);
+    assert_eq!(quote - before_quote, 250);
+}
+
+#[tokio::test]
+async fn buy_rejects_forged_vault_without_any_state_or_token_mutation() {
+    let f = fixture();
+    let mut ix = swap_instruction(&f, 15, 250, 250);
+    // The taker's real token account cannot impersonate the market vault.
+    ix.accounts[8].pubkey = f.taker_base;
+    // A state substitution must not pass even if its token account is valid.
+    let observed = [
+        f.market,
+        f.custody,
+        f.ask_page,
+        f.owner_page,
+        f.maker_a_balance,
+        f.maker_b_balance,
+        f.base_vault,
+        f.quote_vault,
+        f.taker_base,
+        f.taker_quote,
+    ];
+    let mut context = f.program_test.start_with_context().await;
+    let mut before = Vec::new();
+    for key in observed {
+        before.push(
+            context
+                .banks_client
+                .get_account(key)
+                .await
+                .unwrap()
+                .unwrap()
+                .data,
+        );
+    }
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.taker],
+        hash,
+    );
+    assert!(context.banks_client.process_transaction(tx).await.is_err());
+    for (key, original) in observed.into_iter().zip(before) {
+        assert_eq!(
+            context
+                .banks_client
+                .get_account(key)
+                .await
+                .unwrap()
+                .unwrap()
+                .data,
+            original
+        );
+    }
+}
