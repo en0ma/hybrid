@@ -335,9 +335,7 @@ mod tests {
                 let (market, mut mh, h, t, ho, to, owner) = valid(side, linked, count);
                 let hp = canonical_page(market, side, 0);
                 let tp = canonical_page(market, side, 1);
-                let audit_snapshot = |market_data: &[u8]| {
-                    test_snapshot(market, side, owner, hp.page, tp, market_data, &h, &t, &ho, &to)
-                };                let result = test_snapshot(market, side, owner, hp.page, tp, &mh, &h, &t, &ho, &to).audit().unwrap();
+                let result = test_snapshot(market, side, owner, hp.page, tp, &mh, &h, &t, &ho, &to).audit().unwrap();
                 assert_eq!(result.next_action, expected);
                 assert_eq!(result.total_orders, count);
                 assert_eq!(test_snapshot(market, side, owner, hp.page, tp, &mh, &h, &t, &ho, &to).builder().unwrap().tail.page, tp.page);
