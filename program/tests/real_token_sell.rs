@@ -677,3 +677,141 @@ async fn linked_sell_then_legacy_sell_consumes_compacted_head_with_real_tokens()
     assert_eq!(token_amount(&base.data), 700);
     assert_eq!(token_amount(&quote.data), 300);
 }
+
+fn lifecycle_close_instruction(f: &Fixture) -> Instruction {
+    Instruction {
+        program_id: ID,
+        accounts: vec![
+            AccountMeta::new(f.market, false),
+            AccountMeta::new(f.bid_page_1, false),
+            AccountMeta::new(f.owner_page_1, false),
+        ],
+        data: vec![27, 1, 1, 0, 0, 0],
+    }
+}
+
+fn lifecycle_recreate_instruction(f: &Fixture, payer: Pubkey) -> Instruction {
+    Instruction {
+        program_id: ID,
+        accounts: vec![
+            AccountMeta::new(f.market, false),
+            AccountMeta::new(f.ask_page, false),
+            AccountMeta::new(f.owner_page, false),
+            AccountMeta::new(f.bid_page_1, false),
+            AccountMeta::new(f.owner_page_1, false),
+            AccountMeta::new(payer, true),
+            AccountMeta::new_readonly(Pubkey::default(), false),
+        ],
+        data: vec![28, 1],
+    }
+}
+
+#[tokio::test]
+async fn detached_sell_page_closes_to_market_and_recreates_canonical_tail() {
+    let f = linked_sell_fixture(true);
+    let bad = lifecycle_close_instruction(&f);
+    let swap = linked_sell_instruction(&f, 25, 250, 250, true);
+    let close = lifecycle_close_instruction(&f);
+    let mut recreate = lifecycle_recreate_instruction(&f, Pubkey::default());
+    let mut context = f.program_test.start_with_context().await;
+
+    // A live linked tail must never be eligible for rent recovery.
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[bad],
+        Some(&context.payer.pubkey()),
+        &[&context.payer],
+        hash,
+    );
+    assert!(context.banks_client.process_transaction(tx).await.is_err());
+
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[swap],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.taker],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let before = context
+        .banks_client
+        .get_account(f.market)
+        .await
+        .unwrap()
+        .unwrap()
+        .lamports;
+    let tail_rent = context
+        .banks_client
+        .get_account(f.bid_page_1)
+        .await
+        .unwrap()
+        .unwrap()
+        .lamports;
+    let owner_rent = context
+        .banks_client
+        .get_account(f.owner_page_1)
+        .await
+        .unwrap()
+        .unwrap()
+        .lamports;
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[close],
+        Some(&context.payer.pubkey()),
+        &[&context.payer],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+    let after = context
+        .banks_client
+        .get_account(f.market)
+        .await
+        .unwrap()
+        .unwrap()
+        .lamports;
+    assert_eq!(after, before + tail_rent + owner_rent);
+    let closed_tail = context
+        .banks_client
+        .get_account(f.bid_page_1)
+        .await
+        .unwrap();
+    assert!(closed_tail.is_none() || closed_tail.unwrap().lamports == 0);
+
+    recreate.accounts[5] = AccountMeta::new(context.payer.pubkey(), true);
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[recreate],
+        Some(&context.payer.pubkey()),
+        &[&context.payer],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let head = context
+        .banks_client
+        .get_account(f.ask_page)
+        .await
+        .unwrap()
+        .unwrap();
+    let head = BidPage::decode_from(&head.data).unwrap();
+    assert_eq!(head.links(), PageLinks::new(0, None, None));
+    let tail = context
+        .banks_client
+        .get_account(f.bid_page_1)
+        .await
+        .unwrap()
+        .unwrap();
+    let tail = BidPage::decode_from(&tail.data).unwrap();
+    assert_eq!(tail.len(), 0);
+    assert_eq!(tail.links(), PageLinks::new(1, None, None));
+    let owners = context
+        .banks_client
+        .get_account(f.owner_page_1)
+        .await
+        .unwrap()
+        .unwrap();
+    let owners = AskOwnerPage::decode_from(&owners.data).unwrap();
+    assert_eq!(owners.len(), 0);
+    assert_eq!(owners.links(), PageLinks::new(1, None, None));
+}
