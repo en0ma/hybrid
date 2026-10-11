@@ -38,6 +38,8 @@ pub struct AuditReport {
     pub tail_orders: usize,
     pub next_action: NextAction,
     pub is_linked: bool,
+    /// True only for a detached, fully empty head and tail.
+    pub can_attach: bool,
     pub total_orders: usize,
 }
 /// Copies of a decoded account view. Ownership and address are retained for
@@ -171,6 +173,13 @@ impl<'a> TwoPageSnapshot<'a> {
                 return Err(AuditError::DuplicateSequence);
             }
         }
+        // Maker placement uses this sequence directly; it must be strictly
+        // newer than every existing order on either page.
+        if header.next_sequence == 0
+            || sequences.iter().any(|seq| *seq >= header.next_sequence)
+        {
+            return Err(AuditError::DuplicateSequence);
+        }
         let linked = head_links == PageLinks::new(0, None, Some(1))
             && tail_links == PageLinks::new(1, Some(0), None);
         let detached = head_links == PageLinks::new(0, None, None)
@@ -195,10 +204,10 @@ impl<'a> TwoPageSnapshot<'a> {
             } else {
                 NextAction::CancelOrFill
             }
-        } else if head_len == 0 {
-            NextAction::AttachEmpty
         } else {
-            NextAction::HeadOrders
+            // A detached empty tail can always be closed; attachment is a
+            // separate eligibility predicate because both are valid actions.
+            NextAction::CloseDetached
         };
         Ok(AuditReport {
             side: self.side,
@@ -206,6 +215,7 @@ impl<'a> TwoPageSnapshot<'a> {
             tail_orders: tail_len,
             next_action,
             is_linked: linked,
+            can_attach: detached && head_len == 0,
             total_orders: head_len + tail_len,
         })
     }
@@ -239,6 +249,7 @@ mod tests {
         let head_owner = Pubkey::new_unique();
         let mut header = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
         header.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
+        header.next_sequence = count as u64 + 1;
         if side == Side::Ask {
             header.ask_count = count as u32;
             header.reserved2 = head_owner.to_bytes();
@@ -353,10 +364,10 @@ mod tests {
     fn audit_detects_safe_link_transitions_and_tampering() {
         for side in [Side::Ask, Side::Bid] {
             for (linked, count, expected) in [
-                (false, 0, NextAction::AttachEmpty),
+                (false, 0, NextAction::CloseDetached),
                 (true, 0, NextAction::DetachEmpty),
                 (true, 1, NextAction::DetachEmpty),
-                (false, 1, NextAction::HeadOrders),
+                (false, 1, NextAction::CloseDetached),
             ] {
                 let (market, mut mh, h, t, ho, to, owner) = valid(side, linked, count);
                 let hp = canonical_page(market, side, 0);
@@ -366,6 +377,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(result.next_action, expected);
                 assert_eq!(result.total_orders, count);
+                assert_eq!(result.can_attach, !linked && count == 0);
                 assert_eq!(
                     test_snapshot(market, side, owner, hp.page, tp, &mh, &h, &t, &ho, &to)
                         .builder()
@@ -374,6 +386,26 @@ mod tests {
                         .page,
                     tp.page
                 );
+                // Deliberately corrupt the next placement sequence without
+                // changing any page: zero and reused IDs must fail audits.
+                let mut bad_header = MarketHeader::decode_from(&mh).unwrap();
+                bad_header.next_sequence = 0;
+                let mut invalid = mh.clone();
+                bad_header.encode_into(&mut invalid).unwrap();
+                assert_eq!(
+                    test_snapshot(market, side, owner, hp.page, tp, &invalid, &h, &t, &ho, &to)
+                        .audit(),
+                    Err(AuditError::DuplicateSequence)
+                );
+                if count > 0 {
+                    bad_header.next_sequence = 1;
+                    bad_header.encode_into(&mut invalid).unwrap();
+                    assert_eq!(
+                        test_snapshot(market, side, owner, hp.page, tp, &invalid, &h, &t, &ho, &to)
+                            .audit(),
+                        Err(AuditError::DuplicateSequence)
+                    );
+                }
                 mh[12..16].copy_from_slice(&999u32.to_le_bytes());
                 if side == Side::Ask {
                     assert_eq!(
