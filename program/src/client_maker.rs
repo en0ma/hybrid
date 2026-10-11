@@ -65,18 +65,19 @@ pub fn reconcile_maker(
     if has_unconfirmed_mutation {
         return Err(ReconcileError::UnconfirmedMutation);
     }
-    if targets.iter().any(|t| {
-        t.index > 1 || t.base_qty == 0 || t.price_x64 == 0 || t.sqrt_price_x64 == 0
-    }) {
+    if targets
+        .iter()
+        .any(|t| t.index > 1 || t.base_qty == 0 || t.price_x64 == 0 || t.sqrt_price_x64 == 0)
+    {
         return Err(ReconcileError::InvalidTarget);
     }
     if resting.iter().enumerate().any(|(i, order)| {
         order.maker == maker
             && (order.index > 1
                 || order.sequence == 0
-                || resting[i + 1..].iter().any(|next| {
-                    next.maker == maker && next.sequence == order.sequence
-                }))
+                || resting[i + 1..]
+                    .iter()
+                    .any(|next| next.maker == maker && next.sequence == order.sequence))
     }) {
         return Err(ReconcileError::DuplicateOwnedOrder);
     }
@@ -177,11 +178,7 @@ mod tests {
 
     #[test]
     fn maker_reconciliation_blocks_retries_and_invalid_intent() {
-        let book = TwoPageBook::new(
-            Pubkey::new_unique(),
-            Pubkey::new_unique(),
-            Side::Bid,
-        );
+        let book = TwoPageBook::new(Pubkey::new_unique(), Pubkey::new_unique(), Side::Bid);
         let maker = Pubkey::new_unique();
         assert!(matches!(
             reconcile_maker(book, maker, &[], &[], true),
