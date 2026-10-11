@@ -234,11 +234,7 @@ mod tests {
     };
     type FixtureAccounts = (Pubkey, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Pubkey);
 
-    fn valid(
-        side: Side,
-        linked: bool,
-        count: usize,
-    ) -> FixtureAccounts {
+    fn valid(side: Side, linked: bool, count: usize) -> FixtureAccounts {
         let market = Pubkey::new_unique();
         let head_owner = Pubkey::new_unique();
         let mut header = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
