@@ -157,8 +157,6 @@ pub(super) fn process_linked_maker(
                         base_qty: qty,
                         sequence: market.next_sequence,
                     };
-                    hybrid_engine::validate_limit_ask(entry.as_limit_ask())
-                        .map_err(|_| ProgramError::InvalidInstructionData)?;
                     if index == 0 {
                         hybrid_state::insert_owned_ask(
                             &mut head,
@@ -308,8 +306,6 @@ pub(super) fn process_linked_maker(
                         base_qty: qty,
                         sequence: market.next_sequence,
                     };
-                    hybrid_engine::validate_limit_ask(entry.as_limit_ask())
-                        .map_err(|_| ProgramError::InvalidInstructionData)?;
                     if index == 0 {
                         hybrid_state::insert_owned_bid(
                             &mut head,
