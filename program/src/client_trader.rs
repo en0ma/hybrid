@@ -1,6 +1,6 @@
 //! Host-only executable trader plan, restricted to active CLOB liquidity.
 //! This does not advertise passive reserves as executable swap liquidity.
-use crate::client::{custody, maker_balance, BuildError, LinkedSwap, Side};
+use crate::client::{custody, maker_balance, BuildError, LinkedSwap};
 use crate::client_rpc::{MarketRpcSnapshot, SnapshotError};
 use solana_program::{instruction::Instruction, pubkey::Pubkey};
 
@@ -99,13 +99,11 @@ pub fn plan_active_swap(request: TraderRequest<'_>) -> Result<TraderPlan, Trader
         .iter()
         .map(|owner| maker_balance(request.market, *owner))
         .collect();
+    let (head, tail) = request.snapshot.snapshot().expected_addresses();
     let pages = if report.is_linked {
-        vec![
-            request.snapshot.snapshot().expected_addresses().0,
-            request.snapshot.snapshot().expected_addresses().1,
-        ]
+        vec![head, tail]
     } else {
-        vec![request.snapshot.snapshot().expected_addresses().0]
+        vec![head]
     };
     let builder = LinkedSwap {
         market: request.market,
