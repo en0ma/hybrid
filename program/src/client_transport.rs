@@ -30,13 +30,7 @@ pub fn read_book<T: AccountBatchRpc>(
 ) -> Result<MarketRpcSnapshot, TransportError> {
     let head = canonical_page(market, side, 0);
     let tail = canonical_page(market, side, 1);
-    let keys = [
-        market,
-        head.page,
-        legacy_head_owner,
-        tail.page,
-        tail.owner,
-    ];
+    let keys = [market, head.page, legacy_head_owner, tail.page, tail.owner];
     let (slot, accounts) = transport.read_batch(keys)?;
     let [market, head, head_owner, tail, tail_owner] =
         ordered_accounts(&keys, accounts, slot).map_err(TransportError::InvalidResponse)?;
@@ -49,7 +43,9 @@ pub fn read_book<T: AccountBatchRpc>(
         tail_owner,
         side,
     };
-    result.verify(min_slot).map_err(TransportError::InvalidResponse)?;
+    result
+        .verify(min_slot)
+        .map_err(TransportError::InvalidResponse)?;
     result
         .audit(min_slot)
         .map_err(TransportError::InvalidResponse)?;
