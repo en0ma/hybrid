@@ -31,7 +31,7 @@ fn two_sided_multi_maker_lifecycle_preserves_vault_coverage() {
     let mut makers = [MakerBalance::default(); 3];
     let mut vault = Assets::default();
 
-    for (maker, base, quote) in makers.iter_mut().zip([(1000, 3000), (2500, 1500), (800, 900)]) {
+    for (maker, (base, quote)) in makers.iter_mut().zip([(1000, 3000), (2500, 1500), (800, 900)]) {
         maker.base_free = base;
         maker.quote_free = quote;
         transfer_to_vault(&mut vault, base, quote);
