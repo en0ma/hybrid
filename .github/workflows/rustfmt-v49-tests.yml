@@ -1,0 +1,29 @@
+name: Temporary Rustfmt V49 Tests and Head Fix
+on:
+  pull_request:
+    paths:
+      - 'staging/v49_real_token_buy.rs.txt'
+      - 'staging/v49_real_token_sell.rs.txt'
+      - 'staging/linked_maker_head_sidecar_fix_v49.rs.txt'
+      - '.github/workflows/rustfmt-v49-tests.yml'
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: |
+          echo BEGIN_V49_CODE
+          rustfmt --edition 2021 --emit stdout staging/linked_maker_head_sidecar_fix_v49.rs.txt | tail -n +3 | base64 -w0
+          echo
+          echo END_V49_CODE
+          echo BEGIN_V49_BUY
+          rustfmt --edition 2021 --emit stdout staging/v49_real_token_buy.rs.txt | tail -n +3 | base64 -w0
+          echo
+          echo END_V49_BUY
+          echo BEGIN_V49_SELL
+          rustfmt --edition 2021 --emit stdout staging/v49_real_token_sell.rs.txt | tail -n +3 | base64 -w0
+          echo
+          echo END_V49_SELL
