@@ -656,6 +656,7 @@ async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
 async fn linked_buy_then_legacy_buy_consumes_compacted_head_with_real_tokens() {
     let f = fixture_with_linked(true);
     let first = multipage_buy_instruction(&f, 23, 250, 250, true);
+    let second = swap_instruction(&f, 15, 50, 50);
     let mut context = f.program_test.start_with_context().await;
     let hash = context.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
@@ -677,7 +678,6 @@ async fn linked_buy_then_legacy_buy_consumes_compacted_head_with_real_tokens() {
     assert_eq!(head.len(), 1);
     assert_eq!(head.as_slice()[0].base_qty, 50);
 
-    let second = swap_instruction(&f, 15, 50, 50);
     let hash = context.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
         &[second],
