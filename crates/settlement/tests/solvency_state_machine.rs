@@ -15,7 +15,11 @@ fn liabilities(makers: &[MakerBalance]) -> Assets {
     })
 }
 fn assert_solvent(makers: &[MakerBalance], vault: Assets) {
-    assert_eq!(liabilities(makers), vault, "maker collateral must equal simulated vault funds");
+    assert_eq!(
+        liabilities(makers),
+        vault,
+        "maker collateral must equal simulated vault funds"
+    );
 }
 fn transfer_to_vault(vault: &mut Assets, base: u64, quote: u64) {
     vault.base += u128::from(base);
@@ -31,7 +35,10 @@ fn two_sided_multi_maker_lifecycle_preserves_vault_coverage() {
     let mut makers = [MakerBalance::default(); 3];
     let mut vault = Assets::default();
 
-    for (maker, (base, quote)) in makers.iter_mut().zip([(1000, 3000), (2500, 1500), (800, 900)]) {
+    for (maker, (base, quote)) in makers
+        .iter_mut()
+        .zip([(1000, 3000), (2500, 1500), (800, 900)])
+    {
         maker.base_free = base;
         maker.quote_free = quote;
         transfer_to_vault(&mut vault, base, quote);
@@ -65,7 +72,9 @@ fn two_sided_multi_maker_lifecycle_preserves_vault_coverage() {
     makers[2].release_ask(200).unwrap();
     makers[2].release_bid(450).unwrap();
     assert_solvent(&makers, vault);
-    assert!(makers.iter().all(|m| m.base_locked == 0 && m.quote_locked == 0));
+    assert!(makers
+        .iter()
+        .all(|m| m.base_locked == 0 && m.quote_locked == 0));
 
     // Withdraw all free balances; no phantom collateral or dust remains.
     for maker in &mut makers {
@@ -80,16 +89,28 @@ fn two_sided_multi_maker_lifecycle_preserves_vault_coverage() {
 #[test]
 fn failures_do_not_mutate_collateral_or_simulated_vaults() {
     let mut maker = MakerBalance {
-        base_free: 10, base_locked: 20, quote_free: 30, quote_locked: 40,
+        base_free: 10,
+        base_locked: 20,
+        quote_free: 30,
+        quote_locked: 40,
     };
     let vault = liabilities(&[maker]);
-    let cases: &[(fn(&mut MakerBalance) -> Result<(), SettlementError>, SettlementError)] = &[
+    let cases: &[(
+        fn(&mut MakerBalance) -> Result<(), SettlementError>,
+        SettlementError,
+    )] = &[
         (|m| m.reserve_ask(11), SettlementError::InsufficientBase),
         (|m| m.reserve_bid(31), SettlementError::InsufficientQuote),
         (|m| m.release_ask(21), SettlementError::InsufficientBase),
         (|m| m.release_bid(41), SettlementError::InsufficientQuote),
-        (|m| m.settle_ask_fill(21, 1), SettlementError::InsufficientBase),
-        (|m| m.settle_bid_fill(1, 41), SettlementError::InsufficientQuote),
+        (
+            |m| m.settle_ask_fill(21, 1),
+            SettlementError::InsufficientBase,
+        ),
+        (
+            |m| m.settle_bid_fill(1, 41),
+            SettlementError::InsufficientQuote,
+        ),
         (|m| m.settle_ask_fill(0, 1), SettlementError::InvalidFill),
         (|m| m.settle_bid_fill(1, 0), SettlementError::InvalidFill),
     ];
@@ -118,10 +139,18 @@ fn deterministic_order_churn_conserves_collateral() {
         let amount = (seed % 23 + 1) as u64;
         let maker = &mut makers[i];
         match (seed >> 24) & 7 {
-            0 => { let _ = maker.reserve_ask(amount); }
-            1 => { let _ = maker.reserve_bid(amount); }
-            2 => { let _ = maker.release_ask(amount); }
-            3 => { let _ = maker.release_bid(amount); }
+            0 => {
+                let _ = maker.reserve_ask(amount);
+            }
+            1 => {
+                let _ = maker.reserve_bid(amount);
+            }
+            2 => {
+                let _ = maker.release_ask(amount);
+            }
+            3 => {
+                let _ = maker.release_bid(amount);
+            }
             4 | 5 if maker.base_locked >= amount => {
                 maker.settle_ask_fill(amount, amount).unwrap();
                 transfer_from_vault(&mut vault, amount, 0);
@@ -136,7 +165,9 @@ fn deterministic_order_churn_conserves_collateral() {
         }
         assert_solvent(&makers, vault);
         if step % 128 == 0 {
-            assert!(makers.iter().all(|m| m.base_free.checked_add(m.base_locked).is_some()));
+            assert!(makers
+                .iter()
+                .all(|m| m.base_free.checked_add(m.base_locked).is_some()));
         }
     }
 }
@@ -144,13 +175,19 @@ fn deterministic_order_churn_conserves_collateral() {
 #[test]
 fn overflow_does_not_commit_partial_balance_updates() {
     let mut maker = MakerBalance {
-        base_free: 0, base_locked: 1, quote_free: u64::MAX, quote_locked: 0,
+        base_free: 0,
+        base_locked: 1,
+        quote_free: u64::MAX,
+        quote_locked: 0,
     };
     let original = maker;
     assert_eq!(maker.settle_ask_fill(1, 1), Err(SettlementError::Overflow));
     assert_eq!(maker, original);
     maker = MakerBalance {
-        base_free: u64::MAX, base_locked: 0, quote_free: 0, quote_locked: 1,
+        base_free: u64::MAX,
+        base_locked: 0,
+        quote_free: 0,
+        quote_locked: 1,
     };
     let original = maker;
     assert_eq!(maker.settle_bid_fill(1, 1), Err(SettlementError::Overflow));
