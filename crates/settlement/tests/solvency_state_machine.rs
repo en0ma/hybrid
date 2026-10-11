@@ -86,6 +86,8 @@ fn two_sided_multi_maker_lifecycle_preserves_vault_coverage() {
     assert_eq!(vault, Assets::default());
 }
 
+type FailureCase = (fn(&mut MakerBalance) -> Result<(), SettlementError>, SettlementError);
+
 #[test]
 fn failures_do_not_mutate_collateral_or_simulated_vaults() {
     let mut maker = MakerBalance {
@@ -95,10 +97,7 @@ fn failures_do_not_mutate_collateral_or_simulated_vaults() {
         quote_locked: 40,
     };
     let vault = liabilities(&[maker]);
-    let cases: &[(
-        fn(&mut MakerBalance) -> Result<(), SettlementError>,
-        SettlementError,
-    )] = &[
+    let cases: &[FailureCase] = &[
         (|m| m.reserve_ask(11), SettlementError::InsufficientBase),
         (|m| m.reserve_bid(31), SettlementError::InsufficientQuote),
         (|m| m.release_ask(21), SettlementError::InsufficientBase),
@@ -136,7 +135,7 @@ fn deterministic_order_churn_conserves_collateral() {
     for step in 0..2048 {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
         let i = (seed as usize >> 16) % makers.len();
-        let amount = (seed % 23 + 1) as u64;
+        let amount = seed % 23 + 1;
         let maker = &mut makers[i];
         match (seed >> 24) & 7 {
             0 => {
