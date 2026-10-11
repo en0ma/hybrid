@@ -39,10 +39,16 @@ pub fn load(path: &Path) -> Result<SubmissionTracker, StoreError> {
 /// reconciles it; silently discarding it could permit duplicate submission.
 pub fn persist(path: &Path, tracker: &SubmissionTracker) -> Result<(), StoreError> {
     let parent = path.parent().ok_or_else(|| {
-        StoreError::Io(io::Error::new(io::ErrorKind::InvalidInput, "missing parent"))
+        StoreError::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "missing parent",
+        ))
     })?;
     let name = path.file_name().ok_or_else(|| {
-        StoreError::Io(io::Error::new(io::ErrorKind::InvalidInput, "missing filename"))
+        StoreError::Io(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "missing filename",
+        ))
     })?;
     let mut temporary_name = name.to_os_string();
     temporary_name.push(".pending");
