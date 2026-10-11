@@ -117,10 +117,7 @@ mod tests {
             assert_eq!(decode_journal(&bytes), Ok(tracker));
             let mut damaged = bytes;
             damaged[25] ^= 1;
-            assert_eq!(
-                decode_journal(&damaged),
-                Err(JournalError::InvalidChecksum)
-            );
+            assert_eq!(decode_journal(&damaged), Err(JournalError::InvalidChecksum));
             assert_eq!(
                 decode_journal(&bytes[..103]),
                 Err(JournalError::InvalidLength)
