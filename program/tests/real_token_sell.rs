@@ -838,7 +838,7 @@ fn linked_maker_ix(
     }
     bytes.extend_from_slice(data);
     let mut accounts = vec![
-        AccountMeta::new(f.market, false),
+        AccountMeta::new(f.market, opcode == 29 || opcode == 32),
         AccountMeta::new(f.ask_page, false),
         AccountMeta::new(f.owner_page, false),
         AccountMeta::new(f.bid_page_1, false),
