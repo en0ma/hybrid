@@ -145,9 +145,6 @@ pub(super) fn process_linked_maker(
                             .try_into()
                             .map_err(|_| ProgramError::InvalidInstructionData)?,
                     );
-                    if qty == 0 || market.next_sequence == 0 {
-                        return Err(ProgramError::InvalidInstructionData);
-                    }
                     let entry = hybrid_state::AskEntry {
                         price_x64: price,
                         sqrt_price_x64: sqrt,
@@ -297,9 +294,6 @@ pub(super) fn process_linked_maker(
                             .try_into()
                             .map_err(|_| ProgramError::InvalidInstructionData)?,
                     );
-                    if qty == 0 || market.next_sequence == 0 {
-                        return Err(ProgramError::InvalidInstructionData);
-                    }
                     let entry = hybrid_state::BidEntry {
                         price_x64: price,
                         sqrt_price_x64: sqrt,
