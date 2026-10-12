@@ -74,17 +74,24 @@ or that swap collateral and liquidity are sufficient.
    Supply page index 0 or 1, side, nonzero raw base quantity, Q64 price,
    and Q64 square-root price. The app derives canonical page PDAs and
    maker-balance PDA and builds opcode 30.
-3. **Cancel.** Obtain the confirmed sequence number from an independent
+3. **Deposit collateral / withdraw unused collateral.** With custody and
+   the maker-balance PDA already initialized, supply market base/quote SPL
+   mint addresses, select the asset and enter a nonzero raw atom amount.
+   Opcode 13 transfers funds from the wallet's source token account into
+   the market vault and credits the maker's free collateral; opcode 14
+   returns **only free collateral** to the wallet. Both simulate before
+   wallet approval and report confirmed before/after token balances.
+4. **Cancel.** Obtain the confirmed sequence number from an independent
    decoder/indexer or a verified explorer. Enter sequence and matching
    side/page; the app builds opcode 31. It does not guess an order ID.
-4. **Trade against the active book.** Configure base/quote vaults and
+5. **Trade against the active book.** Configure base/quote vaults and
    wallet-owned SPL token accounts. List all maker public keys touched by
    the intended fill (up to 8) and select 1 or 2 initialized book pages.
    The app derives corresponding maker-balance PDAs, builds opcodes 23–26
    for active exact-in/out buy/sell, and enforces nonzero integer bounds.
    **A quote engine/indexer must select the touched maker set and slippage
    limits**; the harness does not compute a trusted quote.
-5. **Verify balances.** Every mutation runs RPC simulation first. Only
+6. **Verify balances.** Every mutation runs RPC simulation first. Only
    successful simulation is presented to the wallet for signing. After
    the signed transaction is confirmed, the app displays the signature,
    explorer link, pre/post wallet SPL token balances and simulation CU.
