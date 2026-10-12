@@ -16,6 +16,7 @@ pub enum RangeError {
     ZeroLiquidity,
     PriceOutsideRange,
     Arithmetic(QuoteError),
+    LiquidityOverflow,
 }
 
 impl RangePosition {
@@ -59,6 +60,27 @@ impl RangePosition {
     }
 }
 
+/// Sum only currently active position liquidity; never count out-of-range LPs.
+/// Price-range crossings are evaluated with the same lower-inclusive,
+/// upper-exclusive convention as individual positions.
+pub fn active_liquidity(
+    positions: &[RangePosition],
+    sqrt_price_x64: u128,
+) -> Result<u128, RangeError> {
+    if sqrt_price_x64 == 0 {
+        return Err(RangeError::PriceOutsideRange);
+    }
+    let mut total = 0u128;
+    for position in positions {
+        if position.active_at(sqrt_price_x64)? {
+            total = total
+                .checked_add(position.liquidity)
+                .ok_or(RangeError::LiquidityOverflow)?;
+        }
+    }
+    Ok(total)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,6 +107,46 @@ mod tests {
         ] {
             assert!(range.validate().is_err());
         }
+    }
+
+    #[test]
+    fn overlapping_ranges_sum_only_in_range_liquidity() {
+        let positions = [
+            RangePosition {
+                lower_sqrt_price_x64: Q64,
+                upper_sqrt_price_x64: Q64 * 3,
+                liquidity: 7,
+            },
+            RangePosition {
+                lower_sqrt_price_x64: Q64 * 2,
+                upper_sqrt_price_x64: Q64 * 4,
+                liquidity: 11,
+            },
+        ];
+        assert_eq!(active_liquidity(&positions, Q64), Ok(7));
+        assert_eq!(active_liquidity(&positions, Q64 * 2), Ok(18));
+        assert_eq!(active_liquidity(&positions, Q64 * 3), Ok(11));
+        assert_eq!(active_liquidity(&positions, Q64 * 4), Ok(0));
+    }
+
+    #[test]
+    fn overlapping_ranges_reject_liquidity_overflow() {
+        let positions = [
+            RangePosition {
+                lower_sqrt_price_x64: Q64,
+                upper_sqrt_price_x64: Q64 * 2,
+                liquidity: u128::MAX,
+            },
+            RangePosition {
+                lower_sqrt_price_x64: Q64,
+                upper_sqrt_price_x64: Q64 * 2,
+                liquidity: 1,
+            },
+        ];
+        assert_eq!(
+            active_liquidity(&positions, Q64),
+            Err(RangeError::LiquidityOverflow)
+        );
     }
 
     #[test]
