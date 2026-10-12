@@ -137,7 +137,7 @@ pub fn process_instruction(
         Some(29) | Some(30) | Some(31) | Some(32) => {
             linked_maker::process_linked_maker(_program_id, _accounts, data)
         }
-        Some(33) => passive_swap::process(_program_id, _accounts, data),
+        Some(33) | Some(34) => passive_swap::process(_program_id, _accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
