@@ -54,6 +54,24 @@ for(let i=0;i<sigs.length;i++){
   if([23,24,25,26].includes(opcode) && !signedKeys.has(matching[0].accounts[2].toBase58())){
     throw Error("Taker is not a transaction signer");
   }
+  if([23,24,25,26].includes(opcode) && placingMaker){
+    // Linked swaps list page+sidecar pairs followed by touched maker-balance PDAs.
+    const ix=matching[0];
+    const decoded=bs58.decode(ix.data);
+    const pageCount=decoded[1];
+    if(!pageCount||pageCount>8||ix.accounts.length<9+2*pageCount+1){
+      throw Error("Malformed linked swap account layout");
+    }
+    const expectedBalance=PublicKey.findProgramAddressSync([
+      Buffer.from("maker-balance"),
+      new PublicKey(commonMarket).toBuffer(),
+      new PublicKey(placingMaker).toBuffer()
+    ],program)[0].toBase58();
+    const touched=ix.accounts.slice(9+2*pageCount).map(x=>x.toBase58());
+    if(!touched.includes(expectedBalance)) {
+      throw Error("Trade did not include placing maker collateral PDA");
+    }
+  }
   if([23,24,25,26].includes(opcode) && !verifiesTradeMovement(tx.meta.preTokenBalances,tx.meta.postTokenBalances)){
     throw Error("Trade receipt has no two-sided SPL balance movement");
   }
