@@ -158,3 +158,5 @@ Opcode 11 requires the **market account to sign**, in addition to a funded payer
 The six-signature form additionally checks initialization (12), deposit (13), and withdrawal (14) instructions with the same authenticated maker. Neither form proves that a specific order sequence was filled/canceled, nor verifies custody reserves without a decoded state audit.
 
 For three- and six-receipt evidence, the trade instruction must also include the placing maker's canonical `maker-balance` PDA among its touched maker accounts. This establishes account linkage, **not** proof that the maker order actually filled; order sequence and collateral balance deltas still require state decoding.
+
+The readiness check also decodes the Rust 128-byte market header, requires collateralized-active mode and nonzero lot/sequence fields, and compares the committed ask-owner sidecar with the operator-supplied sidecar. This is a market-level prerequisite, not proof of correct linked book pages or bid-owner tags.
