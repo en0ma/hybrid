@@ -97,7 +97,9 @@ npm run verify:receipts -- <PLACE_SIGNATURE> <TRADE_SIGNATURE> <CANCEL_SIGNATURE
 The verifier checks the devnet genesis hash, success receipt, distinct
 chronologically ordered signatures, invoked program ID, decoded instruction
 opcode, and the **same market address** in all three instructions. It prints
-slot, fees and pre/post SPL token balance entries for inspection. It does
+slot, fees and pre/post SPL token balance entries for inspection. The trade
+receipt additionally requires both a positive and negative SPL token-account
+balance delta and prints signed atom deltas. It does
 not certify that the place/trade/cancel targeted the same maker order or
 conserved every liquidity claim; inspect decoded market, maker balances,
 vaults and state transitions before milestone sign-off.
