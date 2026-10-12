@@ -23,6 +23,8 @@ test("maker ask lock and partial cancellation conserve collateral and keep vault
  const init=make(100,0,5,0);
  const placed=make(40,60,5,0);
  const canceled=make(75,25,5,0);
+ placed.vaultBalances.base="100";canceled.vaultBalances.base="100";
+ placed.custodyState.totalBase="100";canceled.custodyState.totalBase="100";
  assert.equal(compareOrderLockSnapshots(init,placed,"place","ask").amountAtoms,"60");
  assert.equal(compareOrderLockSnapshots(placed,canceled,"cancel","ask").amountAtoms,"35");
  assert.throws(()=>compareOrderLockSnapshots(init,placed,"place","bid"));
