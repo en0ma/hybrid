@@ -22,6 +22,9 @@ if(new Set(sigs).size!==sigs.length)throw Error("Each stage needs a distinct tra
 let commonMarket=null;
 let previousSlot=0;
 let placingMaker=null;
+let placedSide=null;
+let placedPage=null;
+let depositAsset=null;
 for(let i=0;i<sigs.length;i++){
   const tx=await connection.getParsedTransaction(sigs[i],{commitment:"confirmed",maxSupportedTransactionVersion:0});
   if(!tx||tx.meta?.err)throw Error("Transaction missing or failed at position "+(i+1));
@@ -41,6 +44,19 @@ for(let i=0;i<sigs.length;i++){
   previousSlot=tx.slot;
   const opcodes=matching.map(ix=>bs58.decode(ix.data)[0]);
   const opcode=opcodes[0];
+  const data=bs58.decode(matching[0].data);
+  if(opcode===13)depositAsset=data[1];
+  if(opcode===14&&depositAsset!==null&&data[1]!==depositAsset)
+    throw Error("Withdrawal asset differs from deposited collateral asset");
+  if(opcode===30){placedSide=data[1];placedPage=data[2];}
+  if(opcode===31){
+    if(data[1]!==placedSide||data[2]!==placedPage)
+      throw Error("Cancellation targets another book side or page");
+  }
+  if([23,24,25,26].includes(opcode)&&placedSide!==null){
+    const tradeSide=[23,24].includes(opcode)?0:1;
+    if(tradeSide!==placedSide)throw Error("Trade side differs from placed order");
+  }
   if([12,13,14,30,31].includes(opcode)){
     const ix=matching[0];
     const makerIndex=opcode===30||opcode===31?6:3;
