@@ -14,7 +14,8 @@ use hybrid_state::{
     passive_segments::{RangeClaim, SegmentTrade, SegmentedPool},
 };
 use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError, pubkey::Pubkey,
+    account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError,
+    pubkey::Pubkey,
 };
 
 /// Opcode 35 exact-in / 36 exact-out. Data: opcode, side, input-or-max:u64,
@@ -23,16 +24,32 @@ use solana_program::{
 /// vault, base/quote mint, vault authority, SPL Token program, then ALL
 /// position PDAs in ascending Pubkey byte order, each writable.
 pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if data.len() != 21 || !matches!(data[0], 35 | 36) || data[1] > 1
-        || data[20] == 0 || data[20] > 8 || accounts.len() != 12 + usize::from(data[20])
+    if data.len() != 21
+        || !matches!(data[0], 35 | 36)
+        || data[1] > 1
+        || data[20] == 0
+        || data[20] > 8
+        || accounts.len() != 12 + usize::from(data[20])
     {
         return Err(ProgramError::InvalidInstructionData);
     }
     let exact_out = data[0] == 36;
     let buy = data[1] == 0;
-    let input = u64::from_le_bytes(data[2..10].try_into().map_err(|_| ProgramError::InvalidInstructionData)?);
-    let output = u64::from_le_bytes(data[10..18].try_into().map_err(|_| ProgramError::InvalidInstructionData)?);
-    let bps = u16::from_le_bytes(data[18..20].try_into().map_err(|_| ProgramError::InvalidInstructionData)?);
+    let input = u64::from_le_bytes(
+        data[2..10]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidInstructionData)?,
+    );
+    let output = u64::from_le_bytes(
+        data[10..18]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidInstructionData)?,
+    );
+    let bps = u16::from_le_bytes(
+        data[18..20]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidInstructionData)?,
+    );
     if input == 0 || output == 0 || bps == 0 || bps >= 10_000 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -49,19 +66,29 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     let authority = &accounts[10];
     let token_program = &accounts[11];
     let positions = &accounts[12..];
-    if !taker.is_signer || !market.is_writable || !pool_account.is_writable
-        || !taker_base.is_writable || !taker_quote.is_writable
-        || !base_vault.is_writable || !quote_vault.is_writable
-        || market.owner != program_id || pool_account.owner != program_id
-        || positions.iter().any(|a| a.owner != program_id || !a.is_writable)
+    if !taker.is_signer
+        || !market.is_writable
+        || !pool_account.is_writable
+        || !taker_base.is_writable
+        || !taker_quote.is_writable
+        || !base_vault.is_writable
+        || !quote_vault.is_writable
+        || market.owner != program_id
+        || pool_account.owner != program_id
+        || positions
+            .iter()
+            .any(|a| a.owner != program_id || !a.is_writable)
     {
         return Err(ProgramError::InvalidAccountData);
     }
     let custody = load_custody(program_id, market, custody_account)?;
     let mut header = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    if !header.collateralized_active() || header.ask_count != 0
-        || header.bid_count() != 0 || header.boundary_count != 0 {
+    if !header.collateralized_active()
+        || header.ask_count != 0
+        || header.bid_count() != 0
+        || header.boundary_count != 0
+    {
         return Err(ProgramError::InvalidAccountData);
     }
     let mut pool = PoolAccount::decode_from(&pool_account.try_borrow_data()?)
@@ -70,19 +97,25 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         Pubkey::find_program_address(&[b"passive-pool", market.key.as_ref()], program_id);
     let (authority_key, authority_bump) =
         Pubkey::find_program_address(&[b"vault-authority", market.key.as_ref()], program_id);
-    if *pool_account.key != pool_key || pool.bump != pool_bump
-        || pool.market != market.key.to_bytes() || *authority.key != authority_key
+    if *pool_account.key != pool_key
+        || pool.bump != pool_bump
+        || pool.market != market.key.to_bytes()
+        || *authority.key != authority_key
         || *token_program.key != TOKEN_PROGRAM_ID
         || *base_vault.key != Pubkey::new_from_array(custody.base_vault)
         || *quote_vault.key != Pubkey::new_from_array(custody.quote_vault)
         || *base_mint.key != Pubkey::new_from_array(custody.base_mint)
         || *quote_mint.key != Pubkey::new_from_array(custody.quote_mint)
-        || pool.pool.accrued_base_fees != 0 || pool.pool.accrued_quote_fees != 0
+        || pool.pool.accrued_base_fees != 0
+        || pool.pool.accrued_quote_fees != 0
     {
         return Err(ProgramError::InvalidSeeds);
     }
     let all_keys = [
-        taker_base.key, taker_quote.key, base_vault.key, quote_vault.key,
+        taker_base.key,
+        taker_quote.key,
+        base_vault.key,
+        quote_vault.key,
     ];
     for i in 0..4 {
         for j in (i + 1)..4 {
@@ -95,10 +128,14 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     let (tq_mint, tq_owner) = token_account_fields(taker_quote)?;
     let (bv_mint, bv_owner) = token_account_fields(base_vault)?;
     let (qv_mint, qv_owner) = token_account_fields(quote_vault)?;
-    if tb_owner != taker.key.to_bytes() || tq_owner != taker.key.to_bytes()
-        || tb_mint != custody.base_mint || tq_mint != custody.quote_mint
-        || bv_mint != custody.base_mint || qv_mint != custody.quote_mint
-        || bv_owner != authority_key.to_bytes() || qv_owner != authority_key.to_bytes()
+    if tb_owner != taker.key.to_bytes()
+        || tq_owner != taker.key.to_bytes()
+        || tb_mint != custody.base_mint
+        || tq_mint != custody.quote_mint
+        || bv_mint != custody.base_mint
+        || qv_mint != custody.quote_mint
+        || bv_owner != authority_key.to_bytes()
+        || qv_owner != authority_key.to_bytes()
     {
         return Err(ProgramError::InvalidAccountData);
     }
@@ -113,11 +150,15 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
             .map_err(|_| ProgramError::InvalidAccountData)?;
         let owner = Pubkey::new_from_array(state.position.owner);
         let (expected, bump) = Pubkey::find_program_address(
-            &[b"passive-position", market.key.as_ref(), owner.as_ref(), &state.nonce.to_le_bytes()],
+            &[
+                b"passive-position",
+                market.key.as_ref(),
+                owner.as_ref(),
+                &state.nonce.to_le_bytes(),
+            ],
             program_id,
         );
-        if expected != *account.key || state.bump != bump
-            || state.market != market.key.to_bytes() {
+        if expected != *account.key || state.bump != bump || state.market != market.key.to_bytes() {
             return Err(ProgramError::InvalidSeeds);
         }
         claims.push(RangeClaim {
@@ -133,13 +174,22 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         });
         states.push(state);
     }
-    let mut ledger = SegmentedPool { pool: pool.pool, positions: claims };
-    ledger.verify().map_err(|_| ProgramError::InvalidAccountData)?;
+    let mut ledger = SegmentedPool {
+        pool: pool.pool,
+        positions: claims,
+    };
+    ledger
+        .verify()
+        .map_err(|_| ProgramError::InvalidAccountData)?;
     let mut active_liquidity = 0u128;
     for claim in &ledger.positions {
-        if claim.range.active_at(header.sqrt_price_x64)
-            .map_err(|_| ProgramError::InvalidAccountData)? {
-            active_liquidity = active_liquidity.checked_add(claim.range.liquidity)
+        if claim
+            .range
+            .active_at(header.sqrt_price_x64)
+            .map_err(|_| ProgramError::InvalidAccountData)?
+        {
+            active_liquidity = active_liquidity
+                .checked_add(claim.range.liquidity)
                 .ok_or(ProgramError::InvalidAccountData)?;
         }
     }
@@ -147,28 +197,48 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         return Err(ProgramError::InsufficientFunds);
     }
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
-    let state = PassiveState { sqrt_price_x64: header.sqrt_price_x64, liquidity: active_liquidity };
+    let state = PassiveState {
+        sqrt_price_x64: header.sqrt_price_x64,
+        liquidity: active_liquidity,
+    };
     let (gross, fee, quote) = if exact_out {
-        let first = if buy { buy_exact_out(state, output) } else { sell_exact_out(state, output) }
-            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        let first = if buy {
+            buy_exact_out(state, output)
+        } else {
+            sell_exact_out(state, output)
+        }
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
         let gross = u64::try_from(
             (u128::from(first.amount_in) * 10_000).div_ceil(10_000 - u128::from(bps)),
-        ).map_err(|_| ProgramError::InvalidInstructionData)?;
-        if gross > input { return Err(ProgramError::InvalidInstructionData); }
+        )
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+        if gross > input {
+            return Err(ProgramError::InvalidInstructionData);
+        }
         let fee = u64::try_from((u128::from(gross) * u128::from(bps)).div_ceil(10_000))
             .map_err(|_| ProgramError::InvalidInstructionData)?;
-        let net = gross.checked_sub(fee).ok_or(ProgramError::InvalidInstructionData)?;
-        let q = if buy { quote_quote_in_for_base_out(state, net) }
-            else { quote_base_in_for_quote_out(state, net) }
-            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        let net = gross
+            .checked_sub(fee)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        let q = if buy {
+            quote_quote_in_for_base_out(state, net)
+        } else {
+            quote_base_in_for_quote_out(state, net)
+        }
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
         (gross, fee, q)
     } else {
         let fee = u64::try_from((u128::from(input) * u128::from(bps)).div_ceil(10_000))
             .map_err(|_| ProgramError::InvalidInstructionData)?;
-        let net = input.checked_sub(fee).ok_or(ProgramError::InvalidInstructionData)?;
-        let q = if buy { quote_quote_in_for_base_out(state, net) }
-            else { quote_base_in_for_quote_out(state, net) }
-            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        let net = input
+            .checked_sub(fee)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        let q = if buy {
+            quote_quote_in_for_base_out(state, net)
+        } else {
+            quote_base_in_for_quote_out(state, net)
+        }
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
         (input, fee, q)
     };
     if fee == 0 || quote.amount_out < output || quote.amount_out == 0 {
@@ -177,63 +247,121 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     // This opcode processes one segment only; do not cross any active range
     // boundary without recomputing liquidity and attribution.
     for claim in &ledger.positions {
-        let old = claim.range.active_at(header.sqrt_price_x64)
+        let old = claim
+            .range
+            .active_at(header.sqrt_price_x64)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        let new = claim.range.active_at(quote.next_sqrt_price_x64)
+        let new = claim
+            .range
+            .active_at(quote.next_sqrt_price_x64)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        if old != new || (old && (quote.next_sqrt_price_x64 == claim.range.lower_sqrt_price_x64
-            || quote.next_sqrt_price_x64 == claim.range.upper_sqrt_price_x64)) {
+        if old != new
+            || (old
+                && (quote.next_sqrt_price_x64 == claim.range.lower_sqrt_price_x64
+                    || quote.next_sqrt_price_x64 == claim.range.upper_sqrt_price_x64))
+        {
             return Err(ProgramError::InvalidInstructionData);
         }
     }
     // Compound the fee into the per-position principal, so the legacy
     // authenticated close transfers current LP inventory including fees.
     let trade = if buy {
-        SegmentTrade::Buy { quote_in: gross, base_out: quote.amount_out, quote_fee: fee }
+        SegmentTrade::Buy {
+            quote_in: gross,
+            base_out: quote.amount_out,
+            quote_fee: fee,
+        }
     } else {
-        SegmentTrade::Sell { base_in: gross, quote_out: quote.amount_out, base_fee: fee }
+        SegmentTrade::Sell {
+            base_in: gross,
+            quote_out: quote.amount_out,
+            base_fee: fee,
+        }
     };
-    ledger.apply_segment(header.sqrt_price_x64, trade)
+    ledger
+        .apply_segment(header.sqrt_price_x64, trade)
         .map_err(|_| ProgramError::InsufficientFunds)?;
     for claim in &mut ledger.positions {
-        claim.base = claim.base.checked_add(claim.base_fees)
+        claim.base = claim
+            .base
+            .checked_add(claim.base_fees)
             .ok_or(ProgramError::InvalidAccountData)?;
-        claim.quote = claim.quote.checked_add(claim.quote_fees)
+        claim.quote = claim
+            .quote
+            .checked_add(claim.quote_fees)
             .ok_or(ProgramError::InvalidAccountData)?;
         claim.base_fees = 0;
         claim.quote_fees = 0;
     }
-    ledger.pool.base_reserve = ledger.pool.base_reserve.checked_add(ledger.pool.accrued_base_fees)
+    ledger.pool.base_reserve = ledger
+        .pool
+        .base_reserve
+        .checked_add(ledger.pool.accrued_base_fees)
         .ok_or(ProgramError::InvalidAccountData)?;
-    ledger.pool.quote_reserve = ledger.pool.quote_reserve.checked_add(ledger.pool.accrued_quote_fees)
+    ledger.pool.quote_reserve = ledger
+        .pool
+        .quote_reserve
+        .checked_add(ledger.pool.accrued_quote_fees)
         .ok_or(ProgramError::InvalidAccountData)?;
     ledger.pool.accrued_base_fees = 0;
     ledger.pool.accrued_quote_fees = 0;
-    ledger.verify().map_err(|_| ProgramError::InvalidAccountData)?;
+    ledger
+        .verify()
+        .map_err(|_| ProgramError::InvalidAccountData)?;
 
     let bump = [authority_bump];
     let seeds: &[&[u8]] = &[b"vault-authority", market.key.as_ref(), &bump];
     if buy {
-        transfer_checked(taker_quote, quote_mint, quote_vault, taker, token_program,
-            (gross, custody.quote_decimals), None)?;
-        transfer_checked(base_vault, base_mint, taker_base, authority, token_program,
-            (quote.amount_out, custody.base_decimals), Some(seeds))?;
+        transfer_checked(
+            taker_quote,
+            quote_mint,
+            quote_vault,
+            taker,
+            token_program,
+            (gross, custody.quote_decimals),
+            None,
+        )?;
+        transfer_checked(
+            base_vault,
+            base_mint,
+            taker_base,
+            authority,
+            token_program,
+            (quote.amount_out, custody.base_decimals),
+            Some(seeds),
+        )?;
     } else {
-        transfer_checked(taker_base, base_mint, base_vault, taker, token_program,
-            (gross, custody.base_decimals), None)?;
-        transfer_checked(quote_vault, quote_mint, taker_quote, authority, token_program,
-            (quote.amount_out, custody.quote_decimals), Some(seeds))?;
+        transfer_checked(
+            taker_base,
+            base_mint,
+            base_vault,
+            taker,
+            token_program,
+            (gross, custody.base_decimals),
+            None,
+        )?;
+        transfer_checked(
+            quote_vault,
+            quote_mint,
+            taker_quote,
+            authority,
+            token_program,
+            (quote.amount_out, custody.quote_decimals),
+            Some(seeds),
+        )?;
     }
     for (i, account) in positions.iter().enumerate() {
         states[i].position.base_principal = ledger.positions[i].base;
         states[i].position.quote_principal = ledger.positions[i].quote;
-        states[i].encode_into(&mut account.try_borrow_mut_data()?)
+        states[i]
+            .encode_into(&mut account.try_borrow_mut_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
     }
     pool.pool = ledger.pool;
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
     header.sqrt_price_x64 = quote.next_sqrt_price_x64;
-    header.encode_into(&mut market.try_borrow_mut_data()?)
+    header
+        .encode_into(&mut market.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
     pool.encode_into(&mut pool_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
