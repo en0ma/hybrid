@@ -41,3 +41,38 @@ export function compareMakerSnapshots(before,after,action,asset,amount){
   }
   return {action,delta,checked:true,verifiedVaultTransfers:true,verifiedCustodyTotals:true};
 }
+
+export function compareOrderLockSnapshots(before,after,action,side){
+  if(!["place","cancel"].includes(action)||!["ask","bid"].includes(side))
+    throw Error("Expected place/cancel and ask/bid");
+  if(before.cluster!==after.cluster||before.rpc!==after.rpc||
+     before.market!==after.market||before.maker!==after.maker)
+    throw Error("Snapshots refer to different maker/market or RPC");
+  if(!Number.isSafeInteger(before.slot)||!Number.isSafeInteger(after.slot)||
+     after.slot<before.slot)throw Error("Invalid snapshot slot order");
+  const a=before.makerState,b=after.makerState;
+  if(!a||!b||a.market!==b.market||a.owner!==b.owner)
+    throw Error("Maker account is missing or changed identity");
+  const asset=side==="ask"?"Base":"Quote";
+  const other=side==="ask"?"Quote":"Base";
+  const free=BigInt(b["free"+asset])-BigInt(a["free"+asset]);
+  const locked=BigInt(b["locked"+asset])-BigInt(a["locked"+asset]);
+  if(free+locked!==0n)throw Error("Order lock/unlock changed maker asset total");
+  if(action==="place"&&(free>=0n||locked<=0n))
+    throw Error("Placement did not move free collateral into locked collateral");
+  if(action==="cancel"&&(free<=0n||locked>=0n))
+    throw Error("Cancellation did not release remaining locked collateral");
+  for(const key of ["free"+other,"locked"+other])
+    if(a[key]!==b[key])throw Error("Order lock changed opposite asset");
+  for(const key of ["base","quote"]){
+    if(!before.vaultBalances||!after.vaultBalances||
+       before.vaultBalances[key]!==after.vaultBalances[key])
+      throw Error("Order lock/cancel unexpectedly moved SPL vault tokens");
+    const field=key==="base"?"totalBase":"totalQuote";
+    if(!before.custodyState||!after.custodyState||
+       before.custodyState[field]!==after.custodyState[field])
+      throw Error("Order lock/cancel unexpectedly changed custody totals");
+  }
+  return {action,side,amountAtoms:(action==="place"?locked:-locked).toString(),
+    makerAssetConserved:true,vaultsAndCustodyUnchanged:true};
+}
