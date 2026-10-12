@@ -12,6 +12,10 @@ export function tokenBalanceDeltas(pre=[],post=[]) {
 }
 export function verifiesTradeMovement(pre,post) {
   const deltas=tokenBalanceDeltas(pre,post);
-  // At least one token account is debited, and another credited.
+  const mintFor=new Map([...pre,...post].map(x=>[x.accountIndex,x.mint]));
+  // Settlement must change two distinct assets. Two transfers of only one
+  // mint (or a token-amount change with missing mint metadata) are insufficient.
+  const changedMints=new Set(deltas.map(x=>mintFor.get(x.accountIndex)));
+  if(changedMints.has(undefined)||changedMints.size<2)return false;
   return deltas.some(x=>x.delta>0n)&&deltas.some(x=>x.delta<0n);
 }
