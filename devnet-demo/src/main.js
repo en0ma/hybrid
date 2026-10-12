@@ -117,6 +117,20 @@ async function send(ix){
   const result=await connection.getMultipleAccountsInfoAndContext(accountKeys,"confirmed");
   if(result.value.some((v,i)=>v===null&&!accountKeys[i].equals(owner)&&!accountKeys[i].equals(tokenProgram)&&!accountKeys[i].equals(authority())))
     throw Error("Missing required initialized account. Inspect addresses before retrying.");
+  // Fail closed on spoofed market/sidecar/maker PDAs and token accounts.
+  // Every non-signer, non-token-program, non-PDA-authority instruction account
+  // must exist, and must have the expected owner before wallet approval.
+  const tokenKeys = [pk("baseToken"), pk("quoteToken"), pk("baseVault"), pk("quoteVault")];
+  for (let i = 0; i < accountKeys.length; i++) {
+    const key = accountKeys[i], account = result.value[i];
+    if (!account || key.equals(owner) || key.equals(tokenProgram) || key.equals(authority())) continue;
+    const expectedOwner = tokenKeys.some(token => token.equals(key)) ? tokenProgram : program;
+    if (!account.owner.equals(expectedOwner)) {
+      throw Error("Account owner mismatch: " + key.toBase58());
+    }
+  }
+  const deployment = await connection.getAccountInfo(program, "confirmed");
+  if (!deployment?.executable) throw Error("Hybrid program not deployed as executable on this devnet RPC");
   const before={};
   for(const id of ["baseToken","quoteToken"]){
     before[id]=(await connection.getTokenAccountBalance(pk(id),"confirmed")).value.amount;
