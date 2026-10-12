@@ -19,6 +19,7 @@ const report=[];
 if(new Set(sigs).size!==sigs.length)throw Error("Signatures must be three distinct transactions");
 let commonMarket=null;
 let previousSlot=0;
+let placingMaker=null;
 for(let i=0;i<sigs.length;i++){
   const tx=await connection.getParsedTransaction(sigs[i],{commitment:"confirmed",maxSupportedTransactionVersion:0});
   if(!tx||tx.meta?.err)throw Error("Transaction missing or failed at position "+(i+1));
@@ -36,6 +37,14 @@ for(let i=0;i<sigs.length;i++){
   if(tx.slot<previousSlot)throw Error("Receipt slots are not chronological");
   previousSlot=tx.slot;
   const opcodes=matching.map(ix=>bs58.decode(ix.data)[0]);
+  if(i===0||i===2){
+    // Linked maker opcodes 30/31 place the maker signer at account index 6.
+    const ix=matching[0];
+    if(ix.accounts.length!==7)throw Error("Unexpected linked maker instruction account layout");
+    const maker=ix.accounts[6].toBase58();
+    if(i===0)placingMaker=maker;
+    if(i===2&&maker!==placingMaker)throw Error("Cancel was not signed by the placing maker");
+  }
   if(i===1 && !verifiesTradeMovement(tx.meta.preTokenBalances,tx.meta.postTokenBalances)){
     throw Error("Trade receipt has no two-sided SPL balance movement");
   }
@@ -46,5 +55,5 @@ for(let i=0;i<sigs.length;i++){
     preTokenBalances:tx.meta.preTokenBalances||[],postTokenBalances:tx.meta.postTokenBalances||[]});
 }
 console.log(JSON.stringify({cluster:"devnet",program:program.toBase58(),
-  market:commonMarket,
+  market:commonMarket,placingMaker,
   warning:"These receipts share a market, but do not prove same maker/order, exact fill or inventory. Verify state transitions.",report},null,2));
