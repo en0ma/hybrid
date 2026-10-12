@@ -491,7 +491,10 @@ fn multi_fixture() -> (Fixture, Pubkey, Keypair) {
     };
     let mut pool_data = vec![0u8; PASSIVE_POOL_BYTES];
     pool.encode_into(&mut pool_data).unwrap();
-    f.program.as_mut().unwrap().add_account(f.pool, account(pool_data, ID));
+    f.program
+        .as_mut()
+        .unwrap()
+        .add_account(f.pool, account(pool_data, ID));
     let state = PositionAccount {
         bump,
         market: f.market.to_bytes(),
@@ -507,7 +510,10 @@ fn multi_fixture() -> (Fixture, Pubkey, Keypair) {
     };
     let mut data = vec![0u8; PASSIVE_POSITION_BYTES];
     state.encode_into(&mut data).unwrap();
-    f.program.as_mut().unwrap().add_account(second_position, account(data, ID));
+    f.program
+        .as_mut()
+        .unwrap()
+        .add_account(second_position, account(data, ID));
     f.program
         .as_mut()
         .unwrap()
