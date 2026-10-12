@@ -508,6 +508,7 @@ fn multi_fixture() -> (Fixture, Pubkey, Keypair) {
     let mut data = vec![0u8; PASSIVE_POSITION_BYTES];
     state.encode_into(&mut data).unwrap();
     f.program.add_account(second_position, account(data, ID));
+    f.program.add_account(second_lp.pubkey(), account(Vec::new(), Pubkey::default()));
     f.program.add_account(
         f.base_vault,
         token_account(f.base_mint, f.authority, 20_000),
