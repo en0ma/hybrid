@@ -2551,11 +2551,21 @@ fn process_close_passive_position(
         && pool.pool.base_reserve == state.position.base_principal
         && pool.pool.quote_reserve == state.position.quote_principal;
     let fee_base = if sole { pool.pool.accrued_base_fees } else { 0 };
-    let fee_quote = if sole { pool.pool.accrued_quote_fees } else { 0 };
-    let payout_base = state.position.base_principal
-        .checked_add(fee_base).ok_or(ProgramError::InvalidAccountData)?;
-    let payout_quote = state.position.quote_principal
-        .checked_add(fee_quote).ok_or(ProgramError::InvalidAccountData)?;
+    let fee_quote = if sole {
+        pool.pool.accrued_quote_fees
+    } else {
+        0
+    };
+    let payout_base = state
+        .position
+        .base_principal
+        .checked_add(fee_base)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let payout_quote = state
+        .position
+        .quote_principal
+        .checked_add(fee_quote)
+        .ok_or(ProgramError::InvalidAccountData)?;
     pool.pool
         .withdraw(&state.position)
         .map_err(|_| ProgramError::InsufficientFunds)?;
