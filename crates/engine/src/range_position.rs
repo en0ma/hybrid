@@ -21,8 +21,7 @@ pub enum RangeError {
 impl RangePosition {
     /// Validate the canonical open-upper/closed-lower sqrt-price interval.
     pub fn validate(self) -> Result<(), RangeError> {
-        if self.lower_sqrt_price_x64 == 0
-            || self.lower_sqrt_price_x64 >= self.upper_sqrt_price_x64
+        if self.lower_sqrt_price_x64 == 0 || self.lower_sqrt_price_x64 >= self.upper_sqrt_price_x64
         {
             return Err(RangeError::InvalidBounds);
         }
