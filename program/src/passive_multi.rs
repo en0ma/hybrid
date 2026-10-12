@@ -23,6 +23,20 @@ use solana_program::{
 /// Accounts: market, custody, pool, taker signer, taker base/quote, base/quote
 /// vault, base/quote mint, vault authority, SPL Token program, then ALL
 /// position PDAs in ascending Pubkey byte order, each writable.
+/// Execute up to eight separately verified segments atomically. Any failed
+/// leg causes Solana to roll back all earlier CPI transfers and state writes.
+pub fn process_batch(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    if data.len() < 2 || data[0] != 37 || data[1] == 0 || data[1] > 8
+        || data.len() != 2 + usize::from(data[1]) * 21
+    {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    for segment in data[2..].chunks_exact(21) {
+        process(program_id, accounts, segment)?;
+    }
+    Ok(())
+}
+
 pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
     if data.len() != 21
         || !matches!(data[0], 35 | 36)
@@ -181,11 +195,17 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     ledger
         .verify()
         .map_err(|_| ProgramError::InvalidAccountData)?;
+    let segment_price = if buy {
+        header.sqrt_price_x64
+    } else {
+        header.sqrt_price_x64.checked_sub(1)
+            .ok_or(ProgramError::InvalidInstructionData)?
+    };
     let mut active_liquidity = 0u128;
     for claim in &ledger.positions {
         if claim
             .range
-            .active_at(header.sqrt_price_x64)
+            .active_at(segment_price)
             .map_err(|_| ProgramError::InvalidAccountData)?
         {
             active_liquidity = active_liquidity
@@ -244,22 +264,23 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     if fee == 0 || quote.amount_out < output || quote.amount_out == 0 {
         return Err(ProgramError::InvalidInstructionData);
     }
-    // This opcode processes one segment only; do not cross any active range
-    // boundary without recomputing liquidity and attribution.
+    // No single segment may jump over a range boundary. Endpoint equality
+    // is permitted: the next segment reselects the appropriate active LPs.
+    let start_price = header.sqrt_price_x64;
+    let end_price = quote.next_sqrt_price_x64;
     for claim in &ledger.positions {
-        let old = claim
-            .range
-            .active_at(header.sqrt_price_x64)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-        let new = claim
-            .range
-            .active_at(quote.next_sqrt_price_x64)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-        if old != new
-            || (old
-                && (quote.next_sqrt_price_x64 == claim.range.lower_sqrt_price_x64
-                    || quote.next_sqrt_price_x64 == claim.range.upper_sqrt_price_x64))
-        {
+        let lo = claim.range.lower_sqrt_price_x64;
+        let hi = claim.range.upper_sqrt_price_x64;
+        let crossed = if buy {
+            end_price < start_price
+                || (start_price < lo && lo < end_price)
+                || (start_price < hi && hi < end_price)
+        } else {
+            end_price > start_price
+                || (end_price < lo && lo < start_price)
+                || (end_price < hi && hi < start_price)
+        };
+        if crossed {
             return Err(ProgramError::InvalidInstructionData);
         }
     }
@@ -279,7 +300,7 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         }
     };
     ledger
-        .apply_segment(header.sqrt_price_x64, trade)
+        .apply_segment(segment_price, trade)
         .map_err(|_| ProgramError::InsufficientFunds)?;
     for claim in &mut ledger.positions {
         claim.base = claim
