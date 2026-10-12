@@ -1,3 +1,4 @@
+import {clusterConfig,assertCluster} from "./cluster.js";
 // Evidence verifier: checks real successful devnet transactions invoking Hybrid.
 // Usage: node src/verify-receipts.js <place-signature> <trade-signature> <cancel-signature>
 // Does not claim the three signatures are causally linked without market/state evidence.
@@ -12,10 +13,10 @@ if(![3,6].includes(sigs.length)||sigs.some(s=>!/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.t
   console.error("Usage: node src/verify-receipts.js <place> <trade> <cancel> OR <init-maker> <deposit> <place> <trade> <cancel> <withdraw>");
   process.exit(2);
 }
-const rpc=process.env.SOLANA_DEVNET_RPC||"https://api.devnet.solana.com";
-const connection=new Connection(rpc,"confirmed");
-const expected="EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
-if(await connection.getGenesisHash()!==expected) throw Error("Not a devnet RPC");
+const mode=process.env.HYBRID_CLUSTER||"devnet";
+const cfg=clusterConfig(mode,process.env.SOLANA_RPC_URL||process.env.SOLANA_DEVNET_RPC||(mode==="surfpool"?"http://127.0.0.1:8899":"https://api.devnet.solana.com"));
+const connection=new Connection(cfg.url,"confirmed");
+await assertCluster(connection,mode);
 const program=new PublicKey(PROGRAM_ID);
 const report=[];
 if(new Set(sigs).size!==sigs.length)throw Error("Each stage needs a distinct transaction signature");
@@ -100,6 +101,6 @@ for(let i=0;i<sigs.length;i++){
     opcodes,feeLamports:tx.meta.fee,
     preTokenBalances:tx.meta.preTokenBalances||[],postTokenBalances:tx.meta.postTokenBalances||[]});
 }
-console.log(JSON.stringify({cluster:"devnet",program:program.toBase58(),
+console.log(JSON.stringify({cluster:mode,program:program.toBase58(),
   market:commonMarket,placingMaker,
   warning:"Receipts share a market and authenticated maker; they do not prove the same order sequence, correct fills, market funding or vault solvency. Inspect decoded state.",report},null,2));
