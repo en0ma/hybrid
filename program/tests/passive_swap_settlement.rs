@@ -831,3 +831,33 @@ async fn atomic_batch_crosses_into_next_lp_range_at_exact_price_boundary() {
         first_position.position.quote_principal + second_position.position.quote_principal
     );
 }
+
+#[tokio::test]
+async fn attacker_cannot_lower_single_lp_fee_or_change_vaults() {
+    let mut f = fixture();
+    let mut ix = swap(&f, 0, 100, 1, f.base_vault);
+    ix.data[18..20].copy_from_slice(&1u16.to_le_bytes());
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
+    assert!(!send(&mut ctx, ix, &f.taker).await);
+    let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    let state = PoolAccount::decode_from(&pool.data).unwrap();
+    assert_eq!(state.pool.base_reserve, 10_000);
+    assert_eq!(state.pool.quote_reserve, 10_000);
+    assert_eq!(state.pool.accrued_quote_fees, 0);
+}
+
+#[tokio::test]
+async fn attacker_cannot_lower_multi_lp_fee_or_change_vaults() {
+    let (mut f, second, _lp) = multi_fixture();
+    let mut positions = vec![f.position, second];
+    positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    let mut ix = multi_instruction(&f, 35, 0, 100, 1, &positions);
+    ix.data[18..20].copy_from_slice(&1u16.to_le_bytes());
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
+    assert!(!send(&mut ctx, ix, &f.taker).await);
+    let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    let state = PoolAccount::decode_from(&pool.data).unwrap();
+    assert_eq!(state.pool.base_reserve, 20_000);
+    assert_eq!(state.pool.quote_reserve, 20_000);
+    assert_eq!(state.pool.accrued_quote_fees, 0);
+}
