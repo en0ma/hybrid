@@ -1,3 +1,4 @@
+import {clusterConfig,assertCluster} from "./cluster.js";
 // Read-only devnet readiness check. No wallet or private key required.
 import {Connection,PublicKey} from "@solana/web3.js";
 import {PROGRAM_ID,TOKEN_PROGRAM_ID} from "./abi.js";
@@ -10,9 +11,10 @@ if(args.length!==names.length){
   console.error("Usage: node src/check-readiness.js <market> <ask-owner-sidecar> <bid-owner-sidecar> <base-vault> <quote-vault>");
   process.exit(2);
 }
-const conn=new Connection(process.env.SOLANA_DEVNET_RPC||"https://api.devnet.solana.com","confirmed");
-const genesis=await conn.getGenesisHash();
-if(genesis!=="EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG")throw Error("RPC is not devnet");
+const mode=process.env.HYBRID_CLUSTER||"devnet";
+const cfg=clusterConfig(mode,process.env.SOLANA_RPC_URL||process.env.SOLANA_DEVNET_RPC||(mode==="surfpool"?"http://127.0.0.1:8899":"https://api.devnet.solana.com"));
+const conn=new Connection(cfg.url,"confirmed");
+await assertCluster(conn,mode);
 const program=new PublicKey(PROGRAM_ID);
 const token=new PublicKey(TOKEN_PROGRAM_ID);
 const keys=Object.fromEntries(names.map((name,i)=>[name,new PublicKey(args[i])]));
@@ -94,6 +96,6 @@ if(custodyState){
   });
 }
 const bad=[...rows.filter(r=>!r.valid),...mintChecks.filter(r=>!r.valid)];
-console.log(JSON.stringify({network:"devnet",slot:result.context.slot,rows,mintChecks,custodyState,marketState,ready:bad.length===0,
+console.log(JSON.stringify({network:mode,slot:result.context.slot,rows,mintChecks,custodyState,marketState,ready:bad.length===0,
   warning:"Custody, initialized SPL vaults, their authority/mints, and recorded reserve lower bounds are checked; book integrity, maker balances and complete solvency are not proven."},null,2));
 if(bad.length)process.exitCode=1;
