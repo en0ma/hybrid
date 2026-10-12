@@ -27,6 +27,7 @@
         <label>Bid head/tail linked book <span class="hint">For pages 0 and 1, both PDAs must be initialized.</span></label>
       </section>
       <section><h2>Maker collateral lifecycle</h2>
+        <button id="initMaker">Simulate & initialize maker balance PDA</button>
         <p>Initialize custody and the maker-balance PDA before depositing. Only free collateral may be withdrawn; a resting order locks its commitment.</p>
         <label>Asset <select id="collateralAsset"><option value="base">Base</option><option value="quote">Quote</option></select></label>
         <label>Amount (raw atoms) <input id="collateralAmount" placeholder="1000"></label>
