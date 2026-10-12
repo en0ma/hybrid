@@ -26,7 +26,10 @@ use solana_program::{
 /// Execute up to eight separately verified segments atomically. Any failed
 /// leg causes Solana to roll back all earlier CPI transfers and state writes.
 pub fn process_batch(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if data.len() < 2 || data[0] != 37 || data[1] == 0 || data[1] > 8
+    if data.len() < 2
+        || data[0] != 37
+        || data[1] == 0
+        || data[1] > 8
         || data.len() != 2 + usize::from(data[1]) * 21
     {
         return Err(ProgramError::InvalidInstructionData);
@@ -198,7 +201,9 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     let segment_price = if buy {
         header.sqrt_price_x64
     } else {
-        header.sqrt_price_x64.checked_sub(1)
+        header
+            .sqrt_price_x64
+            .checked_sub(1)
             .ok_or(ProgramError::InvalidInstructionData)?
     };
     let mut active_liquidity = 0u128;
