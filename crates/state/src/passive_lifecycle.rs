@@ -252,7 +252,7 @@ mod tests {
         assert_eq!(
             ledger.settle(Trade::Buy {
                 quote_in: 10,
-                base_out: 99,
+                base_out: 101,
                 quote_fee: 1,
             }),
             Err(PassiveAccountingError::InsufficientReserves)
