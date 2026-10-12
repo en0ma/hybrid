@@ -45,7 +45,7 @@ async function confirmDevnet() {
   connection=rpc();
   const genesis=await connection.getGenesisHash();
   // Solana devnet genesis hash, not a mainnet-beta or testnet cluster.
-  if(genesis!=="EtWTRABZaYq6iMfeYKouRu166VU2xqa1") throw Error("RPC is not the expected Solana devnet cluster");
+  if(genesis!=="EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG") throw Error("RPC is not the expected Solana devnet cluster");
 }
 function unique(keys) {
   const set=new Set(keys.map((key)=>key.toBase58()));
