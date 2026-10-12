@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {compareMakerSnapshots} from "./transitions.js";
 const make=(freeBase,lockedBase,freeQuote,lockedQuote)=>({market:"m",maker:"u",makerState:{
  market:"m",owner:"u",freeBase:String(freeBase),lockedBase:String(lockedBase),
- freeQuote:String(freeQuote),lockedQuote:String(lockedQuote)}});
+ freeQuote:String(freeQuote),lockedQuote:String(lockedQuote)},vaultBalances:{base:String(freeBase),quote:String(freeQuote)}});
 test("deposit and withdrawal only change corresponding free collateral",()=>{
  const a=make(0,0,0,0),b=make(100,0,0,0),c=make(100,0,5,0),d=make(100,0,2,0);
  assert.equal(compareMakerSnapshots(a,b,"deposit","base","100").checked,true);
