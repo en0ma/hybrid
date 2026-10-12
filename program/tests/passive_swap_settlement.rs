@@ -463,7 +463,7 @@ fn multi_instruction(
     }
 }
 
-fn multi_fixture() -> (Fixture, Pubkey) {
+fn multi_fixture() -> (Fixture, Pubkey, Keypair) {
     let mut f = fixture();
     let second_lp = Keypair::new();
     let nonce = 43u64;
@@ -516,12 +516,12 @@ fn multi_fixture() -> (Fixture, Pubkey) {
         f.quote_vault,
         token_account(f.quote_mint, f.authority, 20_000),
     );
-    (f, second_position)
+    (f, second_position, second_lp)
 }
 
 #[tokio::test]
 async fn funded_multi_lp_buy_sell_and_exact_out_preserve_all_claims() {
-    let (f, second) = multi_fixture();
+    let (f, second, _second_lp) = multi_fixture();
     let mut positions = vec![f.position, second];
     positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
     let mut ctx = f.program.start_with_context().await;
@@ -568,7 +568,7 @@ async fn funded_multi_lp_buy_sell_and_exact_out_preserve_all_claims() {
 
 #[tokio::test]
 async fn omitted_multi_lp_claim_rejected_without_vault_changes() {
-    let (f, _) = multi_fixture();
+    let (f, _, _second_lp) = multi_fixture();
     let mut ctx = f.program.start_with_context().await;
     assert!(
         !send(
@@ -656,4 +656,59 @@ async fn atomic_multi_segment_batch_commits_both_fee_attributions() {
     }
     assert_eq!(base, pool.pool.base_reserve);
     assert_eq!(quote, pool.pool.quote_reserve);
+}
+
+#[tokio::test]
+async fn multi_lp_positions_redeem_all_post_trade_inventory() {
+    let (f, second, second_lp) = multi_fixture();
+    let mut positions = vec![f.position, second];
+    positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    let mut ctx = f.program.start_with_context().await;
+    assert!(send(&mut ctx, multi_instruction(&f, 35, 0, 100, 1, &positions), &f.taker).await);
+    let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    let before = PoolAccount::decode_from(&pool.data).unwrap().pool;
+    let lp1_base = Pubkey::new_unique();
+    let lp1_quote = Pubkey::new_unique();
+    let lp2_base = Pubkey::new_unique();
+    let lp2_quote = Pubkey::new_unique();
+    ctx.set_account(&lp1_base, &token_account(f.base_mint, f.lp.pubkey(), 0).into());
+    ctx.set_account(&lp1_quote, &token_account(f.quote_mint, f.lp.pubkey(), 0).into());
+    ctx.set_account(&lp2_base, &token_account(f.base_mint, second_lp.pubkey(), 0).into());
+    ctx.set_account(&lp2_quote, &token_account(f.quote_mint, second_lp.pubkey(), 0).into());
+    for (lp, nonce, destination_base, destination_quote, signer) in [
+        (f.lp.pubkey(), 42u64, lp1_base, lp1_quote, &f.lp),
+        (second_lp.pubkey(), 43u64, lp2_base, lp2_quote, &second_lp),
+    ] {
+        let mut data = vec![21];
+        data.extend_from_slice(&nonce.to_le_bytes());
+        let position = if nonce == 42 { f.position } else { second };
+        let instruction = Instruction {
+            program_id: ID,
+            accounts: vec![
+                AccountMeta::new_readonly(f.market, false),
+                AccountMeta::new_readonly(f.custody, false),
+                AccountMeta::new(f.pool, false),
+                AccountMeta::new(position, false),
+                AccountMeta::new(lp, true),
+                AccountMeta::new(f.base_vault, false),
+                AccountMeta::new(f.quote_vault, false),
+                AccountMeta::new(destination_base, false),
+                AccountMeta::new(destination_quote, false),
+                AccountMeta::new_readonly(f.base_mint, false),
+                AccountMeta::new_readonly(f.quote_mint, false),
+                AccountMeta::new_readonly(f.authority, false),
+                AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+            ],
+            data,
+        };
+        assert!(send(&mut ctx, instruction, signer).await);
+    }
+    let a = amount(&ctx.banks_client.get_account(lp1_base).await.unwrap().unwrap());
+    let b = amount(&ctx.banks_client.get_account(lp2_base).await.unwrap().unwrap());
+    let q1 = amount(&ctx.banks_client.get_account(lp1_quote).await.unwrap().unwrap());
+    let q2 = amount(&ctx.banks_client.get_account(lp2_quote).await.unwrap().unwrap());
+    assert_eq!(a + b, before.base_reserve);
+    assert_eq!(q1 + q2, before.quote_reserve);
+    let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    assert_eq!(PoolAccount::decode_from(&pool.data).unwrap().pool, PassivePool::default());
 }
