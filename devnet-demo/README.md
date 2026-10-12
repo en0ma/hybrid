@@ -130,9 +130,12 @@ Hybrid place (30), trade (23–26), and cancel (31) opcodes:
 \`\`\`sh
 cd devnet-demo
 npm run verify:receipts -- <PLACE_SIGNATURE> <TRADE_SIGNATURE> <CANCEL_SIGNATURE>
+
+# Six-stage maker lifecycle with real devnet signatures:
+npm run verify:receipts -- <INIT_MAKER_SIG> <DEPOSIT_SIG> <PLACE_SIG> <TRADE_SIG> <CANCEL_SIG> <WITHDRAW_SIG>
 \`\`\`
 
-The verifier checks the devnet genesis hash, success receipt, distinct
+Both modes check the devnet genesis hash, success receipt, distinct
 chronologically ordered signatures, invoked program ID, decoded instruction
 opcode, the **same market address** in all three instructions, and the **same maker\npublic key** in the place and cancel instruction account lists. It prints
 slot, fees and pre/post SPL token balance entries for inspection. The trade
@@ -151,3 +154,5 @@ Require security audit of the deployed build and market parameters.
 ## Custody initialization boundary
 
 Opcode 11 requires the **market account to sign**, in addition to a funded payer, valid mints, and existing token vaults. A normal connected maker wallet cannot sign as that market account. Custody initialization therefore remains an operator deployment prerequisite. The frontend now supports connected maker balance initialization (12), deposits (13), withdrawals (14), order placement/cancellation (30/31), and active swaps (23–26). Never provide a deployment keypair to the browser UI.
+
+The six-signature form additionally checks initialization (12), deposit (13), and withdrawal (14) instructions with the same authenticated maker. Neither form proves that a specific order sequence was filled/canceled, nor verifies custody reserves without a decoded state audit.
