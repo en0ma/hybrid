@@ -11,4 +11,6 @@ test("deposit and withdrawal only change corresponding free collateral",()=>{
  assert.equal(compareMakerSnapshots(c,d,"withdraw","quote","3").delta.freeQuote,"-3");
  assert.throws(()=>compareMakerSnapshots(a,make(100,1,0,0),"deposit","base","100"));
  assert.throws(()=>compareMakerSnapshots(a,b,"withdraw","base","100"));
+ const forged=structuredClone(b);forged.vaultBalances.base="99";
+ assert.throws(()=>compareMakerSnapshots(a,forged,"deposit","base","100"),/vault/i);
 });
