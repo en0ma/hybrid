@@ -26,6 +26,7 @@ pages, custody, token mints, vault authority, or owner sidecars.
 cd devnet-demo
 npm install
 npm test
+npm run check:runtime   # fails until Hybrid's compiled program ID is deployed
 npm run dev
 ```
 
