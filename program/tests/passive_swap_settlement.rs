@@ -928,3 +928,33 @@ async fn hostile_fee_in_second_batch_leg_rolls_back_first_leg() {
     assert_eq!(amount(&base), 20_000);
     assert_eq!(amount(&quote), 20_000);
 }
+
+#[tokio::test]
+async fn hostile_sell_fee_tiers_fail_closed_in_single_and_multi_lp() {
+    for side_fee in [0u16, 1, 9_999] {
+        let mut f = fixture();
+        let mut ix = swap(&f, 1, 200, 1, f.base_vault);
+        ix.data[18..20].copy_from_slice(&side_fee.to_le_bytes());
+        let mut ctx = f.program.take().unwrap().start_with_context().await;
+        assert!(!send(&mut ctx, ix, &f.taker).await);
+        let a = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+        let p = PoolAccount::decode_from(&a.data).unwrap();
+        assert_eq!(p.pool.base_reserve, 10_000);
+        assert_eq!(p.pool.quote_reserve, 10_000);
+        assert_eq!(p.pool.accrued_base_fees, 0);
+    }
+    for side_fee in [0u16, 1, 9_999] {
+        let (mut f, second, _lp) = multi_fixture();
+        let mut positions = vec![f.position, second];
+        positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+        let mut ix = multi_instruction(&f, 36, 1, 500, 10, &positions);
+        ix.data[18..20].copy_from_slice(&side_fee.to_le_bytes());
+        let mut ctx = f.program.take().unwrap().start_with_context().await;
+        assert!(!send(&mut ctx, ix, &f.taker).await);
+        let a = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+        let p = PoolAccount::decode_from(&a.data).unwrap();
+        assert_eq!(p.pool.base_reserve, 20_000);
+        assert_eq!(p.pool.quote_reserve, 20_000);
+        assert_eq!(p.pool.accrued_base_fees, 0);
+    }
+}
