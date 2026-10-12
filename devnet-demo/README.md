@@ -162,3 +162,5 @@ For three- and six-receipt evidence, the trade instruction must also include the
 The readiness check also decodes the Rust 128-byte market header, requires collateralized-active mode and nonzero lot/sequence fields, and compares the committed ask-owner sidecar with the operator-supplied sidecar. This is a market-level prerequisite, not proof of correct linked book pages or bid-owner tags.
 
 Readiness also reconstructs the Rust market header's 16-byte bid owner commitment (eight bytes in `reserved0`, eight in `reserved1`) and rejects an incorrect supplied bid sidecar. The matching tag alone is not full page integrity validation.
+
+Readiness independently fetches both custody-referenced SPL mint accounts, checks classic SPL Token mint ownership, initialized 82-byte mint layout, and matching decimals. This read-only check spans RPC requests and is not an atomic snapshot; verify again immediately before submitting transactions.
