@@ -616,7 +616,12 @@ async fn multi_segment_batch_reverts_all_earlier_spl_movements_on_later_error() 
     let pool = PoolAccount::decode_from(&pool.data).unwrap();
     assert_eq!(pool.pool.base_reserve, 20_000);
     assert_eq!(pool.pool.quote_reserve, 20_000);
-    let vault = ctx.banks_client.get_account(f.quote_vault).await.unwrap().unwrap();
+    let vault = ctx
+        .banks_client
+        .get_account(f.quote_vault)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(amount(&vault), 20_000);
 }
 
