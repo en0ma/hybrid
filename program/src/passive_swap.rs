@@ -7,8 +7,8 @@ use crate::{
     transfer_checked, TOKEN_PROGRAM_ID,
 };
 use hybrid_engine::{
-    passive_exact_out::{buy_exact_out, sell_exact_out}, quote_base_in_for_quote_out,
-    quote_quote_in_for_base_out, PassiveState,
+    passive_exact_out::{buy_exact_out, sell_exact_out},
+    quote_base_in_for_quote_out, quote_quote_in_for_base_out, PassiveState,
 };
 use hybrid_state::passive::{PoolAccount, PositionAccount};
 use solana_program::{
@@ -181,18 +181,15 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         .map_err(|_| ProgramError::InvalidInstructionData)?;
         let net = target.amount_in;
         let denominator = 10_000u128 - u128::from(fee_bps);
-        let gross = (u128::from(net) * 10_000u128)
-            .div_ceil(denominator);
-        let gross = u64::try_from(gross)
-            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        let gross = (u128::from(net) * 10_000u128).div_ceil(denominator);
+        let gross = u64::try_from(gross).map_err(|_| ProgramError::InvalidInstructionData)?;
         if gross > specified_in {
             return Err(ProgramError::InvalidInstructionData);
         }
-        let fee = u64::try_from(
-            (u128::from(gross) * u128::from(fee_bps)).div_ceil(10_000),
-        )
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-        let actual_net = gross.checked_sub(fee)
+        let fee = u64::try_from((u128::from(gross) * u128::from(fee_bps)).div_ceil(10_000))
+            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        let actual_net = gross
+            .checked_sub(fee)
             .ok_or(ProgramError::InvalidInstructionData)?;
         let result = if side == 0 {
             quote_quote_in_for_base_out(state, actual_net)
@@ -203,11 +200,10 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         (gross, fee, actual_net, result)
     } else {
         let gross = specified_in;
-        let fee = u64::try_from(
-            (u128::from(gross) * u128::from(fee_bps)).div_ceil(10_000),
-        )
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-        let net = gross.checked_sub(fee)
+        let fee = u64::try_from((u128::from(gross) * u128::from(fee_bps)).div_ceil(10_000))
+            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        let net = gross
+            .checked_sub(fee)
             .ok_or(ProgramError::InvalidInstructionData)?;
         let result = if side == 0 {
             quote_quote_in_for_base_out(state, net)
