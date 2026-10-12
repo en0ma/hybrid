@@ -456,7 +456,11 @@ fn multi_instruction(
         AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
     ];
     accounts.extend(positions.iter().map(|key| AccountMeta::new(*key, false)));
-    Instruction { program_id: ID, accounts, data }
+    Instruction {
+        program_id: ID,
+        accounts,
+        data,
+    }
 }
 
 fn multi_fixture() -> (Fixture, Pubkey) {
@@ -464,12 +468,16 @@ fn multi_fixture() -> (Fixture, Pubkey) {
     let second_lp = Keypair::new();
     let nonce = 43u64;
     let (second_position, bump) = Pubkey::find_program_address(
-        &[b"passive-position", f.market.as_ref(), second_lp.pubkey().as_ref(), &nonce.to_le_bytes()],
+        &[
+            b"passive-position",
+            f.market.as_ref(),
+            second_lp.pubkey().as_ref(),
+            &nonce.to_le_bytes(),
+        ],
         &ID,
     );
-    let (pool_key, pool_bump) = Pubkey::find_program_address(
-        &[b"passive-pool", f.market.as_ref()], &ID
-    );
+    let (pool_key, pool_bump) =
+        Pubkey::find_program_address(&[b"passive-pool", f.market.as_ref()], &ID);
     assert_eq!(pool_key, f.pool);
     let pool = PoolAccount {
         bump: pool_bump,
@@ -500,8 +508,14 @@ fn multi_fixture() -> (Fixture, Pubkey) {
     let mut data = vec![0u8; PASSIVE_POSITION_BYTES];
     state.encode_into(&mut data).unwrap();
     f.program.add_account(second_position, account(data, ID));
-    f.program.add_account(f.base_vault, token_account(f.base_mint, f.authority, 20_000));
-    f.program.add_account(f.quote_vault, token_account(f.quote_mint, f.authority, 20_000));
+    f.program.add_account(
+        f.base_vault,
+        token_account(f.base_mint, f.authority, 20_000),
+    );
+    f.program.add_account(
+        f.quote_vault,
+        token_account(f.quote_mint, f.authority, 20_000),
+    );
     (f, second_position)
 }
 
@@ -511,9 +525,30 @@ async fn funded_multi_lp_buy_sell_and_exact_out_preserve_all_claims() {
     let mut positions = vec![f.position, second];
     positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
     let mut ctx = f.program.start_with_context().await;
-    assert!(send(&mut ctx, multi_instruction(&f, 35, 0, 100, 1, &positions), &f.taker).await);
-    assert!(send(&mut ctx, multi_instruction(&f, 35, 1, 100, 1, &positions), &f.taker).await);
-    assert!(send(&mut ctx, multi_instruction(&f, 36, 0, 250, 10, &positions), &f.taker).await);
+    assert!(
+        send(
+            &mut ctx,
+            multi_instruction(&f, 35, 0, 100, 1, &positions),
+            &f.taker
+        )
+        .await
+    );
+    assert!(
+        send(
+            &mut ctx,
+            multi_instruction(&f, 35, 1, 100, 1, &positions),
+            &f.taker
+        )
+        .await
+    );
+    assert!(
+        send(
+            &mut ctx,
+            multi_instruction(&f, 36, 0, 250, 10, &positions),
+            &f.taker
+        )
+        .await
+    );
     let pool_account = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
     let pool = PoolAccount::decode_from(&pool_account.data).unwrap();
     assert_eq!(pool.pool.accrued_base_fees, 0);
@@ -535,9 +570,27 @@ async fn funded_multi_lp_buy_sell_and_exact_out_preserve_all_claims() {
 async fn omitted_multi_lp_claim_rejected_without_vault_changes() {
     let (f, _) = multi_fixture();
     let mut ctx = f.program.start_with_context().await;
-    assert!(!send(&mut ctx, multi_instruction(&f, 35, 0, 100, 1, &[f.position]), &f.taker).await);
+    assert!(
+        !send(
+            &mut ctx,
+            multi_instruction(&f, 35, 0, 100, 1, &[f.position]),
+            &f.taker
+        )
+        .await
+    );
     let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
-    assert_eq!(PoolAccount::decode_from(&pool.data).unwrap().pool.base_reserve, 20_000);
-    let vault = ctx.banks_client.get_account(f.base_vault).await.unwrap().unwrap();
+    assert_eq!(
+        PoolAccount::decode_from(&pool.data)
+            .unwrap()
+            .pool
+            .base_reserve,
+        20_000
+    );
+    let vault = ctx
+        .banks_client
+        .get_account(f.base_vault)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(amount(&vault), 20_000);
 }
