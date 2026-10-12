@@ -1,4 +1,6 @@
-# Devnet wallet-to-trade integration harness (milestone 59)
+# Wallet-to-trade integration harness: Surfpool or devnet (milestone 59)
+
+**Start with [SURFPOOL.md](./SURFPOOL.md)** for local Rust-program lifecycle testing. The harness supports an explicitly selected local Surfpool RPC without a devnet genesis check; it retains devnet-specific checks for public devnet mode.
 
 This browser-based developer smoke harness exercises the *real* Hybrid
 on-chain instruction ABI, not a mock matcher. It does **not** provision a
