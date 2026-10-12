@@ -52,6 +52,7 @@ for(const [name,expectedMint] of [["baseVault",custodyState?.baseMint],["quoteVa
   if(!account||!expectedMint)continue;
   try {
     if(account.data.length!==165)throw Error("Vault is not a classic SPL Token account");
+    if(account.data[108]!==1)throw Error("Vault SPL account is frozen or uninitialized");
     const mint=new PublicKey(account.data.subarray(0,32)).toBase58();
     const owner=new PublicKey(account.data.subarray(32,64)).toBase58();
     if(mint!==expectedMint||owner!==authority)throw Error("Vault mint or PDA authority mismatch");
@@ -76,5 +77,5 @@ try {
 }
 const bad=rows.filter(r=>!r.valid);
 console.log(JSON.stringify({network:"devnet",slot:result.context.slot,rows,custodyState,marketState,ready:bad.length===0,
-  warning:"Custody and SPL vault links are checked, but this does not prove book integrity, maker balances, or sufficient vault reserves."},null,2));
+  warning:"Custody, initialized SPL vaults, their authority/mints, and recorded reserve lower bounds are checked; book integrity, maker balances and complete solvency are not proven."},null,2));
 if(bad.length)process.exitCode=1;
