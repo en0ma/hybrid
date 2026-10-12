@@ -94,11 +94,13 @@ cd devnet-demo
 npm run verify:receipts -- <PLACE_SIGNATURE> <TRADE_SIGNATURE> <CANCEL_SIGNATURE>
 \`\`\`
 
-The verifier checks the devnet genesis hash, success receipt, invoked
-program ID and decoded instruction opcode. It prints slot, fees and
-pre/post SPL token balance entries for inspection. It does not certify that
-the three transactions targeted the same market or order; verify those
-manually with the linked-book state and associated account signatures.
+The verifier checks the devnet genesis hash, success receipt, distinct
+chronologically ordered signatures, invoked program ID, decoded instruction
+opcode, and the **same market address** in all three instructions. It prints
+slot, fees and pre/post SPL token balance entries for inspection. It does
+not certify that the place/trade/cancel targeted the same maker order or
+conserved every liquidity claim; inspect decoded market, maker balances,
+vaults and state transitions before milestone sign-off.
 
 Before marking milestone 59 complete, add a scripted/devnet fixture that
 deploys and initializes a reproducible market, funds maker balances and
