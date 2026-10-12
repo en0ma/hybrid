@@ -24,6 +24,7 @@ let previousSlot=0;
 let placingMaker=null;
 let placedSide=null;
 let placedPage=null;
+let placedSequence=null;
 for(let i=0;i<sigs.length;i++){
   const tx=await connection.getParsedTransaction(sigs[i],{commitment:"confirmed",maxSupportedTransactionVersion:0});
   if(!tx||tx.meta?.err)throw Error("Transaction missing or failed at position "+(i+1));
@@ -44,12 +45,17 @@ for(let i=0;i<sigs.length;i++){
   const opcodes=matching.map(ix=>bs58.decode(ix.data)[0]);
   const opcode=opcodes[0];
   const data=bs58.decode(matching[0].data);
-  if(opcode===30){placedSide=data[1];placedPage=data[2];}
+  if(opcode===30){
+    if(data.length!==43)throw Error("Invalid linked place instruction length");
+    placedSide=data[1];placedPage=data[2];
+  }
   if(opcode===31){
+    if(data.length!==11)throw Error("Invalid linked cancel instruction length");
     if(data[1]!==placedSide||data[2]!==placedPage)
       throw Error("Cancellation targets another book side or page");
   }
   if([23,24,25,26].includes(opcode)&&placedSide!==null){
+    if(data.length!==18)throw Error("Invalid linked swap instruction length");
     const tradeSide=[23,24].includes(opcode)?0:1;
     if(tradeSide!==placedSide)throw Error("Trade side differs from placed order");
   }
