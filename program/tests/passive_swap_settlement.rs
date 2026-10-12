@@ -861,3 +861,60 @@ async fn attacker_cannot_lower_multi_lp_fee_or_change_vaults() {
     assert_eq!(state.pool.quote_reserve, 20_000);
     assert_eq!(state.pool.accrued_quote_fees, 0);
 }
+
+#[tokio::test]
+async fn attacker_cannot_lower_exact_out_single_lp_fee() {
+    let mut f = fixture();
+    let mut ix = swap(&f, 0, 500, 10, f.base_vault);
+    ix.data[0] = 34;
+    ix.data[18..20].copy_from_slice(&1u16.to_le_bytes());
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
+    assert!(!send(&mut ctx, ix, &f.taker).await);
+    let a = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    let p = PoolAccount::decode_from(&a.data).unwrap();
+    assert_eq!(p.pool.base_reserve, 10_000);
+    assert_eq!(p.pool.quote_reserve, 10_000);
+}
+
+#[tokio::test]
+async fn attacker_cannot_lower_exact_out_multi_lp_fee() {
+    let (mut f, second, _lp) = multi_fixture();
+    let mut positions = vec![f.position, second];
+    positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    let mut ix = multi_instruction(&f, 36, 0, 500, 10, &positions);
+    ix.data[18..20].copy_from_slice(&1u16.to_le_bytes());
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
+    assert!(!send(&mut ctx, ix, &f.taker).await);
+    let a = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    let p = PoolAccount::decode_from(&a.data).unwrap();
+    assert_eq!(p.pool.base_reserve, 20_000);
+    assert_eq!(p.pool.quote_reserve, 20_000);
+}
+
+#[tokio::test]
+async fn hostile_fee_in_second_batch_leg_rolls_back_first_leg() {
+    let (mut f, second, _lp) = multi_fixture();
+    let mut positions = vec![f.position, second];
+    positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    let mut first = multi_instruction(&f, 35, 0, 100, 1, &positions);
+    let mut second_leg = multi_instruction(&f, 35, 1, 100, 1, &positions);
+    second_leg.data[18..20].copy_from_slice(&1u16.to_le_bytes());
+    let mut data = vec![37, 2];
+    data.append(&mut first.data);
+    data.extend_from_slice(&second_leg.data);
+    let ix = Instruction {
+        program_id: ID,
+        accounts: first.accounts,
+        data,
+    };
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
+    assert!(!send(&mut ctx, ix, &f.taker).await);
+    let a = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    let p = PoolAccount::decode_from(&a.data).unwrap();
+    assert_eq!(p.pool.base_reserve, 20_000);
+    assert_eq!(p.pool.quote_reserve, 20_000);
+    let base = ctx.banks_client.get_account(f.base_vault).await.unwrap().unwrap();
+    let quote = ctx.banks_client.get_account(f.quote_vault).await.unwrap().unwrap();
+    assert_eq!(amount(&base), 20_000);
+    assert_eq!(amount(&quote), 20_000);
+}
