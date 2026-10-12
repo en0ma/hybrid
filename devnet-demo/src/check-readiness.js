@@ -69,7 +69,7 @@ try {
   const raw=result.value[marketIndex]?.data;
   if(!raw)throw Error("Market account missing");
   marketState=decodeMarketHeader(raw);
-  verifyMarketActivation(marketState,keys.askOwner.toBase58());
+  verifyMarketActivation(marketState,keys.askOwner.toBase58(),keys.bidOwner.toBase58());
 } catch(error){
   rows[marketIndex].valid=false;
   rows[marketIndex].error=error.message;
