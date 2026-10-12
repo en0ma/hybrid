@@ -427,3 +427,117 @@ async fn exact_out_swap_exceeding_max_gross_input_rejects_atomically() {
     assert_eq!(pool.pool.quote_reserve, 10_000);
     assert_eq!(pool.pool.accrued_quote_fees, 0);
 }
+
+fn multi_instruction(
+    f: &Fixture,
+    opcode: u8,
+    side: u8,
+    input: u64,
+    output: u64,
+    positions: &[Pubkey],
+) -> Instruction {
+    let mut data = vec![opcode, side];
+    data.extend_from_slice(&input.to_le_bytes());
+    data.extend_from_slice(&output.to_le_bytes());
+    data.extend_from_slice(&100u16.to_le_bytes());
+    data.push(positions.len() as u8);
+    let mut accounts = vec![
+        AccountMeta::new(f.market, false),
+        AccountMeta::new_readonly(f.custody, false),
+        AccountMeta::new(f.pool, false),
+        AccountMeta::new_readonly(f.taker.pubkey(), true),
+        AccountMeta::new(f.taker_base, false),
+        AccountMeta::new(f.taker_quote, false),
+        AccountMeta::new(f.base_vault, false),
+        AccountMeta::new(f.quote_vault, false),
+        AccountMeta::new_readonly(f.base_mint, false),
+        AccountMeta::new_readonly(f.quote_mint, false),
+        AccountMeta::new_readonly(f.authority, false),
+        AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+    ];
+    accounts.extend(positions.iter().map(|key| AccountMeta::new(*key, false)));
+    Instruction { program_id: ID, accounts, data }
+}
+
+fn multi_fixture() -> (Fixture, Pubkey) {
+    let mut f = fixture();
+    let second_lp = Keypair::new();
+    let nonce = 43u64;
+    let (second_position, bump) = Pubkey::find_program_address(
+        &[b"passive-position", f.market.as_ref(), second_lp.pubkey().as_ref(), &nonce.to_le_bytes()],
+        &ID,
+    );
+    let (pool_key, pool_bump) = Pubkey::find_program_address(
+        &[b"passive-pool", f.market.as_ref()], &ID
+    );
+    assert_eq!(pool_key, f.pool);
+    let pool = PoolAccount {
+        bump: pool_bump,
+        market: f.market.to_bytes(),
+        pool: PassivePool {
+            base_reserve: 20_000,
+            quote_reserve: 20_000,
+            total_liquidity: 2_000,
+            ..PassivePool::default()
+        },
+    };
+    let mut pool_data = vec![0u8; PASSIVE_POOL_BYTES];
+    pool.encode_into(&mut pool_data).unwrap();
+    f.program.add_account(f.pool, account(pool_data, ID));
+    let state = PositionAccount {
+        bump,
+        market: f.market.to_bytes(),
+        nonce,
+        position: PassivePosition {
+            owner: second_lp.pubkey().to_bytes(),
+            lower_sqrt_price_x64: Q64 / 2,
+            upper_sqrt_price_x64: Q64 * 2,
+            liquidity: 1_000,
+            base_principal: 10_000,
+            quote_principal: 10_000,
+        },
+    };
+    let mut data = vec![0u8; PASSIVE_POSITION_BYTES];
+    state.encode_into(&mut data).unwrap();
+    f.program.add_account(second_position, account(data, ID));
+    f.program.add_account(f.base_vault, token_account(f.base_mint, f.authority, 20_000));
+    f.program.add_account(f.quote_vault, token_account(f.quote_mint, f.authority, 20_000));
+    (f, second_position)
+}
+
+#[tokio::test]
+async fn funded_multi_lp_buy_sell_and_exact_out_preserve_all_claims() {
+    let (f, second) = multi_fixture();
+    let mut positions = vec![f.position, second];
+    positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    let mut ctx = f.program.start_with_context().await;
+    assert!(send(&mut ctx, multi_instruction(&f, 35, 0, 100, 1, &positions), &f.taker).await);
+    assert!(send(&mut ctx, multi_instruction(&f, 35, 1, 100, 1, &positions), &f.taker).await);
+    assert!(send(&mut ctx, multi_instruction(&f, 36, 0, 250, 10, &positions), &f.taker).await);
+    let pool_account = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    let pool = PoolAccount::decode_from(&pool_account.data).unwrap();
+    assert_eq!(pool.pool.accrued_base_fees, 0);
+    assert_eq!(pool.pool.accrued_quote_fees, 0);
+    let mut base = 0u64;
+    let mut quote = 0u64;
+    for key in positions {
+        let a = ctx.banks_client.get_account(key).await.unwrap().unwrap();
+        let p = PositionAccount::decode_from(&a.data).unwrap();
+        base += p.position.base_principal;
+        quote += p.position.quote_principal;
+    }
+    assert_eq!(base, pool.pool.base_reserve);
+    assert_eq!(quote, pool.pool.quote_reserve);
+    assert!(quote > 20_000);
+}
+
+#[tokio::test]
+async fn omitted_multi_lp_claim_rejected_without_vault_changes() {
+    let (f, _) = multi_fixture();
+    let mut ctx = f.program.start_with_context().await;
+    assert!(!send(&mut ctx, multi_instruction(&f, 35, 0, 100, 1, &[f.position]), &f.taker).await);
+    let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    assert_eq!(PoolAccount::decode_from(&pool.data).unwrap().pool.base_reserve, 20_000);
+    let vault = ctx.banks_client.get_account(f.base_vault).await.unwrap().unwrap();
+    assert_eq!(amount(&vault), 20_000);
+}
