@@ -43,7 +43,23 @@ try {
   rows[custodyIndex].valid=false;
   rows[custodyIndex].error=error.message;
 }
+// SPL Token account layout: mint [0..32], authority [32..64], amount [64..72].
+const authority=derive([new TextEncoder().encode("vault-authority"),keys.market.toBytes()]).toBase58();
+for(const [name,expectedMint] of [["baseVault",custodyState?.baseMint],["quoteVault",custodyState?.quoteMint]]){
+  const i=ids.findIndex(([n])=>n===name);
+  const account=result.value[i];
+  if(!account||!expectedMint)continue;
+  try {
+    if(account.data.length!==165)throw Error("Vault is not a classic SPL Token account");
+    const mint=new PublicKey(account.data.subarray(0,32)).toBase58();
+    const owner=new PublicKey(account.data.subarray(32,64)).toBase58();
+    if(mint!==expectedMint||owner!==authority)throw Error("Vault mint or PDA authority mismatch");
+    rows[i].mint=mint;
+    rows[i].tokenAuthority=owner;
+    rows[i].amountAtoms=account.data.readBigUInt64LE(64).toString();
+  }catch(error){rows[i].valid=false;rows[i].error=error.message;}
+}
 const bad=rows.filter(r=>!r.valid);
 console.log(JSON.stringify({network:"devnet",slot:result.context.slot,rows,custodyState,ready:bad.length===0,
-  warning:"Existence/ownership is necessary, not sufficient: this does not decode pool, book links, collateral or market funding."},null,2));
+  warning:"Custody and SPL vault links are checked, but this does not prove book integrity, maker balances, or sufficient vault reserves."},null,2));
 if(bad.length)process.exitCode=1;
