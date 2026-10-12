@@ -41,6 +41,7 @@ mod linked_maker;
 mod multipage_buy;
 mod multipage_sell;
 mod page_lifecycle;
+mod passive_swap;
 
 pub fn process_instruction(
     _program_id: &Pubkey,
@@ -136,6 +137,7 @@ pub fn process_instruction(
         Some(29) | Some(30) | Some(31) | Some(32) => {
             linked_maker::process_linked_maker(_program_id, _accounts, data)
         }
+        Some(33) => passive_swap::process(_program_id, _accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
