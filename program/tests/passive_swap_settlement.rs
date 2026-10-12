@@ -399,3 +399,31 @@ async fn wrong_position_nonce_cannot_take_lp_reserves() {
     assert_eq!(state.position.base_principal, 10_000);
     assert_eq!(state.position.quote_principal, 10_000);
 }
+
+#[tokio::test]
+async fn exact_out_buy_uses_bounded_gross_input_and_accrues_lp_fee() {
+    let f = fixture();
+    let mut ctx = f.program.start_with_context().await;
+    let mut instruction = swap(&f, 0, 300, 10, f.base_vault);
+    instruction.data[0] = 34;
+    assert!(send(&mut ctx, instruction, &f.taker).await);
+    let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    let pool = PoolAccount::decode_from(&pool.data).unwrap();
+    assert!(pool.pool.base_reserve <= 9_990);
+    assert!(pool.pool.accrued_quote_fees > 0);
+    assert!(pool.pool.quote_reserve <= 10_300);
+}
+
+#[tokio::test]
+async fn exact_out_swap_exceeding_max_gross_input_rejects_atomically() {
+    let f = fixture();
+    let mut ctx = f.program.start_with_context().await;
+    let mut instruction = swap(&f, 0, 1, 100, f.base_vault);
+    instruction.data[0] = 34;
+    assert!(!send(&mut ctx, instruction, &f.taker).await);
+    let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    let pool = PoolAccount::decode_from(&pool.data).unwrap();
+    assert_eq!(pool.pool.base_reserve, 10_000);
+    assert_eq!(pool.pool.quote_reserve, 10_000);
+    assert_eq!(pool.pool.accrued_quote_fees, 0);
+}
