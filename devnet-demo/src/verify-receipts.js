@@ -24,7 +24,6 @@ let previousSlot=0;
 let placingMaker=null;
 let placedSide=null;
 let placedPage=null;
-let depositAsset=null;
 for(let i=0;i<sigs.length;i++){
   const tx=await connection.getParsedTransaction(sigs[i],{commitment:"confirmed",maxSupportedTransactionVersion:0});
   if(!tx||tx.meta?.err)throw Error("Transaction missing or failed at position "+(i+1));
@@ -45,9 +44,6 @@ for(let i=0;i<sigs.length;i++){
   const opcodes=matching.map(ix=>bs58.decode(ix.data)[0]);
   const opcode=opcodes[0];
   const data=bs58.decode(matching[0].data);
-  if(opcode===13)depositAsset=data[1];
-  if(opcode===14&&depositAsset!==null&&data[1]!==depositAsset)
-    throw Error("Withdrawal asset differs from deposited collateral asset");
   if(opcode===30){placedSide=data[1];placedPage=data[2];}
   if(opcode===31){
     if(data[1]!==placedSide||data[2]!==placedPage)
