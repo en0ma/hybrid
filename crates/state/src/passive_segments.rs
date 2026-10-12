@@ -36,13 +36,34 @@ fn proportion(amount: u64, numerator: u128, denominator: u128) -> Result<u64, Pa
     if denominator == 0 || numerator > denominator {
         return Err(PassiveAccountingError::InvalidPosition);
     }
-    let q = u128::from(amount) / denominator;
-    let r = u128::from(amount) % denominator;
-    let product = q
-        .checked_mul(numerator)
-        .and_then(|x| r.checked_mul(numerator).and_then(|y| x.checked_add(y / denominator)))
-        .ok_or(PassiveAccountingError::Overflow)?;
-    u64::try_from(product).map_err(|_| PassiveAccountingError::Overflow)
+    if let Some(product) = u128::from(amount).checked_mul(numerator) {
+        return u64::try_from(product / denominator)
+            .map_err(|_| PassiveAccountingError::Overflow);
+    }
+    // Long division of the 192-bit product, keeping the remainder strictly
+    // below denominator. Subtraction-based modular addition cannot overflow.
+    let mut quotient = 0u128;
+    let mut remainder = 0u128;
+    for bit in (0..64).rev() {
+        quotient = quotient.checked_mul(2).ok_or(PassiveAccountingError::Overflow)?;
+        let twice = denominator - remainder;
+        if remainder >= twice {
+            remainder -= twice;
+            quotient += 1;
+        } else {
+            remainder *= 2;
+        }
+        if (amount >> bit) & 1 == 1 {
+            let gap = denominator - numerator;
+            if remainder >= gap {
+                remainder -= gap;
+                quotient += 1;
+            } else {
+                remainder += numerator;
+            }
+        }
+    }
+    u64::try_from(quotient).map_err(|_| PassiveAccountingError::Overflow)
 }
 
 impl SegmentedPool {
