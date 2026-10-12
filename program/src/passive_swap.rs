@@ -40,7 +40,7 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     let nonce_bytes: [u8; 8] = data[20..28]
         .try_into()
         .map_err(|_| ProgramError::InvalidInstructionData)?;
-    if specified_in == 0 || min_out == 0 || fee_bps == 0 || fee_bps >= 10_000 {
+    if specified_in == 0 || min_out == 0 || fee_bps != crate::PASSIVE_FEE_BPS {
         return Err(ProgramError::InvalidInstructionData);
     }
     let market_account = &accounts[0];

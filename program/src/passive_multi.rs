@@ -67,7 +67,7 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
             .try_into()
             .map_err(|_| ProgramError::InvalidInstructionData)?,
     );
-    if input == 0 || output == 0 || bps == 0 || bps >= 10_000 {
+    if input == 0 || output == 0 || bps != crate::PASSIVE_FEE_BPS {
         return Err(ProgramError::InvalidInstructionData);
     }
     let market = &accounts[0];

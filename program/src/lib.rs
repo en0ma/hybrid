@@ -42,6 +42,9 @@ mod multipage_buy;
 mod multipage_sell;
 mod page_lifecycle;
 mod passive_multi;
+
+/// Fixed passive trading fee until authenticated per-market configuration exists.
+const PASSIVE_FEE_BPS: u16 = 100;
 mod passive_swap;
 
 pub fn process_instruction(
