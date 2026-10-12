@@ -760,3 +760,56 @@ async fn multi_lp_positions_redeem_all_post_trade_inventory() {
         PassivePool::default()
     );
 }
+
+#[tokio::test]
+async fn atomic_batch_crosses_into_next_lp_range_at_exact_price_boundary() {
+    let (f, second, _second_lp) = multi_fixture();
+    let mut positions = vec![f.position, second];
+    positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    let mut ctx = f.program.start_with_context().await;
+    let second_account = ctx.banks_client.get_account(second).await.unwrap().unwrap();
+    let mut second_state = PositionAccount::decode_from(&second_account.data).unwrap();
+    second_state.position.lower_sqrt_price_x64 = Q64 * 2;
+    second_state.position.upper_sqrt_price_x64 = Q64 * 4;
+    let mut second_data = vec![0u8; PASSIVE_POSITION_BYTES];
+    second_state.encode_into(&mut second_data).unwrap();
+    ctx.set_account(&second, &account(second_data, ID).into());
+    ctx.set_account(
+        &f.taker_quote,
+        &token_account(f.quote_mint, f.taker.pubkey(), 5_000).into(),
+    );
+
+    // First segment has active liquidity 1000, net quote 1000 exactly
+    // moves sqrt price from Q64 to 2*Q64; second segment belongs only
+    // to the next LP range after the boundary.
+    let mut first = multi_instruction(&f, 35, 0, 1_011, 1, &positions);
+    let next = multi_instruction(&f, 35, 0, 100, 1, &positions);
+    let mut data = vec![37, 2];
+    data.append(&mut first.data);
+    data.extend_from_slice(&next.data);
+    let instruction = Instruction {
+        program_id: ID,
+        accounts: first.accounts,
+        data,
+    };
+    assert!(send(&mut ctx, instruction, &f.taker).await);
+    let market = ctx.banks_client.get_account(f.market).await.unwrap().unwrap();
+    let market = MarketHeader::decode_from(&market.data).unwrap();
+    assert!(market.sqrt_price_x64 > Q64 * 2);
+    let first_position = ctx.banks_client.get_account(f.position).await.unwrap().unwrap();
+    let first_position = PositionAccount::decode_from(&first_position.data).unwrap();
+    let second_position = ctx.banks_client.get_account(second).await.unwrap().unwrap();
+    let second_position = PositionAccount::decode_from(&second_position.data).unwrap();
+    assert_eq!(first_position.position.base_principal, 9_500);
+    assert!(second_position.position.base_principal < 10_000);
+    let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    let pool = PoolAccount::decode_from(&pool.data).unwrap();
+    assert_eq!(
+        pool.pool.base_reserve,
+        first_position.position.base_principal + second_position.position.base_principal
+    );
+    assert_eq!(
+        pool.pool.quote_reserve,
+        first_position.position.quote_principal + second_position.position.quote_principal
+    );
+}
