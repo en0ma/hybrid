@@ -56,7 +56,10 @@ for(const [name,expectedMint] of [["baseVault",custodyState?.baseMint],["quoteVa
     if(mint!==expectedMint||owner!==authority)throw Error("Vault mint or PDA authority mismatch");
     rows[i].mint=mint;
     rows[i].tokenAuthority=owner;
-    rows[i].amountAtoms=account.data.readBigUInt64LE(64).toString();
+    const amount=account.data.readBigUInt64LE(64);
+    rows[i].amountAtoms=amount.toString();
+    const recorded=BigInt(name==="baseVault"?custodyState.totalBase:custodyState.totalQuote);
+    if(amount<recorded)throw Error("Vault balance below custody recorded collateral total");
   }catch(error){rows[i].valid=false;rows[i].error=error.message;}
 }
 const bad=rows.filter(r=>!r.valid);
