@@ -3,6 +3,7 @@
 // Does not claim the three signatures are causally linked without market/state evidence.
 import {Connection,PublicKey} from "@solana/web3.js";
 import {PROGRAM_ID} from "./abi.js";
+import {verifiesTradeMovement,tokenBalanceDeltas} from "./evidence.js";
 const sigs=process.argv.slice(2);
 if(sigs.length!==3||sigs.some(s=>!/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(s))){
   console.error("Usage: node src/verify-receipts.js <place-signature> <trade-signature> <cancel-signature>");
@@ -35,7 +36,12 @@ for(let i=0;i<sigs.length;i++){
   if(tx.slot<previousSlot)throw Error("Receipt slots are not chronological");
   previousSlot=tx.slot;
   const opcodes=matching.map(ix=>bs58.decode(ix.data)[0]);
-  report.push({kind:["place","trade","cancel"][i],signature:sigs[i],slot:tx.slot,
+  if(i===1 && !verifiesTradeMovement(tx.meta.preTokenBalances,tx.meta.postTokenBalances)){
+    throw Error("Trade receipt has no two-sided SPL balance movement");
+  }
+  const tokenDeltas=tokenBalanceDeltas(tx.meta.preTokenBalances,tx.meta.postTokenBalances)
+    .map(x=>({accountIndex:x.accountIndex,deltaAtoms:x.delta.toString()}));
+  report.push({tokenDeltas,kind:["place","trade","cancel"][i],signature:sigs[i],slot:tx.slot,
     opcodes,feeLamports:tx.meta.fee,
     preTokenBalances:tx.meta.preTokenBalances||[],postTokenBalances:tx.meta.postTokenBalances||[]});
 }
