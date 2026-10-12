@@ -2,6 +2,7 @@
 import {Connection,PublicKey} from "@solana/web3.js";
 import {PROGRAM_ID,TOKEN_PROGRAM_ID} from "./abi.js";
 import {decodeCustody,verifyCustodyLinks} from "./custody.js";
+import {decodeMarketHeader,verifyMarketActivation} from "./market.js";
 
 const names=["market","askOwner","bidOwner","baseVault","quoteVault"];
 const args=process.argv.slice(2);
@@ -62,7 +63,18 @@ for(const [name,expectedMint] of [["baseVault",custodyState?.baseMint],["quoteVa
     if(amount<recorded)throw Error("Vault balance below custody recorded collateral total");
   }catch(error){rows[i].valid=false;rows[i].error=error.message;}
 }
+let marketState=null;
+const marketIndex=ids.findIndex(([name])=>name==="market");
+try {
+  const raw=result.value[marketIndex]?.data;
+  if(!raw)throw Error("Market account missing");
+  marketState=decodeMarketHeader(raw);
+  verifyMarketActivation(marketState,keys.askOwner.toBase58());
+} catch(error){
+  rows[marketIndex].valid=false;
+  rows[marketIndex].error=error.message;
+}
 const bad=rows.filter(r=>!r.valid);
-console.log(JSON.stringify({network:"devnet",slot:result.context.slot,rows,custodyState,ready:bad.length===0,
+console.log(JSON.stringify({network:"devnet",slot:result.context.slot,rows,custodyState,marketState,ready:bad.length===0,
   warning:"Custody and SPL vault links are checked, but this does not prove book integrity, maker balances, or sufficient vault reserves."},null,2));
 if(bad.length)process.exitCode=1;
