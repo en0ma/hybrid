@@ -31,6 +31,20 @@ constant and recompile rather than sending instructions to an arbitrary ID.
 the market must already have been initialized against the program ID.
 Public RPC may enforce rate limits.
 
+## Generate account manifest
+
+The market public key is sufficient to derive the program custody and
+linked-book PDAs, without any RPC access or signing:
+
+```sh
+npm run print:manifest -- <MARKET_PUBKEY> [MAKER_PUBKEY]
+```
+
+The page-0 owner sidecars are **externally created and bound accounts**;
+they cannot safely be guessed from a PDA seed. Obtain them from the
+initialization operator or authenticated market state. The base/quote vaults
+and mints must also be supplied from the actual funded deployment.
+
 ## Read-only market readiness probe
 
 Before opening the browser, verify that the configured market, book pages,
