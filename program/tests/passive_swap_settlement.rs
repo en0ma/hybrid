@@ -53,7 +53,7 @@ fn amount(account: &Account) -> u64 {
 }
 
 struct Fixture {
-    program: ProgramTest,
+    program: Option<ProgramTest>,
     market: Pubkey,
     custody: Pubkey,
     pool: Pubkey,
@@ -164,7 +164,7 @@ fn fixture() -> Fixture {
     program.add_account(lp.pubkey(), account(Vec::new(), Pubkey::default()));
     program.add_account(taker.pubkey(), account(Vec::new(), Pubkey::default()));
     Fixture {
-        program,
+        program: Some(program),
         market,
         custody,
         pool,
@@ -226,8 +226,8 @@ async fn send(
 
 #[tokio::test]
 async fn funded_buy_sell_then_fee_aware_lp_close_conserves_tokens() {
-    let f = fixture();
-    let mut ctx = f.program.start_with_context().await;
+    let mut f = fixture();
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
     assert!(send(&mut ctx, swap(&f, 0, 100, 1, f.base_vault), &f.taker).await);
     let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
     let pool = PoolAccount::decode_from(&pool.data).unwrap();
@@ -330,8 +330,8 @@ async fn funded_buy_sell_then_fee_aware_lp_close_conserves_tokens() {
 
 #[tokio::test]
 async fn counterfeit_base_vault_is_rejected_atomically() {
-    let f = fixture();
-    let mut ctx = f.program.start_with_context().await;
+    let mut f = fixture();
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
     let fake = Pubkey::new_unique();
     let result = send(&mut ctx, swap(&f, 0, 100, 1, fake), &f.taker).await;
     assert!(!result);
@@ -347,8 +347,8 @@ async fn counterfeit_base_vault_is_rejected_atomically() {
 
 #[tokio::test]
 async fn excessive_slippage_rejects_without_mutating_lp_or_vaults() {
-    let f = fixture();
-    let mut ctx = f.program.start_with_context().await;
+    let mut f = fixture();
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
     let before_base = ctx
         .banks_client
         .get_account(f.base_vault)
@@ -384,8 +384,8 @@ async fn excessive_slippage_rejects_without_mutating_lp_or_vaults() {
 
 #[tokio::test]
 async fn wrong_position_nonce_cannot_take_lp_reserves() {
-    let f = fixture();
-    let mut ctx = f.program.start_with_context().await;
+    let mut f = fixture();
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
     let mut ix = swap(&f, 0, 100, 1, f.base_vault);
     ix.data[20..28].copy_from_slice(&43u64.to_le_bytes());
     assert!(!send(&mut ctx, ix, &f.taker).await);
@@ -402,8 +402,8 @@ async fn wrong_position_nonce_cannot_take_lp_reserves() {
 
 #[tokio::test]
 async fn exact_out_buy_uses_bounded_gross_input_and_accrues_lp_fee() {
-    let f = fixture();
-    let mut ctx = f.program.start_with_context().await;
+    let mut f = fixture();
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
     let mut instruction = swap(&f, 0, 300, 10, f.base_vault);
     instruction.data[0] = 34;
     assert!(send(&mut ctx, instruction, &f.taker).await);
@@ -416,8 +416,8 @@ async fn exact_out_buy_uses_bounded_gross_input_and_accrues_lp_fee() {
 
 #[tokio::test]
 async fn exact_out_swap_exceeding_max_gross_input_rejects_atomically() {
-    let f = fixture();
-    let mut ctx = f.program.start_with_context().await;
+    let mut f = fixture();
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
     let mut instruction = swap(&f, 0, 1, 100, f.base_vault);
     instruction.data[0] = 34;
     assert!(!send(&mut ctx, instruction, &f.taker).await);
@@ -491,7 +491,7 @@ fn multi_fixture() -> (Fixture, Pubkey, Keypair) {
     };
     let mut pool_data = vec![0u8; PASSIVE_POOL_BYTES];
     pool.encode_into(&mut pool_data).unwrap();
-    f.program.add_account(f.pool, account(pool_data, ID));
+    f.program.as_mut().unwrap().add_account(f.pool, account(pool_data, ID));
     let state = PositionAccount {
         bump,
         market: f.market.to_bytes(),
@@ -507,14 +507,16 @@ fn multi_fixture() -> (Fixture, Pubkey, Keypair) {
     };
     let mut data = vec![0u8; PASSIVE_POSITION_BYTES];
     state.encode_into(&mut data).unwrap();
-    f.program.add_account(second_position, account(data, ID));
+    f.program.as_mut().unwrap().add_account(second_position, account(data, ID));
     f.program
+        .as_mut()
+        .unwrap()
         .add_account(second_lp.pubkey(), account(Vec::new(), Pubkey::default()));
-    f.program.add_account(
+    f.program.as_mut().unwrap().add_account(
         f.base_vault,
         token_account(f.base_mint, f.authority, 20_000),
     );
-    f.program.add_account(
+    f.program.as_mut().unwrap().add_account(
         f.quote_vault,
         token_account(f.quote_mint, f.authority, 20_000),
     );
@@ -523,10 +525,10 @@ fn multi_fixture() -> (Fixture, Pubkey, Keypair) {
 
 #[tokio::test]
 async fn funded_multi_lp_buy_sell_and_exact_out_preserve_all_claims() {
-    let (f, second, _second_lp) = multi_fixture();
+    let (mut f, second, _second_lp) = multi_fixture();
     let mut positions = vec![f.position, second];
     positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
-    let mut ctx = f.program.start_with_context().await;
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
     assert!(
         send(
             &mut ctx,
@@ -570,8 +572,8 @@ async fn funded_multi_lp_buy_sell_and_exact_out_preserve_all_claims() {
 
 #[tokio::test]
 async fn omitted_multi_lp_claim_rejected_without_vault_changes() {
-    let (f, _, _second_lp) = multi_fixture();
-    let mut ctx = f.program.start_with_context().await;
+    let (mut f, _, _second_lp) = multi_fixture();
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
     assert!(
         !send(
             &mut ctx,
@@ -599,7 +601,7 @@ async fn omitted_multi_lp_claim_rejected_without_vault_changes() {
 
 #[tokio::test]
 async fn multi_segment_batch_reverts_all_earlier_spl_movements_on_later_error() {
-    let (f, second) = multi_fixture();
+    let (mut f, second) = multi_fixture();
     let mut positions = vec![f.position, second];
     positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
     let mut first = multi_instruction(&f, 35, 0, 100, 1, &positions);
@@ -612,7 +614,7 @@ async fn multi_segment_batch_reverts_all_earlier_spl_movements_on_later_error() 
         accounts: first.accounts,
         data,
     };
-    let mut ctx = f.program.start_with_context().await;
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
     assert!(!send(&mut ctx, instruction, &f.taker).await);
     let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
     let pool = PoolAccount::decode_from(&pool.data).unwrap();
@@ -629,7 +631,7 @@ async fn multi_segment_batch_reverts_all_earlier_spl_movements_on_later_error() 
 
 #[tokio::test]
 async fn atomic_multi_segment_batch_commits_both_fee_attributions() {
-    let (f, second) = multi_fixture();
+    let (mut f, second) = multi_fixture();
     let mut positions = vec![f.position, second];
     positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
     let mut first = multi_instruction(&f, 35, 0, 100, 1, &positions);
@@ -642,7 +644,7 @@ async fn atomic_multi_segment_batch_commits_both_fee_attributions() {
         accounts: first.accounts,
         data,
     };
-    let mut ctx = f.program.start_with_context().await;
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
     assert!(send(&mut ctx, ix, &f.taker).await);
     let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
     let pool = PoolAccount::decode_from(&pool.data).unwrap();
@@ -662,10 +664,10 @@ async fn atomic_multi_segment_batch_commits_both_fee_attributions() {
 
 #[tokio::test]
 async fn multi_lp_positions_redeem_all_post_trade_inventory() {
-    let (f, second, second_lp) = multi_fixture();
+    let (mut f, second, second_lp) = multi_fixture();
     let mut positions = vec![f.position, second];
     positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
-    let mut ctx = f.program.start_with_context().await;
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
     assert!(
         send(
             &mut ctx,
@@ -763,10 +765,10 @@ async fn multi_lp_positions_redeem_all_post_trade_inventory() {
 
 #[tokio::test]
 async fn atomic_batch_crosses_into_next_lp_range_at_exact_price_boundary() {
-    let (f, second, _second_lp) = multi_fixture();
+    let (mut f, second, _second_lp) = multi_fixture();
     let mut positions = vec![f.position, second];
     positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
-    let mut ctx = f.program.start_with_context().await;
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
     let second_account = ctx.banks_client.get_account(second).await.unwrap().unwrap();
     let mut second_state = PositionAccount::decode_from(&second_account.data).unwrap();
     second_state.position.lower_sqrt_price_x64 = Q64 * 2;
