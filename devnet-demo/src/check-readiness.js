@@ -1,6 +1,7 @@
 // Read-only devnet readiness check. No wallet or private key required.
 import {Connection,PublicKey} from "@solana/web3.js";
 import {PROGRAM_ID,TOKEN_PROGRAM_ID} from "./abi.js";
+import {decodeCustody,verifyCustodyLinks} from "./custody.js";
 
 const names=["market","askOwner","bidOwner","baseVault","quoteVault"];
 const args=process.argv.slice(2);
@@ -31,7 +32,18 @@ const rows=ids.map(([name,key],i)=>{
     bytes:a?.data.length??0,executable:a?.executable??false,
     valid:!!a&&(name==="program"?a.executable:a.owner.equals(expectedOwner))};
 });
+let custodyState=null;
+const custodyIndex=ids.findIndex(([name])=>name==="custody");
+try {
+  const raw=result.value[custodyIndex]?.data;
+  if(!raw)throw Error("Custody account missing");
+  custodyState=decodeCustody(raw);
+  verifyCustodyLinks(custodyState,keys.market.toBase58(),keys.baseVault.toBase58(),keys.quoteVault.toBase58());
+} catch(error) {
+  rows[custodyIndex].valid=false;
+  rows[custodyIndex].error=error.message;
+}
 const bad=rows.filter(r=>!r.valid);
-console.log(JSON.stringify({network:"devnet",slot:result.context.slot,rows,ready:bad.length===0,
+console.log(JSON.stringify({network:"devnet",slot:result.context.slot,rows,custodyState,ready:bad.length===0,
   warning:"Existence/ownership is necessary, not sufficient: this does not decode pool, book links, collateral or market funding."},null,2));
 if(bad.length)process.exitCode=1;
