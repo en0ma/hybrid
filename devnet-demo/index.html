@@ -1,19 +1,20 @@
 <!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hybrid • Devnet trade smoke</title></head>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hybrid • Devnet / Surfpool trade smoke</title></head>
   <body>
     <main>
-      <h1>Hybrid <small>Devnet wallet-to-trade smoke</small></h1>
+      <h1>Hybrid <small>Devnet / Surfpool wallet-to-trade smoke</small></h1>
       <p>This is a developer integration harness for an already initialized market, not a production trading interface.</p>
       <div id="status" role="status">Disconnected</div>
       <section><h2>Connection</h2>
-        <label>RPC endpoint <input id="rpc" value="https://api.devnet.solana.com"></label>
+        <label>Cluster <select id="cluster"><option value="surfpool">Surfpool (local)</option><option value="devnet">Devnet (public)</option></select></label>
+        <label>RPC endpoint <input id="rpc" value="http://127.0.0.1:8899"></label>
         <button id="connect">Connect injected Solana wallet</button>
         <button id="refresh">Refresh snapshot</button>
         <output id="wallet"></output>
       </section>
       <section><h2>Market addresses</h2>
-        <p>Supply real accounts from a devnet market you control. Nothing is auto-created.</p>
+        <p>Supply real accounts from the selected devnet or local Surfpool market you control. Nothing is auto-created.</p>
         <label>Market <input id="market" placeholder="Market public key"></label>
         <label>Ask head owner sidecar <input id="askOwner" placeholder="Bound ask owner-sidecar key"></label>
         <label>Bid head owner sidecar <input id="bidOwner" placeholder="Bound bid owner-sidecar key"></label>
