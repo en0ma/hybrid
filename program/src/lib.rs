@@ -2377,6 +2377,11 @@ fn process_open_passive_position(
     {
         return Err(ProgramError::InvalidAccountData);
     }
+    // Until per-position fee-growth accounting is on-chain, adding a new
+    // claimant after trading would let it capture another LP's earned fees.
+    if pool.pool.accrued_base_fees != 0 || pool.pool.accrued_quote_fees != 0 {
+        return Err(ProgramError::InvalidAccountData);
+    }
     // Do not accept more LP claims when pre-existing custody is insolvent.
     // The deposits in this instruction are checked again after the CPIs.
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
