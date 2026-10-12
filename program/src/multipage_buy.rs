@@ -268,6 +268,7 @@ fn store_ask_owner_page(
     if next.is_none() {
         owner.set_links(hybrid_state::PageLinks::new(index as u32, None, None));
     }
-    owner.encode_into(&mut account.try_borrow_mut_data()?)
+    owner
+        .encode_into(&mut account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)
 }
