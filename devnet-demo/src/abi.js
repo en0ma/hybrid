@@ -29,3 +29,8 @@ export function tradeData(side,exactOut,pageCount,amount,limit) {
   const opcode = side === "ask" ? (exactOut ? 24 : 23) : (exactOut ? 26 : 25);
   return Uint8Array.from([opcode,pageCount,...le(amount,8),...le(limit,8)]);
 }
+
+export function collateralData(action,asset,amount) {
+  if (!["deposit","withdraw"].includes(action) || !["base","quote"].includes(asset)) throw Error("Invalid collateral action/asset");
+  return Uint8Array.from([action === "deposit" ? 13 : 14,asset === "base" ? 0 : 1,...le(amount,8)]);
+}
