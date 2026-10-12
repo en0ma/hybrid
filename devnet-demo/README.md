@@ -58,7 +58,7 @@ npm run check:readiness -- <MARKET> <ASK_OWNER> <BID_OWNER> <BASE_VAULT> <QUOTE_
 ```
 
 The command rejects non-devnet RPC endpoints and returns a nonzero exit code
-if a required account is missing or unexpectedly owned. It does **not**
+if a required account is missing or unexpectedly owned, or if the decoded\n192-byte custody record has invalid magic/version or mismatches the supplied\nmarket and SPL vault public keys. It reports custody mint addresses and\nrecorded active collateral totals as raw atom strings. It does **not**
 prove that the market is funded, linked pages are initialized correctly,
 or that swap collateral and liquidity are sufficient.
 
