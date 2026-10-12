@@ -330,6 +330,35 @@ mod tests {
     }
 
     #[test]
+    fn overlapping_ranges_split_exactly_and_preserve_fee_claims() {
+        let mut book = fixture();
+        book.positions[1].range.lower_sqrt_price_x64 = Q64;
+        let original = book.clone();
+        book.apply_segment(
+            Q64,
+            SegmentTrade::Buy {
+                quote_in: 23,
+                base_out: 11,
+                quote_fee: 3,
+            },
+        )
+        .unwrap();
+        assert_eq!(book.positions[0].base, 95);
+        assert_eq!(book.positions[1].base, 94);
+        assert_eq!(
+            book.positions[0].quote_fees + book.positions[1].quote_fees,
+            3
+        );
+        book.verify().unwrap();
+        let first = book.redeem(0).unwrap();
+        let second = book.redeem(0).unwrap();
+        assert_eq!(first.0 + second.0, 189);
+        assert_eq!(first.1 + second.1, 223);
+        assert_eq!(book.pool, PassivePool::default());
+        assert_ne!(book, original);
+    }
+
+    #[test]
     fn overflow_free_full_precision_single_share() {
         assert_eq!(proportion(u64::MAX, u128::MAX, u128::MAX), Ok(u64::MAX));
         assert_eq!(proportion(u64::MAX, 1, u128::MAX), Ok(0));
