@@ -607,7 +607,7 @@ async fn omitted_multi_lp_claim_rejected_without_vault_changes() {
 
 #[tokio::test]
 async fn multi_segment_batch_reverts_all_earlier_spl_movements_on_later_error() {
-    let (mut f, second) = multi_fixture();
+    let (mut f, second, _second_lp) = multi_fixture();
     let mut positions = vec![f.position, second];
     positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
     let mut first = multi_instruction(&f, 35, 0, 100, 1, &positions);
@@ -637,7 +637,7 @@ async fn multi_segment_batch_reverts_all_earlier_spl_movements_on_later_error() 
 
 #[tokio::test]
 async fn atomic_multi_segment_batch_commits_both_fee_attributions() {
-    let (mut f, second) = multi_fixture();
+    let (mut f, second, _second_lp) = multi_fixture();
     let mut positions = vec![f.position, second];
     positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
     let mut first = multi_instruction(&f, 35, 0, 100, 1, &positions);
