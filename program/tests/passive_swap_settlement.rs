@@ -913,8 +913,18 @@ async fn hostile_fee_in_second_batch_leg_rolls_back_first_leg() {
     let p = PoolAccount::decode_from(&a.data).unwrap();
     assert_eq!(p.pool.base_reserve, 20_000);
     assert_eq!(p.pool.quote_reserve, 20_000);
-    let base = ctx.banks_client.get_account(f.base_vault).await.unwrap().unwrap();
-    let quote = ctx.banks_client.get_account(f.quote_vault).await.unwrap().unwrap();
+    let base = ctx
+        .banks_client
+        .get_account(f.base_vault)
+        .await
+        .unwrap()
+        .unwrap();
+    let quote = ctx
+        .banks_client
+        .get_account(f.quote_vault)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(amount(&base), 20_000);
     assert_eq!(amount(&quote), 20_000);
 }
