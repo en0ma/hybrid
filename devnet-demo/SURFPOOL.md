@@ -74,3 +74,5 @@ Run `npm run snapshot:maker -- <MARKET> <MAKER>` with `HYBRID_CLUSTER=surfpool` 
 ## Assert exact maker collateral changes
 
 After obtaining `before.json` and `after.json` with `snapshot:maker` around a successful deposit or withdrawal, run `npm run check:transition -- before.json after.json deposit base 1000` (or `withdraw quote 1000`). This command rejects changes to the other three maker collateral fields, including locked funds, and verifies the selected free balance changed by exactly the amount in raw atoms. This does **not** check the SPL wallet/vault token transfers or validate order-fill accounting. Only compare snapshots obtained from the same runtime and market.
+
+The snapshot command also records raw base/quote vault token amounts. The transition assertion requires the correct vault to increase/decrease by the exact deposit/withdraw amount, and the other vault to remain unchanged. This verifies one maker plus corresponding vault deltas, not market-wide conservation across all makers and orders.
