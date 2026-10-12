@@ -79,10 +79,8 @@ fn fixture() -> Fixture {
     let quote_vault = Pubkey::new_unique();
     let taker_base = Pubkey::new_unique();
     let taker_quote = Pubkey::new_unique();
-    let (custody, custody_bump) =
-        Pubkey::find_program_address(&[b"custody", market.as_ref()], &ID);
-    let (pool, pool_bump) =
-        Pubkey::find_program_address(&[b"passive-pool", market.as_ref()], &ID);
+    let (custody, custody_bump) = Pubkey::find_program_address(&[b"custody", market.as_ref()], &ID);
+    let (pool, pool_bump) = Pubkey::find_program_address(&[b"passive-pool", market.as_ref()], &ID);
     let nonce = 42u64;
     let (position, position_bump) = Pubkey::find_program_address(
         &[
@@ -93,8 +91,7 @@ fn fixture() -> Fixture {
         ],
         &ID,
     );
-    let (authority, _) =
-        Pubkey::find_program_address(&[b"vault-authority", market.as_ref()], &ID);
+    let (authority, _) = Pubkey::find_program_address(&[b"vault-authority", market.as_ref()], &ID);
     let mut header = MarketHeader::new(1, Q64, 0, 1, 1);
     header.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
     let mut header_data = vec![0; MARKET_HEADER_BYTES];
@@ -160,7 +157,10 @@ fn fixture() -> Fixture {
     program.add_account(base_vault, token_account(base_mint, authority, 10_000));
     program.add_account(quote_vault, token_account(quote_mint, authority, 10_000));
     program.add_account(taker_base, token_account(base_mint, taker.pubkey(), 1_000));
-    program.add_account(taker_quote, token_account(quote_mint, taker.pubkey(), 1_000));
+    program.add_account(
+        taker_quote,
+        token_account(quote_mint, taker.pubkey(), 1_000),
+    );
     program.add_account(lp.pubkey(), account(Vec::new(), Pubkey::default()));
     program.add_account(taker.pubkey(), account(Vec::new(), Pubkey::default()));
     Fixture {
@@ -232,8 +232,18 @@ async fn funded_buy_sell_then_fee_aware_lp_close_conserves_tokens() {
     let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
     let pool = PoolAccount::decode_from(&pool.data).unwrap();
     assert_eq!(pool.pool.accrued_quote_fees, 1);
-    let market = ctx.banks_client.get_account(f.market).await.unwrap().unwrap();
-    assert!(MarketHeader::decode_from(&market.data).unwrap().sqrt_price_x64 > Q64);
+    let market = ctx
+        .banks_client
+        .get_account(f.market)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        MarketHeader::decode_from(&market.data)
+            .unwrap()
+            .sqrt_price_x64
+            > Q64
+    );
 
     assert!(send(&mut ctx, swap(&f, 1, 100, 1, f.base_vault), &f.taker).await);
     let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
@@ -265,36 +275,57 @@ async fn funded_buy_sell_then_fee_aware_lp_close_conserves_tokens() {
     // of the taker's, as the existing close handler enforces destination owner.
     let lp_base = Pubkey::new_unique();
     let lp_quote = Pubkey::new_unique();
-    ctx.set_account(&lp_base, &account(
-        {
-            let mut d = vec![0u8; 165];
-            d[0..32].copy_from_slice(f.base_mint.as_ref());
-            d[32..64].copy_from_slice(f.lp.pubkey().as_ref());
-            d[108] = 1;
-            d
-        },
-        TOKEN_PROGRAM_ID,
-    ).into());
-    ctx.set_account(&lp_quote, &account(
-        {
-            let mut d = vec![0u8; 165];
-            d[0..32].copy_from_slice(f.quote_mint.as_ref());
-            d[32..64].copy_from_slice(f.lp.pubkey().as_ref());
-            d[108] = 1;
-            d
-        },
-        TOKEN_PROGRAM_ID,
-    ).into());
+    ctx.set_account(
+        &lp_base,
+        &account(
+            {
+                let mut d = vec![0u8; 165];
+                d[0..32].copy_from_slice(f.base_mint.as_ref());
+                d[32..64].copy_from_slice(f.lp.pubkey().as_ref());
+                d[108] = 1;
+                d
+            },
+            TOKEN_PROGRAM_ID,
+        )
+        .into(),
+    );
+    ctx.set_account(
+        &lp_quote,
+        &account(
+            {
+                let mut d = vec![0u8; 165];
+                d[0..32].copy_from_slice(f.quote_mint.as_ref());
+                d[32..64].copy_from_slice(f.lp.pubkey().as_ref());
+                d[108] = 1;
+                d
+            },
+            TOKEN_PROGRAM_ID,
+        )
+        .into(),
+    );
     let mut close = close;
     close.accounts[7] = AccountMeta::new(lp_base, false);
     close.accounts[8] = AccountMeta::new(lp_quote, false);
     assert!(send(&mut ctx, close, &f.lp).await);
-    let base = ctx.banks_client.get_account(lp_base).await.unwrap().unwrap();
-    let quote = ctx.banks_client.get_account(lp_quote).await.unwrap().unwrap();
+    let base = ctx
+        .banks_client
+        .get_account(lp_base)
+        .await
+        .unwrap()
+        .unwrap();
+    let quote = ctx
+        .banks_client
+        .get_account(lp_quote)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(amount(&base) > 0);
     assert!(amount(&quote) > 0);
     let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
-    assert_eq!(PoolAccount::decode_from(&pool.data).unwrap().pool, PassivePool::default());
+    assert_eq!(
+        PoolAccount::decode_from(&pool.data).unwrap().pool,
+        PassivePool::default()
+    );
 }
 
 #[tokio::test]
@@ -305,5 +336,11 @@ async fn counterfeit_base_vault_is_rejected_atomically() {
     let result = send(&mut ctx, swap(&f, 0, 100, 1, fake), &f.taker).await;
     assert!(!result);
     let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
-    assert_eq!(PoolAccount::decode_from(&pool.data).unwrap().pool.base_reserve, 10_000);
+    assert_eq!(
+        PoolAccount::decode_from(&pool.data)
+            .unwrap()
+            .pool
+            .base_reserve,
+        10_000
+    );
 }
