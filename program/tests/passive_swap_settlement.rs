@@ -594,3 +594,61 @@ async fn omitted_multi_lp_claim_rejected_without_vault_changes() {
         .unwrap();
     assert_eq!(amount(&vault), 20_000);
 }
+
+#[tokio::test]
+async fn multi_segment_batch_reverts_all_earlier_spl_movements_on_later_error() {
+    let (f, second) = multi_fixture();
+    let mut positions = vec![f.position, second];
+    positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    let mut first = multi_instruction(&f, 35, 0, 100, 1, &positions);
+    let second_leg = multi_instruction(&f, 36, 0, 1, 100, &positions);
+    let mut data = vec![37, 2];
+    data.append(&mut first.data);
+    data.extend_from_slice(&second_leg.data);
+    let instruction = Instruction {
+        program_id: ID,
+        accounts: first.accounts,
+        data,
+    };
+    let mut ctx = f.program.start_with_context().await;
+    assert!(!send(&mut ctx, instruction, &f.taker).await);
+    let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    let pool = PoolAccount::decode_from(&pool.data).unwrap();
+    assert_eq!(pool.pool.base_reserve, 20_000);
+    assert_eq!(pool.pool.quote_reserve, 20_000);
+    let vault = ctx.banks_client.get_account(f.quote_vault).await.unwrap().unwrap();
+    assert_eq!(amount(&vault), 20_000);
+}
+
+#[tokio::test]
+async fn atomic_multi_segment_batch_commits_both_fee_attributions() {
+    let (f, second) = multi_fixture();
+    let mut positions = vec![f.position, second];
+    positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    let mut first = multi_instruction(&f, 35, 0, 100, 1, &positions);
+    let second_leg = multi_instruction(&f, 35, 1, 100, 1, &positions);
+    let mut data = vec![37, 2];
+    data.append(&mut first.data);
+    data.extend_from_slice(&second_leg.data);
+    let ix = Instruction {
+        program_id: ID,
+        accounts: first.accounts,
+        data,
+    };
+    let mut ctx = f.program.start_with_context().await;
+    assert!(send(&mut ctx, ix, &f.taker).await);
+    let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    let pool = PoolAccount::decode_from(&pool.data).unwrap();
+    assert_eq!(pool.pool.accrued_base_fees, 0);
+    assert_eq!(pool.pool.accrued_quote_fees, 0);
+    let mut base = 0u64;
+    let mut quote = 0u64;
+    for key in positions {
+        let a = ctx.banks_client.get_account(key).await.unwrap().unwrap();
+        let p = PositionAccount::decode_from(&a.data).unwrap();
+        base += p.position.base_principal;
+        quote += p.position.quote_principal;
+    }
+    assert_eq!(base, pool.pool.base_reserve);
+    assert_eq!(quote, pool.pool.quote_reserve);
+}
