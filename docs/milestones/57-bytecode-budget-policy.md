@@ -22,3 +22,14 @@ not a guarantee about subsequent compiled artifacts.
 - [ ] Address any SBF verifier errors, frame/stack warnings and deployment issues
 - [ ] Complete authenticated multi-LP price-segment settlement and exact-out execution
 - [ ] Independent security review before production activation
+
+## Multi-LP execution revision
+
+The exact-head SBF build including authenticated multi-position settlement and
+atomic segment batches measured **306,288 bytes** on October 12, 2026.
+The revised project policy budget is **327,680 bytes (320 KiB)**, providing
+**21,392 bytes** of headroom over that measured ELF.
+The previous 288 KiB budget rejected this measured feature-complete binary.
+This revision does not bypass compilation, native/SBF tests, compute-unit
+checks, vault solvency checks, or an independent security review, and it does
+not change Solana protocol-level deployment rules.
