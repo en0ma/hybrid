@@ -31,6 +31,23 @@ constant and recompile rather than sending instructions to an arbitrary ID.
 the market must already have been initialized against the program ID.
 Public RPC may enforce rate limits.
 
+## Read-only market readiness probe
+
+Before opening the browser, verify that the configured market, book pages,
+owner sidecars, custody and vault accounts exist on the **actual devnet RPC**,
+and that the pinned Hybrid program is executable. This requires no wallet
+or private key:
+
+```sh
+cd devnet-demo
+npm run check:readiness -- <MARKET> <ASK_OWNER> <BID_OWNER> <BASE_VAULT> <QUOTE_VAULT>
+```
+
+The command rejects non-devnet RPC endpoints and returns a nonzero exit code
+if a required account is missing or unexpectedly owned. It does **not**
+prove that the market is funded, linked pages are initialized correctly,
+or that swap collateral and liquidity are sufficient.
+
 ## Transaction smoke flow
 
 1. **Refresh snapshot.** The app requests multiple Hybrid market/book/
