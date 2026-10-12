@@ -34,7 +34,7 @@ pub fn process_batch(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8])
     {
         return Err(ProgramError::InvalidInstructionData);
     }
-    for segment in data[2..].chunks_exact(21) {
+    for segment in data[2..].as_chunks::<21>().0 {
         process(program_id, accounts, segment)?;
     }
     Ok(())
