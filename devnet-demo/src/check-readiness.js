@@ -75,7 +75,25 @@ try {
   rows[marketIndex].valid=false;
   rows[marketIndex].error=error.message;
 }
-const bad=rows.filter(r=>!r.valid);
-console.log(JSON.stringify({network:"devnet",slot:result.context.slot,rows,custodyState,marketState,ready:bad.length===0,
+let mintChecks=[];
+if(custodyState){
+  const mintNames=[["baseMint",custodyState.baseMint,custodyState.baseDecimals],
+    ["quoteMint",custodyState.quoteMint,custodyState.quoteDecimals]];
+  const mintKeys=mintNames.map(([,address])=>new PublicKey(address));
+  const mintInfos=await conn.getMultipleAccountsInfoAndContext(mintKeys,"confirmed");
+  mintChecks=mintNames.map(([name,address,decimals],i)=>{
+    const a=mintInfos.value[i];
+    const row={name,address,exists:!!a,valid:true};
+    if(!a||!a.owner.equals(token)||a.data.length!==82||a.data[45]!==decimals||
+      a.data[46]!==1){
+      row.valid=false;
+      row.error="SPL mint owner, layout, initialization or decimals mismatch";
+    }
+    row.decimals=a?.data[44];
+    return row;
+  });
+}
+const bad=[...rows.filter(r=>!r.valid),...mintChecks.filter(r=>!r.valid)];
+console.log(JSON.stringify({network:"devnet",slot:result.context.slot,rows,mintChecks,custodyState,marketState,ready:bad.length===0,
   warning:"Custody, initialized SPL vaults, their authority/mints, and recorded reserve lower bounds are checked; book integrity, maker balances and complete solvency are not proven."},null,2));
 if(bad.length)process.exitCode=1;
