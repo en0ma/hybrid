@@ -344,3 +344,58 @@ async fn counterfeit_base_vault_is_rejected_atomically() {
         10_000
     );
 }
+
+#[tokio::test]
+async fn excessive_slippage_rejects_without_mutating_lp_or_vaults() {
+    let f = fixture();
+    let mut ctx = f.program.start_with_context().await;
+    let before_base = ctx
+        .banks_client
+        .get_account(f.base_vault)
+        .await
+        .unwrap()
+        .unwrap();
+    let before_quote = ctx
+        .banks_client
+        .get_account(f.quote_vault)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!send(&mut ctx, swap(&f, 0, 100, 1_000, f.base_vault), &f.taker).await);
+    let after_base = ctx
+        .banks_client
+        .get_account(f.base_vault)
+        .await
+        .unwrap()
+        .unwrap();
+    let after_quote = ctx
+        .banks_client
+        .get_account(f.quote_vault)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(amount(&before_base), amount(&after_base));
+    assert_eq!(amount(&before_quote), amount(&after_quote));
+    let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    let state = PoolAccount::decode_from(&pool.data).unwrap();
+    assert_eq!(state.pool.base_reserve, 10_000);
+    assert_eq!(state.pool.accrued_quote_fees, 0);
+}
+
+#[tokio::test]
+async fn wrong_position_nonce_cannot_take_lp_reserves() {
+    let f = fixture();
+    let mut ctx = f.program.start_with_context().await;
+    let mut ix = swap(&f, 0, 100, 1, f.base_vault);
+    ix.data[20..28].copy_from_slice(&43u64.to_le_bytes());
+    assert!(!send(&mut ctx, ix, &f.taker).await);
+    let position = ctx
+        .banks_client
+        .get_account(f.position)
+        .await
+        .unwrap()
+        .unwrap();
+    let state = PositionAccount::decode_from(&position.data).unwrap();
+    assert_eq!(state.position.base_principal, 10_000);
+    assert_eq!(state.position.quote_principal, 10_000);
+}
