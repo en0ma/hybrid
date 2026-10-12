@@ -137,7 +137,7 @@ async function send(ix){
   }
   const {blockhash,lastValidBlockHeight}=await connection.getLatestBlockhash("confirmed");
   const tx=new Transaction({feePayer:owner,recentBlockhash:blockhash}).add(ix);
-  const simulation=await connection.simulateTransaction(tx,{sigVerify:false,commitment:"confirmed"});
+  const simulation=await connection.simulateTransaction(tx);
   if(simulation.value.err){
     show({simulationError:simulation.value.err,logs:simulation.value.logs});
     throw Error("Simulation rejected; no transaction submitted");
