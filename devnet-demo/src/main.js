@@ -2,7 +2,7 @@ import {
   Connection, PublicKey, Transaction, TransactionInstruction,
 } from "@solana/web3.js";
 import {Buffer} from "buffer";
-import {PROGRAM_ID, TOKEN_PROGRAM_ID, placeData, cancelData, tradeData} from "./abi.js";
+import {PROGRAM_ID, TOKEN_PROGRAM_ID, placeData, cancelData, tradeData, collateralData} from "./abi.js";
 import "./style.css";
 
 const $ = (id) => document.getElementById(id);
@@ -66,6 +66,26 @@ function orderInstruction(opcode) {
     cancelData(side,idx,read("sequence"));
   return new TransactionInstruction({programId:program,keys,data:Buffer.from(data)});
 }
+function collateralInstruction(action) {
+  const maker=signer();
+  const asset=read("collateralAsset");
+  const token=pk(asset==="base"?"baseToken":"quoteToken");
+  const vault=pk(asset==="base"?"baseVault":"quoteVault");
+  const mint=pk(asset==="base"?"baseMint":"quoteMint");
+  const accounts=[
+    meta(pk("market")),meta(custody(),true),meta(makerBalance(maker),true),
+    meta(maker,false,true)
+  ];
+  if(action==="deposit") {
+    accounts.push(meta(token,true),meta(vault,true),meta(mint),meta(tokenProgram));
+  } else {
+    accounts.push(meta(vault,true),meta(token,true),meta(mint),
+      meta(authority()),meta(tokenProgram));
+  }
+  unique(accounts.map(x=>x.pubkey));
+  return new TransactionInstruction({programId:program,keys:accounts,
+    data:Buffer.from(collateralData(action,asset,read("collateralAmount")))});
+}
 function swapInstruction() {
   const side=read("tradeSide"),count=Number(read("pageCount")),owner=signer();
   const buy=side==="ask";
@@ -121,10 +141,12 @@ async function send(ix){
   // Every non-signer, non-token-program, non-PDA-authority instruction account
   // must exist, and must have the expected owner before wallet approval.
   const tokenKeys = [pk("baseToken"), pk("quoteToken"), pk("baseVault"), pk("quoteVault")];
+  const mintKeys = [pk("baseMint"),pk("quoteMint")];
   for (let i = 0; i < accountKeys.length; i++) {
     const key = accountKeys[i], account = result.value[i];
     if (!account || key.equals(owner) || key.equals(tokenProgram) || key.equals(authority())) continue;
-    const expectedOwner = tokenKeys.some(token => token.equals(key)) ? tokenProgram : program;
+    const expectedOwner = tokenKeys.some(token => token.equals(key)) ||
+      mintKeys.some(mint => mint.equals(key)) ? tokenProgram : program;
     if (!account.owner.equals(expectedOwner)) {
       throw Error("Account owner mismatch: " + key.toBase58());
     }
@@ -175,3 +197,6 @@ $("refresh").onclick=()=>action(snapshot);
 $("place").onclick=()=>action(()=>send(orderInstruction(30)));
 $("cancel").onclick=()=>action(()=>send(orderInstruction(31)));
 $("trade").onclick=()=>action(()=>send(swapInstruction()));
+
+$("deposit").onclick=()=>action(()=>send(collateralInstruction("deposit")));
+$("withdraw").onclick=()=>action(()=>send(collateralInstruction("withdraw")));
