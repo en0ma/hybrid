@@ -70,3 +70,7 @@ use an HTTPS devnet RPC; only that mode enforces devnet genesis identity.
 ## Capture maker collateral state before and after each transaction
 
 Run `npm run snapshot:maker -- <MARKET> <MAKER>` with `HYBRID_CLUSTER=surfpool` and `SOLANA_RPC_URL=http://127.0.0.1:8899`. The command decodes the actual Rust market header, custody totals, and maker balance (`freeBase`, `lockedBase`, `freeQuote`, `lockedQuote`) at a reported RPC context slot. Capture JSON output before/after init, deposit, placement, swap, cancellation and withdrawal; retain actual confirmed signatures. Snapshots do **not** decode individual orders or prove full conservation on their own.
+
+## Assert exact maker collateral changes
+
+After obtaining `before.json` and `after.json` with `snapshot:maker` around a successful deposit or withdrawal, run `npm run check:transition -- before.json after.json deposit base 1000` (or `withdraw quote 1000`). This command rejects changes to the other three maker collateral fields, including locked funds, and verifies the selected free balance changed by exactly the amount in raw atoms. This does **not** check the SPL wallet/vault token transfers or validate order-fill accounting. Only compare snapshots obtained from the same runtime and market.
