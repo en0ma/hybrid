@@ -1,6 +1,7 @@
 import {
   Connection, PublicKey, Transaction, TransactionInstruction,
 } from "@solana/web3.js";
+import {Buffer} from "buffer";
 import {PROGRAM_ID, TOKEN_PROGRAM_ID, placeData, cancelData, tradeData} from "./abi.js";
 import "./style.css";
 
