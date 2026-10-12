@@ -30,35 +30,12 @@ pub enum Trade {
 }
 
 fn split(amount: u64, weights: &[u128]) -> Result<Vec<u64>, PassiveAccountingError> {
-    if weights.is_empty() || weights.contains(&0) {
+    if weights.len() != 1 || weights[0] == 0 {
         return Err(PassiveAccountingError::InvalidPosition);
     }
-    let total = weights.iter().try_fold(0u128, |sum, weight| {
-        sum.checked_add(*weight)
-            .ok_or(PassiveAccountingError::Overflow)
-    })?;
-    // Division first avoids multiplying u64 amounts by potentially huge
-    // liquidity values. The final residual goes to the last position, so
-    // shares sum exactly to the transfer quantity with no invented atoms.
-    let mut remaining = amount;
-    let mut shares = Vec::with_capacity(weights.len());
-    let mut remaining_weight = total;
-    for weight in weights {
-        let amount = u128::from(remaining)
-            .checked_mul(*weight)
-            .ok_or(PassiveAccountingError::Overflow)?;
-        let share = u64::try_from(amount / remaining_weight)
-            .map_err(|_| PassiveAccountingError::Overflow)?;
-        shares.push(share);
-        remaining -= share;
-        remaining_weight -= weight;
-    }
-    if let Some(last) = shares.last_mut() {
-        *last = last
-            .checked_add(remaining)
-            .ok_or(PassiveAccountingError::Overflow)?;
-    }
-    Ok(shares)
+    // A single active LP owns the full settled transfer; this avoids any
+    // intermediate multiply and never attributes fees to an inactive range.
+    Ok(vec![amount])
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,6 +87,9 @@ impl PassiveLedger {
     /// with a deterministic remainder assigned to the last claim.
     pub fn settle(&mut self, trade: Trade) -> Result<(), PassiveAccountingError> {
         self.verify()?;
+        if self.claims.len() != 1 {
+            return Err(PassiveAccountingError::InvalidPosition);
+        }
         let mut next = self.clone();
         let weights: Vec<_> = next.claims.iter().map(|p| p.liquidity).collect();
         match trade {
@@ -227,20 +207,12 @@ mod tests {
                 total_liquidity: 10,
                 ..PassivePool::default()
             },
-            claims: vec![
-                LiquidityClaim {
-                    liquidity: 4,
-                    base: 40,
-                    quote: 40,
-                    ..LiquidityClaim::default()
-                },
-                LiquidityClaim {
-                    liquidity: 6,
-                    base: 60,
-                    quote: 60,
-                    ..LiquidityClaim::default()
-                },
-            ],
+            claims: vec![LiquidityClaim {
+                liquidity: 10,
+                base: 100,
+                quote: 100,
+                ..LiquidityClaim::default()
+            }],
         }
     }
 
@@ -270,9 +242,8 @@ mod tests {
             ledger.pool.quote_reserve + ledger.pool.accrued_quote_fees,
         );
         let a = ledger.redeem(0).unwrap();
-        let b = ledger.redeem(0).unwrap();
-        assert_eq!(a.0 + b.0, before.0);
-        assert_eq!(a.1 + b.1, before.1);
+        assert_eq!(a.0, before.0);
+        assert_eq!(a.1, before.1);
         assert_eq!(ledger.pool, PassivePool::default());
     }
 
@@ -302,8 +273,42 @@ mod tests {
             })
             .unwrap();
         let first = ledger.redeem(0).unwrap();
-        assert_ne!(first, (40, 40));
+        assert_ne!(first, (100, 100));
         ledger.verify().unwrap();
+    }
+
+    #[test]
+    fn multi_lp_trades_fail_closed_until_price_segments_are_supported() {
+        let mut ledger = funded();
+        ledger.claims = vec![
+            LiquidityClaim {
+                liquidity: 4,
+                base: 40,
+                quote: 40,
+                ..LiquidityClaim::default()
+            },
+            LiquidityClaim {
+                liquidity: 6,
+                base: 60,
+                quote: 60,
+                ..LiquidityClaim::default()
+            },
+        ];
+        let before = ledger.clone();
+        assert_eq!(
+            ledger.settle(Trade::Buy {
+                quote_in: 10,
+                base_out: 1,
+                quote_fee: 1,
+            }),
+            Err(PassiveAccountingError::InvalidPosition)
+        );
+        assert_eq!(ledger, before);
+    }
+
+    #[test]
+    fn large_single_lp_settlement_never_overflows_proportional_math() {
+        assert_eq!(split(u64::MAX, &[u128::MAX]), Ok(vec![u64::MAX]));
     }
 
     #[test]
