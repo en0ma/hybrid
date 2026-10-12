@@ -4,6 +4,7 @@ import {
 import {Buffer} from "buffer";
 import {PROGRAM_ID, TOKEN_PROGRAM_ID, placeData, cancelData, tradeData, collateralData} from "./abi.js";
 import "./style.css";
+import {clusterConfig,assertCluster} from "./cluster.js";
 
 const $ = (id) => document.getElementById(id);
 const program = new PublicKey(PROGRAM_ID);
@@ -36,16 +37,13 @@ function signer() {
   return wallet.publicKey;
 }
 function rpc() {
-  const url=read("rpc");
-  const parsed=new URL(url);
-  if (parsed.protocol!=="https:" && !(parsed.hostname==="127.0.0.1" && parsed.protocol==="http:")) throw Error("Use HTTPS RPC or localhost");
-  return new Connection(url,"confirmed");
+  const cfg=clusterConfig(read("cluster"),read("rpc"));
+  return new Connection(cfg.url,"confirmed");
 }
-async function confirmDevnet() {
+async function confirmCluster() {
+  const mode=read("cluster");
   connection=rpc();
-  const genesis=await connection.getGenesisHash();
-  // Solana devnet genesis hash, not a mainnet-beta or testnet cluster.
-  if(genesis!=="EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG") throw Error("RPC is not the expected Solana devnet cluster");
+  await assertCluster(connection,mode);
 }
 function unique(keys) {
   const set=new Set(keys.map((key)=>key.toBase58()));
@@ -116,7 +114,7 @@ function swapInstruction() {
   return new TransactionInstruction({programId:program,keys,data:Buffer.from(data)});
 }
 async function snapshot() {
-  await confirmDevnet();
+  await confirmCluster();
   const market=pk("market");
   const pubkeys=[
     market,custody(),indexed("ask",0).page,indexed("ask",0).owner,
@@ -130,7 +128,7 @@ async function snapshot() {
     catch(e){balances[name]="unavailable: "+e.message;}
   }
   show({
-    cluster:"devnet",snapshotSlot:result.context.slot,
+    cluster:read("cluster"),snapshotSlot:result.context.slot,
     accounts:pubkeys.map((key,i)=>({key:key.toBase58(),exists:!!result.value[i],
       owner:result.value[i]?.owner.toBase58()??null,
       bytes:result.value[i]?.data.length??0})),
@@ -139,7 +137,7 @@ async function snapshot() {
   });
 }
 async function send(ix){
-  await confirmDevnet();
+  await confirmCluster();
   const owner=signer();
   const accountKeys=ix.keys.map(x=>x.pubkey);
   const result=await connection.getMultipleAccountsInfoAndContext(accountKeys,"confirmed");
@@ -168,7 +166,7 @@ async function send(ix){
     }
   }
   const deployment = await connection.getAccountInfo(program, "confirmed");
-  if (!deployment?.executable) throw Error("Hybrid program not deployed as executable on this devnet RPC");
+  if (!deployment?.executable) throw Error("Hybrid program not deployed as executable on the selected RPC");
   const before={};
   for(const id of ["baseToken","quoteToken"]){
     before[id]=(await connection.getTokenAccountBalance(pk(id),"confirmed")).value.amount;
@@ -191,7 +189,7 @@ async function send(ix){
   for(const id of ["baseToken","quoteToken"]){
     after[id]=(await connection.getTokenAccountBalance(pk(id),"confirmed")).value.amount;
   }
-  show({signature,explorer:"https://explorer.solana.com/tx/"+signature+"?cluster=devnet",
+  show({signature,explorer:read("cluster")==="devnet"?"https://explorer.solana.com/tx/"+signature+"?cluster=devnet":null,
     before,after,simulationUnits:simulation.value.unitsConsumed,
     warning:"Confirm on an explorer and reload a fresh book snapshot before next action"});
   status("Confirmed "+signature);
@@ -205,9 +203,9 @@ $("connect").onclick=()=>action(async()=>{
   if(!provider?.isPhantom && !provider?.signTransaction)throw Error("No compatible injected Solana wallet");
   wallet=provider;
   await wallet.connect();
-  signer();await confirmDevnet();
+  signer();await confirmCluster();
   $("wallet").textContent=wallet.publicKey.toBase58();
-  status("Connected to devnet");
+  status("Connected to "+read("cluster"));
 });
 $("refresh").onclick=()=>action(snapshot);
 $("place").onclick=()=>action(()=>send(orderInstruction(30)));
