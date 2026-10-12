@@ -43,21 +43,11 @@ fn split(amount: u64, weights: &[u128]) -> Result<Vec<u64>, PassiveAccountingErr
     let mut shares = Vec::with_capacity(weights.len());
     let mut remaining_weight = total;
     for weight in weights {
-        let quotient = remaining / u64::try_from(remaining_weight).unwrap_or(u64::MAX);
-        let share = if remaining_weight > u128::from(u64::MAX) {
-            let dividend = u128::from(remaining)
-                .checked_mul(*weight)
-                .ok_or(PassiveAccountingError::Overflow)?;
-            u64::try_from(dividend / remaining_weight)
-                .map_err(|_| PassiveAccountingError::Overflow)?
-        } else {
-            let amount = u128::from(remaining)
-                .checked_mul(*weight)
-                .ok_or(PassiveAccountingError::Overflow)?;
-            let _ = quotient;
-            u64::try_from(amount / remaining_weight)
-                .map_err(|_| PassiveAccountingError::Overflow)?
-        };
+        let amount = u128::from(remaining)
+            .checked_mul(*weight)
+            .ok_or(PassiveAccountingError::Overflow)?;
+        let share = u64::try_from(amount / remaining_weight)
+            .map_err(|_| PassiveAccountingError::Overflow)?;
         shares.push(share);
         remaining -= share;
         remaining_weight -= weight;
