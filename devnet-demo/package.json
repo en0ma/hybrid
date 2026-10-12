@@ -8,7 +8,8 @@
     "build": "vite build",
     "test": "node --test src/abi.test.js",
     "verify:receipts": "node src/verify-receipts.js",
-    "check:readiness": "node src/check-readiness.js"
+    "check:readiness": "node src/check-readiness.js",
+    "print:manifest": "node src/print-manifest.js"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
