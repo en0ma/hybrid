@@ -793,10 +793,20 @@ async fn atomic_batch_crosses_into_next_lp_range_at_exact_price_boundary() {
         data,
     };
     assert!(send(&mut ctx, instruction, &f.taker).await);
-    let market = ctx.banks_client.get_account(f.market).await.unwrap().unwrap();
+    let market = ctx
+        .banks_client
+        .get_account(f.market)
+        .await
+        .unwrap()
+        .unwrap();
     let market = MarketHeader::decode_from(&market.data).unwrap();
     assert!(market.sqrt_price_x64 > Q64 * 2);
-    let first_position = ctx.banks_client.get_account(f.position).await.unwrap().unwrap();
+    let first_position = ctx
+        .banks_client
+        .get_account(f.position)
+        .await
+        .unwrap()
+        .unwrap();
     let first_position = PositionAccount::decode_from(&first_position.data).unwrap();
     let second_position = ctx.banks_client.get_account(second).await.unwrap().unwrap();
     let second_position = PositionAccount::decode_from(&second_position.data).unwrap();
