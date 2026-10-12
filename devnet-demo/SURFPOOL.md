@@ -66,3 +66,7 @@ compatibility checks.
 
 For the existing public devnet mode, leave `HYBRID_CLUSTER=devnet` and
 use an HTTPS devnet RPC; only that mode enforces devnet genesis identity.
+
+## Capture maker collateral state before and after each transaction
+
+Run `npm run snapshot:maker -- <MARKET> <MAKER>` with `HYBRID_CLUSTER=surfpool` and `SOLANA_RPC_URL=http://127.0.0.1:8899`. The command decodes the actual Rust market header, custody totals, and maker balance (`freeBase`, `lockedBase`, `freeQuote`, `lockedQuote`) at a reported RPC context slot. Capture JSON output before/after init, deposit, placement, swap, cancellation and withdrawal; retain actual confirmed signatures. Snapshots do **not** decode individual orders or prove full conservation on their own.
