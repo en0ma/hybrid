@@ -34,7 +34,8 @@ fn split(amount: u64, weights: &[u128]) -> Result<Vec<u64>, PassiveAccountingErr
         return Err(PassiveAccountingError::InvalidPosition);
     }
     let total = weights.iter().try_fold(0u128, |sum, weight| {
-        sum.checked_add(*weight).ok_or(PassiveAccountingError::Overflow)
+        sum.checked_add(*weight)
+            .ok_or(PassiveAccountingError::Overflow)
     })?;
     // Division first avoids multiplying u64 amounts by potentially huge
     // liquidity values. The final residual goes to the last position, so
@@ -53,7 +54,9 @@ fn split(amount: u64, weights: &[u128]) -> Result<Vec<u64>, PassiveAccountingErr
         remaining_weight -= weight;
     }
     if let Some(last) = shares.last_mut() {
-        *last = last.checked_add(remaining).ok_or(PassiveAccountingError::Overflow)?;
+        *last = last
+            .checked_add(remaining)
+            .ok_or(PassiveAccountingError::Overflow)?;
     }
     Ok(shares)
 }
@@ -75,8 +78,12 @@ impl PassiveLedger {
             if claim.liquidity == 0 {
                 return Err(PassiveAccountingError::InvalidPosition);
             }
-            base = base.checked_add(claim.base).ok_or(PassiveAccountingError::Overflow)?;
-            quote = quote.checked_add(claim.quote).ok_or(PassiveAccountingError::Overflow)?;
+            base = base
+                .checked_add(claim.base)
+                .ok_or(PassiveAccountingError::Overflow)?;
+            quote = quote
+                .checked_add(claim.quote)
+                .ok_or(PassiveAccountingError::Overflow)?;
             base_fees = base_fees
                 .checked_add(claim.base_fees)
                 .ok_or(PassiveAccountingError::Overflow)?;
@@ -116,13 +123,16 @@ impl PassiveLedger {
                 let paid = split(quote_in - quote_fee, &weights)?;
                 let fees = split(quote_fee, &weights)?;
                 for (i, claim) in next.claims.iter_mut().enumerate() {
-                    claim.base = claim.base
+                    claim.base = claim
+                        .base
                         .checked_sub(out[i])
                         .ok_or(PassiveAccountingError::InsufficientReserves)?;
-                    claim.quote = claim.quote
+                    claim.quote = claim
+                        .quote
                         .checked_add(paid[i])
                         .ok_or(PassiveAccountingError::Overflow)?;
-                    claim.quote_fees = claim.quote_fees
+                    claim.quote_fees = claim
+                        .quote_fees
                         .checked_add(fees[i])
                         .ok_or(PassiveAccountingError::Overflow)?;
                 }
@@ -137,13 +147,16 @@ impl PassiveLedger {
                 let paid = split(base_in - base_fee, &weights)?;
                 let fees = split(base_fee, &weights)?;
                 for (i, claim) in next.claims.iter_mut().enumerate() {
-                    claim.quote = claim.quote
+                    claim.quote = claim
+                        .quote
                         .checked_sub(out[i])
                         .ok_or(PassiveAccountingError::InsufficientReserves)?;
-                    claim.base = claim.base
+                    claim.base = claim
+                        .base
                         .checked_add(paid[i])
                         .ok_or(PassiveAccountingError::Overflow)?;
-                    claim.base_fees = claim.base_fees
+                    claim.base_fees = claim
+                        .base_fees
                         .checked_add(fees[i])
                         .ok_or(PassiveAccountingError::Overflow)?;
                 }
@@ -163,24 +176,38 @@ impl PassiveLedger {
             return Err(PassiveAccountingError::InvalidPosition);
         }
         let claim = next.claims.remove(index);
-        next.pool.base_reserve = next.pool.base_reserve
+        next.pool.base_reserve = next
+            .pool
+            .base_reserve
             .checked_sub(claim.base)
             .ok_or(PassiveAccountingError::InsufficientReserves)?;
-        next.pool.quote_reserve = next.pool.quote_reserve
+        next.pool.quote_reserve = next
+            .pool
+            .quote_reserve
             .checked_sub(claim.quote)
             .ok_or(PassiveAccountingError::InsufficientReserves)?;
-        next.pool.accrued_base_fees = next.pool.accrued_base_fees
+        next.pool.accrued_base_fees = next
+            .pool
+            .accrued_base_fees
             .checked_sub(claim.base_fees)
             .ok_or(PassiveAccountingError::InsufficientReserves)?;
-        next.pool.accrued_quote_fees = next.pool.accrued_quote_fees
+        next.pool.accrued_quote_fees = next
+            .pool
+            .accrued_quote_fees
             .checked_sub(claim.quote_fees)
             .ok_or(PassiveAccountingError::InsufficientReserves)?;
-        next.pool.total_liquidity = next.pool.total_liquidity
+        next.pool.total_liquidity = next
+            .pool
+            .total_liquidity
             .checked_sub(claim.liquidity)
             .ok_or(PassiveAccountingError::InsufficientLiquidity)?;
-        let base = claim.base.checked_add(claim.base_fees)
+        let base = claim
+            .base
+            .checked_add(claim.base_fees)
             .ok_or(PassiveAccountingError::Overflow)?;
-        let quote = claim.quote.checked_add(claim.quote_fees)
+        let quote = claim
+            .quote
+            .checked_add(claim.quote_fees)
             .ok_or(PassiveAccountingError::Overflow)?;
         next.verify()?;
         *self = next;
@@ -220,18 +247,22 @@ mod tests {
     #[test]
     fn funded_buy_sell_fee_redemption_conserves_all_atoms() {
         let mut ledger = funded();
-        ledger.settle(Trade::Buy {
-            quote_in: 23,
-            base_out: 10,
-            quote_fee: 3,
-        }).unwrap();
+        ledger
+            .settle(Trade::Buy {
+                quote_in: 23,
+                base_out: 10,
+                quote_fee: 3,
+            })
+            .unwrap();
         ledger.verify().unwrap();
         assert_eq!(ledger.pool.accrued_quote_fees, 3);
-        ledger.settle(Trade::Sell {
-            base_in: 13,
-            quote_out: 7,
-            base_fee: 2,
-        }).unwrap();
+        ledger
+            .settle(Trade::Sell {
+                base_in: 13,
+                quote_out: 7,
+                base_fee: 2,
+            })
+            .unwrap();
         ledger.verify().unwrap();
         assert_eq!(ledger.pool.accrued_base_fees, 2);
         let before = (
@@ -263,11 +294,13 @@ mod tests {
     #[test]
     fn redemption_uses_post_trade_inventory_not_original_deposit() {
         let mut ledger = funded();
-        ledger.settle(Trade::Buy {
-            quote_in: 21,
-            base_out: 10,
-            quote_fee: 1,
-        }).unwrap();
+        ledger
+            .settle(Trade::Buy {
+                quote_in: 21,
+                base_out: 10,
+                quote_fee: 1,
+            })
+            .unwrap();
         let first = ledger.redeem(0).unwrap();
         assert_ne!(first, (40, 40));
         ledger.verify().unwrap();
@@ -277,10 +310,13 @@ mod tests {
     fn inconsistent_claims_fail_closed() {
         let mut ledger = funded();
         ledger.claims[0].base += 1;
-        assert_eq!(ledger.settle(Trade::Buy {
-            quote_in: 10,
-            base_out: 1,
-            quote_fee: 1,
-        }), Err(PassiveAccountingError::InvariantViolation));
+        assert_eq!(
+            ledger.settle(Trade::Buy {
+                quote_in: 10,
+                base_out: 1,
+                quote_fee: 1,
+            }),
+            Err(PassiveAccountingError::InvariantViolation)
+        );
     }
 }
