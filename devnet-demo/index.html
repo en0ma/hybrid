@@ -19,10 +19,19 @@
         <label>Bid head owner sidecar <input id="bidOwner" placeholder="Bound bid owner-sidecar key"></label>
         <label>Maker base SPL token account <input id="baseToken" placeholder="Connected wallet's base token account"></label>
         <label>Maker quote SPL token account <input id="quoteToken" placeholder="Connected wallet's quote token account"></label>
+        <label>Base SPL mint <input id="baseMint" placeholder="Market base mint"></label>
+        <label>Quote SPL mint <input id="quoteMint" placeholder="Market quote mint"></label>
         <label>Base vault <input id="baseVault" placeholder="Market base vault"></label>
         <label>Quote vault <input id="quoteVault" placeholder="Market quote vault"></label>
         <label>Ask head/tail linked book <span class="hint">For pages 0 and 1, both PDAs must be initialized.</span></label>
         <label>Bid head/tail linked book <span class="hint">For pages 0 and 1, both PDAs must be initialized.</span></label>
+      </section>
+      <section><h2>Maker collateral lifecycle</h2>
+        <p>Initialize custody and the maker-balance PDA before depositing. Only free collateral may be withdrawn; a resting order locks its commitment.</p>
+        <label>Asset <select id="collateralAsset"><option value="base">Base</option><option value="quote">Quote</option></select></label>
+        <label>Amount (raw atoms) <input id="collateralAmount" placeholder="1000"></label>
+        <button id="deposit">Simulate & deposit collateral</button>
+        <button id="withdraw">Simulate & withdraw free collateral</button>
       </section>
       <section><h2>Place / cancel collateralized order</h2>
         <label>Side <select id="makerSide"><option value="ask">Ask</option><option value="bid">Bid</option></select></label>
