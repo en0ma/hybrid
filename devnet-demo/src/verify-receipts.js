@@ -5,8 +5,11 @@ import {Connection,PublicKey} from "@solana/web3.js";
 import {PROGRAM_ID} from "./abi.js";
 import {verifiesTradeMovement,tokenBalanceDeltas} from "./evidence.js";
 const sigs=process.argv.slice(2);
-if(sigs.length!==3||sigs.some(s=>!/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(s))){
-  console.error("Usage: node src/verify-receipts.js <place-signature> <trade-signature> <cancel-signature>");
+const full=sigs.length===6;
+const steps=full?["initialize maker","deposit","place","trade","cancel","withdraw"]:["place","trade","cancel"];
+const wanted=full?[new Set([12]),new Set([13]),new Set([30]),new Set([23,24,25,26]),new Set([31]),new Set([14])]:[new Set([30]),new Set([23,24,25,26]),new Set([31])];
+if(![3,6].includes(sigs.length)||sigs.some(s=>!/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(s))){
+  console.error("Usage: node src/verify-receipts.js <place> <trade> <cancel> OR <init-maker> <deposit> <place> <trade> <cancel> <withdraw>");
   process.exit(2);
 }
 const rpc=process.env.SOLANA_DEVNET_RPC||"https://api.devnet.solana.com";
@@ -14,9 +17,8 @@ const connection=new Connection(rpc,"confirmed");
 const expected="EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
 if(await connection.getGenesisHash()!==expected) throw Error("Not a devnet RPC");
 const program=new PublicKey(PROGRAM_ID);
-const wanted=[new Set([30]),new Set([23,24,25,26]),new Set([31])];
 const report=[];
-if(new Set(sigs).size!==sigs.length)throw Error("Signatures must be three distinct transactions");
+if(new Set(sigs).size!==sigs.length)throw Error("Each stage needs a distinct transaction signature");
 let commonMarket=null;
 let previousSlot=0;
 let placingMaker=null;
@@ -38,27 +40,29 @@ for(let i=0;i<sigs.length;i++){
   if(tx.slot<previousSlot)throw Error("Receipt slots are not chronological");
   previousSlot=tx.slot;
   const opcodes=matching.map(ix=>bs58.decode(ix.data)[0]);
-  if(i===0||i===2){
-    // Linked maker opcodes 30/31 place the maker signer at account index 6.
+  const opcode=opcodes[0];
+  if([12,13,14,30,31].includes(opcode)){
     const ix=matching[0];
-    if(ix.accounts.length!==7)throw Error("Unexpected linked maker instruction account layout");
-    const maker=ix.accounts[6].toBase58();
+    const makerIndex=opcode===30||opcode===31?6:3;
+    const accountLength={12:6,13:8,14:9,30:7,31:7}[opcode];
+    if(ix.accounts.length!==accountLength)throw Error("Unexpected lifecycle instruction account layout");
+    const maker=ix.accounts[makerIndex].toBase58();
     if(!signedKeys.has(maker))throw Error("Maker is not a transaction signer");
-    if(i===0)placingMaker=maker;
-    if(i===2&&maker!==placingMaker)throw Error("Cancel was not signed by the placing maker");
+    if(placingMaker===null)placingMaker=maker;
+    if(maker!==placingMaker)throw Error("Lifecycle maker differs from initial maker");
   }
-  if(i===1 && !signedKeys.has(matching[0].accounts[2].toBase58())){
+  if([23,24,25,26].includes(opcode) && !signedKeys.has(matching[0].accounts[2].toBase58())){
     throw Error("Taker is not a transaction signer");
   }
-  if(i===1 && !verifiesTradeMovement(tx.meta.preTokenBalances,tx.meta.postTokenBalances)){
+  if([23,24,25,26].includes(opcode) && !verifiesTradeMovement(tx.meta.preTokenBalances,tx.meta.postTokenBalances)){
     throw Error("Trade receipt has no two-sided SPL balance movement");
   }
   const tokenDeltas=tokenBalanceDeltas(tx.meta.preTokenBalances,tx.meta.postTokenBalances)
     .map(x=>({accountIndex:x.accountIndex,deltaAtoms:x.delta.toString()}));
-  report.push({tokenDeltas,kind:["place","trade","cancel"][i],signature:sigs[i],slot:tx.slot,
+  report.push({tokenDeltas,kind:steps[i],signature:sigs[i],slot:tx.slot,
     opcodes,feeLamports:tx.meta.fee,
     preTokenBalances:tx.meta.preTokenBalances||[],postTokenBalances:tx.meta.postTokenBalances||[]});
 }
 console.log(JSON.stringify({cluster:"devnet",program:program.toBase58(),
   market:commonMarket,placingMaker,
-  warning:"These receipts share a market, but do not prove same maker/order, exact fill or inventory. Verify state transitions.",report},null,2));
+  warning:"Receipts share a market and authenticated maker; they do not prove the same order sequence, correct fills, market funding or vault solvency. Inspect decoded state.",report},null,2));
