@@ -8,6 +8,7 @@
     "build": "vite build",
     "test": "node --test src/*.test.js",
     "verify:receipts": "node src/verify-receipts.js",
+    "check:transition": "node src/check-transition.js",
     "snapshot:maker": "node src/snapshot-maker.js",
     "check:runtime": "node src/check-runtime.js",
     "check:readiness": "node src/check-readiness.js",
