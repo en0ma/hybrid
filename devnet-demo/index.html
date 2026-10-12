@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Hybrid • Devnet trade smoke</title></head>
+  <body>
+    <main>
+      <h1>Hybrid <small>Devnet wallet-to-trade smoke</small></h1>
+      <p>This is a developer integration harness for an already initialized market, not a production trading interface.</p>
+      <div id="status" role="status">Disconnected</div>
+      <section><h2>Connection</h2>
+        <label>RPC endpoint <input id="rpc" value="https://api.devnet.solana.com"></label>
+        <button id="connect">Connect injected Solana wallet</button>
+        <button id="refresh">Refresh snapshot</button>
+        <output id="wallet"></output>
+      </section>
+      <section><h2>Market addresses</h2>
+        <p>Supply real accounts from a devnet market you control. Nothing is auto-created.</p>
+        <label>Market <input id="market" placeholder="Market public key"></label>
+        <label>Ask head owner sidecar <input id="askOwner" placeholder="Bound ask owner-sidecar key"></label>
+        <label>Bid head owner sidecar <input id="bidOwner" placeholder="Bound bid owner-sidecar key"></label>
+        <label>Maker base SPL token account <input id="baseToken" placeholder="Connected wallet's base token account"></label>
+        <label>Maker quote SPL token account <input id="quoteToken" placeholder="Connected wallet's quote token account"></label>
+        <label>Base vault <input id="baseVault" placeholder="Market base vault"></label>
+        <label>Quote vault <input id="quoteVault" placeholder="Market quote vault"></label>
+        <label>Ask head/tail linked book <span class="hint">For pages 0 and 1, both PDAs must be initialized.</span></label>
+        <label>Bid head/tail linked book <span class="hint">For pages 0 and 1, both PDAs must be initialized.</span></label>
+      </section>
+      <section><h2>Place / cancel collateralized order</h2>
+        <label>Side <select id="makerSide"><option value="ask">Ask</option><option value="bid">Bid</option></select></label>
+        <label>Page index <select id="pageIndex"><option value="0">0</option><option value="1">1</option></select></label>
+        <label>Price Q64 (unsigned integer) <input id="price" placeholder="18446744073709551616"></label>
+        <label>Sqrt price Q64 (unsigned integer) <input id="sqrtPrice" placeholder="18446744073709551616"></label>
+        <label>Base quantity (raw atoms) <input id="quantity" placeholder="100"></label>
+        <button id="place">Simulate & place order</button>
+        <label>Order sequence (from confirmed book state) <input id="sequence" placeholder="1"></label>
+        <button id="cancel">Simulate & cancel order</button>
+      </section>
+      <section><h2>Execute active-book trade</h2>
+        <p>Active CLOB only (opcodes 23–26). Supply every current book page and all maker balance PDAs touched by the proposed execution; use the same RPC snapshot before simulation.</p>
+        <label>Trade side <select id="tradeSide"><option value="ask">Buy base (consume asks)</option><option value="bid">Sell base (consume bids)</option></select></label>
+        <label>Mode <select id="tradeMode"><option value="in">Exact-in</option><option value="out">Exact-out</option></select></label>
+        <label>Amount (raw atoms) <input id="tradeAmount" placeholder="100"></label>
+        <label>Limit (raw atoms) <input id="tradeLimit" placeholder="1"></label>
+        <label>Book page count <select id="pageCount"><option value="1">1</option><option value="2">2</option></select></label>
+        <label>Maker owner public keys (comma separated, all touched makers, max 8) <textarea id="makers" rows="3"></textarea></label>
+        <button id="trade">Simulate & execute trade</button>
+      </section>
+      <section><h2>RPC snapshot and results</h2><pre id="output" aria-live="polite"></pre></section>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
