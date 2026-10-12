@@ -213,7 +213,7 @@ async fn send(
     ctx: &mut solana_program_test::ProgramTestContext,
     ix: Instruction,
     signer: &Keypair,
-) -> Result<(), solana_program_test::BanksClientError> {
+) -> bool {
     let hash = ctx.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
         &[ix],
@@ -221,25 +221,21 @@ async fn send(
         &[&ctx.payer, signer],
         hash,
     );
-    ctx.banks_client.process_transaction(tx).await
+    ctx.banks_client.process_transaction(tx).await.is_ok()
 }
 
 #[tokio::test]
 async fn funded_buy_sell_then_fee_aware_lp_close_conserves_tokens() {
     let f = fixture();
     let mut ctx = f.program.start_with_context().await;
-    send(&mut ctx, swap(&f, 0, 100, 1, f.base_vault), &f.taker)
-        .await
-        .unwrap();
+    assert!(send(&mut ctx, swap(&f, 0, 100, 1, f.base_vault), &f.taker).await);
     let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
     let pool = PoolAccount::decode_from(&pool.data).unwrap();
     assert_eq!(pool.pool.accrued_quote_fees, 1);
     let market = ctx.banks_client.get_account(f.market).await.unwrap().unwrap();
     assert!(MarketHeader::decode_from(&market.data).unwrap().sqrt_price_x64 > Q64);
 
-    send(&mut ctx, swap(&f, 1, 100, 1, f.base_vault), &f.taker)
-        .await
-        .unwrap();
+    assert!(send(&mut ctx, swap(&f, 1, 100, 1, f.base_vault), &f.taker).await);
     let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
     let pool = PoolAccount::decode_from(&pool.data).unwrap();
     assert_eq!(pool.pool.accrued_base_fees, 1);
@@ -292,7 +288,7 @@ async fn funded_buy_sell_then_fee_aware_lp_close_conserves_tokens() {
     let mut close = close;
     close.accounts[7] = AccountMeta::new(lp_base, false);
     close.accounts[8] = AccountMeta::new(lp_quote, false);
-    send(&mut ctx, close, &f.lp).await.unwrap();
+    assert!(send(&mut ctx, close, &f.lp).await);
     let base = ctx.banks_client.get_account(lp_base).await.unwrap().unwrap();
     let quote = ctx.banks_client.get_account(lp_quote).await.unwrap().unwrap();
     assert!(amount(&base) > 0);
@@ -307,7 +303,7 @@ async fn counterfeit_base_vault_is_rejected_atomically() {
     let mut ctx = f.program.start_with_context().await;
     let fake = Pubkey::new_unique();
     let result = send(&mut ctx, swap(&f, 0, 100, 1, fake), &f.taker).await;
-    assert!(result.is_err());
+    assert!(!result);
     let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
     assert_eq!(PoolAccount::decode_from(&pool.data).unwrap().pool.base_reserve, 10_000);
 }
