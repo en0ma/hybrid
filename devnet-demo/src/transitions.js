@@ -20,6 +20,10 @@ export function compareMakerSnapshots(before,after,action,asset,amount){
       if(y[key]-x[key]!==expected)throw Error(action+" changed unexpected maker collateral "+key);
     }
   }
+  if(before.cluster!==after.cluster||before.rpc!==after.rpc)throw Error("Snapshot network/RPC mismatch");
+  if(!Number.isSafeInteger(before.slot)||!Number.isSafeInteger(after.slot)||after.slot<before.slot)
+    throw Error("Snapshot slots invalid or out of order");
+  if(!before.custodyState||!after.custodyState)throw Error("Custody snapshots required");
   const vault=asset==="base"?"base":"quote";
   if(!before.vaultBalances||!after.vaultBalances)throw Error("Vault balance snapshots required");
   const n=BigInt(amount),direction=action==="deposit"?1n:-1n;
@@ -29,5 +33,11 @@ export function compareMakerSnapshots(before,after,action,asset,amount){
     const expected=key===vault?direction*n:0n;
     if(afterVault-beforeVault!==expected)throw Error("SPL vault transfer does not match maker collateral delta");
   }
-  return {action,delta,checked:true,verifiedVaultTransfers:true};
+  for(const key of ["base","quote"]){
+    const field=key==="base"?"totalBase":"totalQuote";
+    const expected=key===vault?direction*n:0n;
+    if(BigInt(after.custodyState[field])-BigInt(before.custodyState[field])!==expected)
+      throw Error("Custody total delta differs from maker and vault movement");
+  }
+  return {action,delta,checked:true,verifiedVaultTransfers:true,verifiedCustodyTotals:true};
 }
