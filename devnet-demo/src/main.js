@@ -1,5 +1,5 @@
 import {
-  Connection, PublicKey, Transaction, TransactionInstruction,
+  Connection, PublicKey, SystemProgram, Transaction, TransactionInstruction,
 } from "@solana/web3.js";
 import {Buffer} from "buffer";
 import {PROGRAM_ID, TOKEN_PROGRAM_ID, placeData, cancelData, tradeData, collateralData} from "./abi.js";
@@ -65,6 +65,14 @@ function orderInstruction(opcode) {
     placeData(side,idx,read("price"),read("sqrtPrice"),read("quantity")):
     cancelData(side,idx,read("sequence"));
   return new TransactionInstruction({programId:program,keys,data:Buffer.from(data)});
+}
+function initializeMakerInstruction() {
+  const maker=signer();
+  const keys=[
+    meta(pk("market")),meta(custody()),meta(makerBalance(maker),true),
+    meta(maker,false,true),meta(maker,true,true),meta(SystemProgram.programId)
+  ];
+  return new TransactionInstruction({programId:program,keys,data:Buffer.from([12])});
 }
 function collateralInstruction(action) {
   const maker=signer();
@@ -135,6 +143,8 @@ async function send(ix){
   const owner=signer();
   const accountKeys=ix.keys.map(x=>x.pubkey);
   const result=await connection.getMultipleAccountsInfoAndContext(accountKeys,"confirmed");
+  const creatingMaker=ix.data[0]===12;
+  const makerPda=creatingMaker?makerBalance(owner):null;
   if(result.value.some((v,i)=>v===null&&!accountKeys[i].equals(owner)&&!accountKeys[i].equals(tokenProgram)&&!accountKeys[i].equals(authority())))
     throw Error("Missing required initialized account. Inspect addresses before retrying.");
   // Fail closed on spoofed market/sidecar/maker PDAs and token accounts.
@@ -144,7 +154,8 @@ async function send(ix){
   const mintKeys = [pk("baseMint"),pk("quoteMint")];
   for (let i = 0; i < accountKeys.length; i++) {
     const key = accountKeys[i], account = result.value[i];
-    if (!account || key.equals(owner) || key.equals(tokenProgram) || key.equals(authority())) continue;
+    if (!account && creatingMaker && key.equals(makerPda)) continue;
+    if (!account || key.equals(owner) || key.equals(tokenProgram) || key.equals(authority()) || key.equals(SystemProgram.programId)) continue;
     const expectedOwner = tokenKeys.some(token => token.equals(key)) ||
       mintKeys.some(mint => mint.equals(key)) ? tokenProgram : program;
     if (!account.owner.equals(expectedOwner)) {
@@ -200,3 +211,5 @@ $("trade").onclick=()=>action(()=>send(swapInstruction()));
 
 $("deposit").onclick=()=>action(()=>send(collateralInstruction("deposit")));
 $("withdraw").onclick=()=>action(()=>send(collateralInstruction("withdraw")));
+
+$("initMaker").onclick=()=>action(()=>send(initializeMakerInstruction()));
