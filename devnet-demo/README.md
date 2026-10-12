@@ -83,6 +83,23 @@ are expected safety checks and **not** evidence of a successful smoke test.
   bundles the UI; it does **not** send real devnet transactions or prove
   a live market exists.
 
+## Verify actual devnet transaction receipts
+
+After making three **real** successful transactions against a configured
+market, verify that the transactions are confirmed and contain the expected
+Hybrid place (30), trade (23–26), and cancel (31) opcodes:
+
+\`\`\`sh
+cd devnet-demo
+npm run verify:receipts -- <PLACE_SIGNATURE> <TRADE_SIGNATURE> <CANCEL_SIGNATURE>
+\`\`\`
+
+The verifier checks the devnet genesis hash, success receipt, invoked
+program ID and decoded instruction opcode. It prints slot, fees and
+pre/post SPL token balance entries for inspection. It does not certify that
+the three transactions targeted the same market or order; verify those
+manually with the linked-book state and associated account signatures.
+
 Before marking milestone 59 complete, add a scripted/devnet fixture that
 deploys and initializes a reproducible market, funds maker balances and
 vaults, places an order, executes a buy/sell, cancels a remaining order,
