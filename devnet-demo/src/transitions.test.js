@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {compareMakerSnapshots} from "./transitions.js";
-const make=(freeBase,lockedBase,freeQuote,lockedQuote)=>({market:"m",maker:"u",makerState:{
+const make=(freeBase,lockedBase,freeQuote,lockedQuote)=>({cluster:"surfpool",rpc:"http://127.0.0.1:8899/",slot:1,market:"m",maker:"u",custodyState:{totalBase:String(freeBase),totalQuote:String(freeQuote)},makerState:{
  market:"m",owner:"u",freeBase:String(freeBase),lockedBase:String(lockedBase),
  freeQuote:String(freeQuote),lockedQuote:String(lockedQuote)},vaultBalances:{base:String(freeBase),quote:String(freeQuote)}});
 test("deposit and withdrawal only change corresponding free collateral",()=>{
@@ -13,4 +13,8 @@ test("deposit and withdrawal only change corresponding free collateral",()=>{
  assert.throws(()=>compareMakerSnapshots(a,b,"withdraw","base","100"));
  const forged=structuredClone(b);forged.vaultBalances.base="99";
  assert.throws(()=>compareMakerSnapshots(a,forged,"deposit","base","100"),/vault/i);
+ const badCustody=structuredClone(b);badCustody.custodyState.totalBase="99";
+ assert.throws(()=>compareMakerSnapshots(a,badCustody,"deposit","base","100"),/Custody/i);
+ const stale=structuredClone(b);stale.slot=0;
+ assert.throws(()=>compareMakerSnapshots(a,stale,"deposit","base","100"),/slot/i);
 });
