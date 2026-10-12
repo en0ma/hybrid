@@ -74,8 +74,8 @@ or that swap collateral and liquidity are sufficient.
    Supply page index 0 or 1, side, nonzero raw base quantity, Q64 price,
    and Q64 square-root price. The app derives canonical page PDAs and
    maker-balance PDA and builds opcode 30.
-3. **Deposit collateral / withdraw unused collateral.** With custody and
-   the maker-balance PDA already initialized, supply market base/quote SPL
+3. **Deposit collateral / withdraw unused collateral.** With custody initialized by the market operator, initialize the maker's
+   balance PDA (opcode 12) with the new button, then use collateral actions, supply market base/quote SPL
    mint addresses, select the asset and enter a nonzero raw atom amount.
    Opcode 13 transfers funds from the wallet's source token account into
    the market vault and credits the maker's free collateral; opcode 14
@@ -147,3 +147,7 @@ deploys and initializes a reproducible market, funds maker balances and
 vaults, places an order, executes a buy/sell, cancels a remaining order,
 and archives transaction signatures and before/after token balances.
 Require security audit of the deployed build and market parameters.
+
+## Custody initialization boundary
+
+Opcode 11 requires the **market account to sign**, in addition to a funded payer, valid mints, and existing token vaults. A normal connected maker wallet cannot sign as that market account. Custody initialization therefore remains an operator deployment prerequisite. The frontend now supports connected maker balance initialization (12), deposits (13), withdrawals (14), order placement/cancellation (30/31), and active swaps (23–26). Never provide a deployment keypair to the browser UI.
