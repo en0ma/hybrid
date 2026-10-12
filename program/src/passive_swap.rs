@@ -6,7 +6,10 @@ use crate::{
     check_passive_vault_coverage, checked_token_amount, load_custody, token_account_fields,
     transfer_checked, TOKEN_PROGRAM_ID,
 };
-use hybrid_engine::{quote_base_in_for_quote_out, quote_quote_in_for_base_out, PassiveState};
+use hybrid_engine::{
+    passive_exact_out::{buy_exact_out, sell_exact_out}, quote_base_in_for_quote_out,
+    quote_quote_in_for_base_out, PassiveState,
+};
 use hybrid_state::passive::{PoolAccount, PositionAccount};
 use solana_program::{
     account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError,
@@ -14,11 +17,12 @@ use solana_program::{
 };
 
 pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if data.len() != 28 || accounts.len() != 14 || data[0] != 33 || data[1] > 1 {
+    if data.len() != 28 || accounts.len() != 14 || !matches!(data[0], 33 | 34) || data[1] > 1 {
         return Err(ProgramError::InvalidInstructionData);
     }
+    let exact_out = data[0] == 34;
     let side = data[1];
-    let gross_in = u64::from_le_bytes(
+    let specified_in = u64::from_le_bytes(
         data[2..10]
             .try_into()
             .map_err(|_| ProgramError::InvalidInstructionData)?,
@@ -36,7 +40,7 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     let nonce_bytes: [u8; 8] = data[20..28]
         .try_into()
         .map_err(|_| ProgramError::InvalidInstructionData)?;
-    if gross_in == 0 || min_out == 0 || fee_bps == 0 || fee_bps >= 10_000 {
+    if specified_in == 0 || min_out == 0 || fee_bps == 0 || fee_bps >= 10_000 {
         return Err(ProgramError::InvalidInstructionData);
     }
     let market_account = &accounts[0];
@@ -161,24 +165,61 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         return Err(ProgramError::InvalidAccountData);
     }
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
-    let fee = u64::try_from((u128::from(gross_in) * u128::from(fee_bps)).div_ceil(10_000))
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-    let net_in = gross_in
-        .checked_sub(fee)
-        .ok_or(ProgramError::InvalidInstructionData)?;
-    if net_in == 0 || fee == 0 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
     let state = PassiveState {
         sqrt_price_x64: header.sqrt_price_x64,
         liquidity: position.position.liquidity,
     };
-    let result = if side == 0 {
-        quote_quote_in_for_base_out(state, net_in)
+    // Opcode 34 interprets specified_in as max gross input, and min_out
+    // as requested minimum output. In both modes, ceil fees are charged on
+    // the actual gross token debit, not on the post-fee quote amount.
+    let (gross_in, fee, net_in, result) = if exact_out {
+        let target = if side == 0 {
+            buy_exact_out(state, min_out)
+        } else {
+            sell_exact_out(state, min_out)
+        }
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+        let net = target.amount_in;
+        let denominator = 10_000u128 - u128::from(fee_bps);
+        let gross = (u128::from(net) * 10_000u128)
+            .div_ceil(denominator);
+        let gross = u64::try_from(gross)
+            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        if gross > specified_in {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        let fee = u64::try_from(
+            (u128::from(gross) * u128::from(fee_bps)).div_ceil(10_000),
+        )
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+        let actual_net = gross.checked_sub(fee)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        let result = if side == 0 {
+            quote_quote_in_for_base_out(state, actual_net)
+        } else {
+            quote_base_in_for_quote_out(state, actual_net)
+        }
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+        (gross, fee, actual_net, result)
     } else {
-        quote_base_in_for_quote_out(state, net_in)
+        let gross = specified_in;
+        let fee = u64::try_from(
+            (u128::from(gross) * u128::from(fee_bps)).div_ceil(10_000),
+        )
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+        let net = gross.checked_sub(fee)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        let result = if side == 0 {
+            quote_quote_in_for_base_out(state, net)
+        } else {
+            quote_base_in_for_quote_out(state, net)
+        }
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
+        (gross, fee, net, result)
+    };
+    if net_in == 0 || fee == 0 {
+        return Err(ProgramError::InvalidInstructionData);
     }
-    .map_err(|_| ProgramError::InvalidInstructionData)?;
     if result.amount_out < min_out
         || result.amount_out == 0
         || result.next_sqrt_price_x64 < position.position.lower_sqrt_price_x64
