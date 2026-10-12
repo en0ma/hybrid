@@ -1,7 +1,9 @@
 //! Passive exact-out plan construction (pure math only).
 //! Execution must enforce authenticated custody, max gross input, all crossed
 //! boundaries and actual output floors before transferring any SPL tokens.
-use crate::{quote_base_in_for_quote_out, quote_quote_in_for_base_out, PassiveState, Quote, QuoteError};
+use crate::{
+    quote_base_in_for_quote_out, quote_quote_in_for_base_out, PassiveState, Quote, QuoteError,
+};
 
 /// Smallest net quote input needed for at least `base_out` atoms.
 pub fn buy_exact_out(state: PassiveState, base_out: u64) -> Result<Quote, QuoteError> {
@@ -71,14 +73,20 @@ mod tests {
         let buy = buy_exact_out(state, 100).unwrap();
         assert!(buy.amount_out >= 100);
         assert!(buy.amount_in > 0);
-        assert!(quote_quote_in_for_base_out(state, buy.amount_in - 1)
-            .unwrap()
-            .amount_out < 100);
+        assert!(
+            quote_quote_in_for_base_out(state, buy.amount_in - 1)
+                .unwrap()
+                .amount_out
+                < 100
+        );
         let sell = sell_exact_out(state, 100).unwrap();
         assert!(sell.amount_out >= 100);
         assert!(sell.amount_in > 0);
-        assert!(quote_base_in_for_quote_out(state, sell.amount_in - 1)
-            .unwrap()
-            .amount_out < 100);
+        assert!(
+            quote_base_in_for_quote_out(state, sell.amount_in - 1)
+                .unwrap()
+                .amount_out
+                < 100
+        );
     }
 }
