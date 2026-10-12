@@ -31,6 +31,7 @@ for(let i=0;i<sigs.length;i++){
   const matching=hits.filter(ix=>"data" in ix && wanted[i].has(bs58.decode(ix.data)[0]));
   if(matching.length!==1)throw Error("Expected exactly one Hybrid instruction at position "+(i+1));
   const market=matching[0].accounts[0]?.toBase58();
+  const signedKeys=new Set(tx.transaction.message.accountKeys.filter(x=>x.signer).map(x=>x.pubkey.toBase58()));
   if(!market)throw Error("Hybrid market account is missing");
   if(commonMarket===null)commonMarket=market;
   if(market!==commonMarket)throw Error("Place, trade and cancel target different markets");
@@ -42,8 +43,12 @@ for(let i=0;i<sigs.length;i++){
     const ix=matching[0];
     if(ix.accounts.length!==7)throw Error("Unexpected linked maker instruction account layout");
     const maker=ix.accounts[6].toBase58();
+    if(!signedKeys.has(maker))throw Error("Maker is not a transaction signer");
     if(i===0)placingMaker=maker;
     if(i===2&&maker!==placingMaker)throw Error("Cancel was not signed by the placing maker");
+  }
+  if(i===1 && !signedKeys.has(matching[0].accounts[2].toBase58())){
+    throw Error("Taker is not a transaction signer");
   }
   if(i===1 && !verifiesTradeMovement(tx.meta.preTokenBalances,tx.meta.postTokenBalances)){
     throw Error("Trade receipt has no two-sided SPL balance movement");
