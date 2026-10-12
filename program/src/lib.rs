@@ -41,8 +41,8 @@ mod linked_maker;
 mod multipage_buy;
 mod multipage_sell;
 mod page_lifecycle;
-mod passive_swap;
 mod passive_multi;
+mod passive_swap;
 
 pub fn process_instruction(
     _program_id: &Pubkey,
