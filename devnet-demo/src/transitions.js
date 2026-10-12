@@ -20,5 +20,14 @@ export function compareMakerSnapshots(before,after,action,asset,amount){
       if(y[key]-x[key]!==expected)throw Error(action+" changed unexpected maker collateral "+key);
     }
   }
-  return {action,delta,checked:action==="deposit"||action==="withdraw"};
+  const vault=asset==="base"?"base":"quote";
+  if(!before.vaultBalances||!after.vaultBalances)throw Error("Vault balance snapshots required");
+  const n=BigInt(amount),direction=action==="deposit"?1n:-1n;
+  for(const key of ["base","quote"]){
+    const beforeVault=BigInt(before.vaultBalances[key]);
+    const afterVault=BigInt(after.vaultBalances[key]);
+    const expected=key===vault?direction*n:0n;
+    if(afterVault-beforeVault!==expected)throw Error("SPL vault transfer does not match maker collateral delta");
+  }
+  return {action,delta,checked:true,verifiedVaultTransfers:true};
 }
