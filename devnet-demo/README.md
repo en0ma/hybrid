@@ -156,3 +156,5 @@ Require security audit of the deployed build and market parameters.
 Opcode 11 requires the **market account to sign**, in addition to a funded payer, valid mints, and existing token vaults. A normal connected maker wallet cannot sign as that market account. Custody initialization therefore remains an operator deployment prerequisite. The frontend now supports connected maker balance initialization (12), deposits (13), withdrawals (14), order placement/cancellation (30/31), and active swaps (23–26). Never provide a deployment keypair to the browser UI.
 
 The six-signature form additionally checks initialization (12), deposit (13), and withdrawal (14) instructions with the same authenticated maker. Neither form proves that a specific order sequence was filled/canceled, nor verifies custody reserves without a decoded state audit.
+
+For three- and six-receipt evidence, the trade instruction must also include the placing maker's canonical `maker-balance` PDA among its touched maker accounts. This establishes account linkage, **not** proof that the maker order actually filled; order sequence and collateral balance deltas still require state decoding.
