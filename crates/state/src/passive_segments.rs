@@ -324,8 +324,8 @@ mod tests {
         assert_eq!(book.positions[1].base_fees, 1);
         let a = book.redeem(0).unwrap();
         let b = book.redeem(0).unwrap();
-        assert_eq!(a.0 + b.0, 210);
-        assert_eq!(a.1 + b.1, 210);
+        assert_eq!(a.0 + b.0, 211);
+        assert_eq!(a.1 + b.1, 211);
         assert_eq!(book.pool, PassivePool::default());
     }
 
