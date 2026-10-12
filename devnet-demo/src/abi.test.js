@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {placeData,cancelData,tradeData,uint,le} from "./abi.js";
+import {placeData,cancelData,tradeData,collateralData,uint,le} from "./abi.js";
 test("canonical maker place/cancel encoding",()=>{
   const p=placeData("ask",1,"18446744073709551616","18446744073709551616",100);
   assert.equal(p.length,43);assert.deepEqual([...p.slice(0,3)],[30,0,1]);
@@ -22,4 +22,10 @@ test("reject invalid numerical and page data",()=>{
   assert.throws(()=>le(String(1n<<128n),16));
   assert.throws(()=>tradeData("ask",false,9,10,1));
   assert.throws(()=>placeData("ask",2,1,1,1));
+});
+
+test("maker deposit and withdrawal opcodes match on-chain ABI",()=>{
+  assert.deepEqual([...collateralData("deposit","base",258)],[13,0,2,1,0,0,0,0,0,0]);
+  assert.deepEqual([...collateralData("withdraw","quote",1)],[14,1,1,0,0,0,0,0,0,0]);
+  assert.throws(()=>collateralData("withdraw","invalid",5));
 });
