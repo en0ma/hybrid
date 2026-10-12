@@ -213,22 +213,62 @@ pub(super) fn process_multipage_buy(
     market
         .encode_into(&mut market_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    for index in 0..count {
-        let mut page = next_pages.get(index).copied().unwrap_or_default();
-        let mut sidecar = next_sidecars.get(index).copied().unwrap_or_default();
-        if index >= next_pages.len() {
-            let links = hybrid_state::PageLinks::new(index as u32, None, None);
-            page.set_links(links);
-            sidecar.set_links(links);
-        }
-        page.encode_into(&mut accounts[MULTIPAGE_BUY_FIXED + 2 * index].try_borrow_mut_data()?)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-        sidecar
-            .encode_into(&mut accounts[MULTIPAGE_BUY_FIXED + 2 * index + 1].try_borrow_mut_data()?)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-    }
+    store_ask_page_updates(accounts, count, &next_pages, &next_sidecars)?;
     for (account, state) in maker_accounts.iter().zip(settled.iter()) {
         store_maker_balance(account, state)?;
     }
     store_custody(custody_account, &custody)
+}
+
+/// Isolate large page/owner-page encode temporaries from the settlement
+/// function's SBF stack frame; write both only after settlement validation.
+#[inline(never)]
+fn store_ask_page_updates(
+    accounts: &[AccountInfo],
+    count: usize,
+    next_pages: &[hybrid_state::AskPage],
+    next_sidecars: &[hybrid_state::AskOwnerPage],
+) -> ProgramResult {
+    for index in 0..count {
+        store_ask_data_page(
+            &accounts[MULTIPAGE_BUY_FIXED + 2 * index],
+            index,
+            next_pages.get(index),
+        )?;
+        store_ask_owner_page(
+            &accounts[MULTIPAGE_BUY_FIXED + 2 * index + 1],
+            index,
+            next_sidecars.get(index),
+        )?;
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn store_ask_data_page(
+    account: &AccountInfo,
+    index: usize,
+    next: Option<&hybrid_state::AskPage>,
+) -> ProgramResult {
+    let mut page = next.copied().unwrap_or_default();
+    if next.is_none() {
+        page.set_links(hybrid_state::PageLinks::new(index as u32, None, None));
+    }
+    page.encode_into(&mut account.try_borrow_mut_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)
+}
+
+#[inline(never)]
+fn store_ask_owner_page(
+    account: &AccountInfo,
+    index: usize,
+    next: Option<&hybrid_state::AskOwnerPage>,
+) -> ProgramResult {
+    let mut owner = next.copied().unwrap_or_default();
+    if next.is_none() {
+        owner.set_links(hybrid_state::PageLinks::new(index as u32, None, None));
+    }
+    owner
+        .encode_into(&mut account.try_borrow_mut_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)
 }

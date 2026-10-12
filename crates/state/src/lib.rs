@@ -3,6 +3,8 @@
 pub mod multipage_ask;
 pub mod multipage_bid;
 pub mod passive;
+pub mod passive_lifecycle;
+pub mod passive_segments;
 
 use hybrid_engine::{validate_limit_ask, LimitAsk, PassiveBoundary, QuoteError};
 

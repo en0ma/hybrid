@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod passive_exact_out;
 pub mod range_position;
 
 pub const Q64: u128 = 1u128 << 64;

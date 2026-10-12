@@ -41,6 +41,8 @@ mod linked_maker;
 mod multipage_buy;
 mod multipage_sell;
 mod page_lifecycle;
+mod passive_multi;
+mod passive_swap;
 
 pub fn process_instruction(
     _program_id: &Pubkey,
@@ -136,6 +138,9 @@ pub fn process_instruction(
         Some(29) | Some(30) | Some(31) | Some(32) => {
             linked_maker::process_linked_maker(_program_id, _accounts, data)
         }
+        Some(33) | Some(34) => passive_swap::process(_program_id, _accounts, data),
+        Some(35) | Some(36) => passive_multi::process(_program_id, _accounts, data),
+        Some(37) => passive_multi::process_batch(_program_id, _accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
@@ -2375,6 +2380,11 @@ fn process_open_passive_position(
     {
         return Err(ProgramError::InvalidAccountData);
     }
+    // Until per-position fee-growth accounting is on-chain, adding a new
+    // claimant after trading would let it capture another LP's earned fees.
+    if pool.pool.accrued_base_fees != 0 || pool.pool.accrued_quote_fees != 0 {
+        return Err(ProgramError::InvalidAccountData);
+    }
     // Do not accept more LP claims when pre-existing custody is insolvent.
     // The deposits in this instruction are checked again after the CPIs.
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
@@ -2537,33 +2547,57 @@ fn process_close_passive_position(
 
     // Both active maker claims and passive LP claims must remain funded.
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
-    // Swaps and fee distributions are not enabled for passive positions.
-    // Only the exact deposited principal can be redeemed.
+    // A pool fee balance can be attributed only to the sole position.
+    // Multi-position pools retain principal-only withdrawals and cannot
+    // withdraw unassigned trading fees until per-position accounts migrate.
+    let sole = pool.pool.total_liquidity == state.position.liquidity
+        && pool.pool.base_reserve == state.position.base_principal
+        && pool.pool.quote_reserve == state.position.quote_principal;
+    let fee_base = if sole { pool.pool.accrued_base_fees } else { 0 };
+    let fee_quote = if sole {
+        pool.pool.accrued_quote_fees
+    } else {
+        0
+    };
+    let payout_base = state
+        .position
+        .base_principal
+        .checked_add(fee_base)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let payout_quote = state
+        .position
+        .quote_principal
+        .checked_add(fee_quote)
+        .ok_or(ProgramError::InvalidAccountData)?;
     pool.pool
         .withdraw(&state.position)
         .map_err(|_| ProgramError::InsufficientFunds)?;
+    if sole {
+        pool.pool.accrued_base_fees = 0;
+        pool.pool.accrued_quote_fees = 0;
+    }
 
     let bump = [authority_bump];
     let seeds: &[&[u8]] = &[b"vault-authority", market.key.as_ref(), &bump];
-    if state.position.base_principal > 0 {
+    if payout_base > 0 {
         transfer_checked(
             base_vault,
             base_mint,
             dest_base,
             vault_authority,
             token_program,
-            (state.position.base_principal, custody.base_decimals),
+            (payout_base, custody.base_decimals),
             Some(seeds),
         )?;
     }
-    if state.position.quote_principal > 0 {
+    if payout_quote > 0 {
         transfer_checked(
             quote_vault,
             quote_mint,
             dest_quote,
             vault_authority,
             token_program,
-            (state.position.quote_principal, custody.quote_decimals),
+            (payout_quote, custody.quote_decimals),
             Some(seeds),
         )?;
     }
