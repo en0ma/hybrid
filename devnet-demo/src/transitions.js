@@ -42,7 +42,7 @@ export function compareMakerSnapshots(before,after,action,asset,amount){
   return {action,delta,checked:true,verifiedVaultTransfers:true,verifiedCustodyTotals:true};
 }
 
-export function compareOrderLockSnapshots(before,after,action,side){
+export function compareOrderLockSnapshots(before,after,action,side,expectedAmount){
   if(!["place","cancel"].includes(action)||!["ask","bid"].includes(side))
     throw Error("Expected place/cancel and ask/bid");
   if(before.cluster!==after.cluster||before.rpc!==after.rpc||
@@ -53,6 +53,10 @@ export function compareOrderLockSnapshots(before,after,action,side){
   const a=before.makerState,b=after.makerState;
   if(!a||!b||a.market!==b.market||a.owner!==b.owner)
     throw Error("Maker account is missing or changed identity");
+  if(expectedAmount!==undefined){
+    const expected=BigInt(expectedAmount);
+    if(expected<=0n)throw Error("Expected lock amount must be positive");
+  }
   const asset=side==="ask"?"Base":"Quote";
   const other=side==="ask"?"Quote":"Base";
   const free=BigInt(b["free"+asset])-BigInt(a["free"+asset]);
@@ -62,17 +66,20 @@ export function compareOrderLockSnapshots(before,after,action,side){
     throw Error("Placement did not move free collateral into locked collateral");
   if(action==="cancel"&&(free<=0n||locked>=0n))
     throw Error("Cancellation did not release remaining locked collateral");
+  const actual=action==="place"?locked:-locked;
+  if(expectedAmount!==undefined&&actual!==BigInt(expectedAmount))
+    throw Error("Order collateral delta differs from expected raw amount");
   for(const key of ["free"+other,"locked"+other])
-    if(a[key]!==b[key])throw Error("Order lock changed opposite asset");
+    if(BigInt(a[key])!==BigInt(b[key]))throw Error("Order lock changed opposite asset");
   for(const key of ["base","quote"]){
     if(!before.vaultBalances||!after.vaultBalances||
-       before.vaultBalances[key]!==after.vaultBalances[key])
+       BigInt(before.vaultBalances[key])!==BigInt(after.vaultBalances[key]))
       throw Error("Order lock/cancel unexpectedly moved SPL vault tokens");
     const field=key==="base"?"totalBase":"totalQuote";
     if(!before.custodyState||!after.custodyState||
-       before.custodyState[field]!==after.custodyState[field])
+       BigInt(before.custodyState[field])!==BigInt(after.custodyState[field]))
       throw Error("Order lock/cancel unexpectedly changed custody totals");
   }
-  return {action,side,amountAtoms:(action==="place"?locked:-locked).toString(),
+  return {action,side,amountAtoms:actual.toString(),
     makerAssetConserved:true,vaultsAndCustodyUnchanged:true};
 }
