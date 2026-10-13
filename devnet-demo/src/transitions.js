@@ -57,6 +57,22 @@ export function compareOrderLockSnapshots(before,after,action,side,expectedAmoun
     const expected=BigInt(expectedAmount);
     if(expected<=0n)throw Error("Expected lock amount must be positive");
   }
+  // Header checks are aggregate bookkeeping, not per-order identity proof.
+  if(!before.marketState||!after.marketState)
+    throw Error("Market header snapshots required for order transitions");
+  const countField=side==="ask"?"askCount":"bidCount";
+  const beforeCount=BigInt(before.marketState[countField]);
+  const afterCount=BigInt(after.marketState[countField]);
+  const beforeSeq=BigInt(before.marketState.nextSequence);
+  const afterSeq=BigInt(after.marketState.nextSequence);
+  const countDelta=action==="place"?1n:-1n;
+  if(afterCount-beforeCount!==countDelta)
+    throw Error("Market order count delta inconsistent with placement/cancellation");
+  if(afterSeq-beforeSeq!==(action==="place"?1n:0n))
+    throw Error("Market next sequence delta inconsistent with placement/cancellation");
+  const oppositeCount=side==="ask"?"bidCount":"askCount";
+  if(BigInt(before.marketState[oppositeCount])!==BigInt(after.marketState[oppositeCount]))
+    throw Error("Opposite-side market order count changed");
   const asset=side==="ask"?"Base":"Quote";
   const other=side==="ask"?"Quote":"Base";
   const free=BigInt(b["free"+asset])-BigInt(a["free"+asset]);
@@ -81,5 +97,5 @@ export function compareOrderLockSnapshots(before,after,action,side,expectedAmoun
       throw Error("Order lock/cancel unexpectedly changed custody totals");
   }
   return {action,side,amountAtoms:actual.toString(),
-    makerAssetConserved:true,vaultsAndCustodyUnchanged:true};
+    makerAssetConserved:true,vaultsAndCustodyUnchanged:true,marketHeaderTransitionsChecked:true};
 }
