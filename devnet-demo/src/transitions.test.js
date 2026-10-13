@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {compareMakerSnapshots,compareOrderLockSnapshots} from "./transitions.js";
 const make=(freeBase,lockedBase,freeQuote,lockedQuote)=>({cluster:"surfpool",rpc:"http://127.0.0.1:8899/",slot:1,market:"m",maker:"u",custodyState:{totalBase:String(freeBase),totalQuote:String(freeQuote)},makerState:{
  market:"m",owner:"u",freeBase:String(freeBase),lockedBase:String(lockedBase),
- freeQuote:String(freeQuote),lockedQuote:String(lockedQuote)},vaultBalances:{base:String(freeBase),quote:String(freeQuote)}});
+ freeQuote:String(freeQuote),lockedQuote:String(lockedQuote)},vaultBalances:{base:String(freeBase),quote:String(freeQuote)},marketState:{askCount:0,bidCount:0,nextSequence:"1"}});
 test("deposit and withdrawal only change corresponding free collateral",()=>{
  const a=make(0,0,0,0),b=make(100,0,0,0),c=make(100,0,5,0),d=make(100,0,2,0);
  assert.equal(compareMakerSnapshots(a,b,"deposit","base","100").checked,true);
@@ -23,6 +23,8 @@ test("maker ask lock and partial cancellation conserve collateral and keep vault
  const init=make(100,0,5,0);
  const placed=make(40,60,5,0);
  const canceled=make(75,25,5,0);
+ placed.marketState={askCount:1,bidCount:0,nextSequence:"2"};
+ canceled.marketState={askCount:0,bidCount:0,nextSequence:"2"};
  placed.vaultBalances.base="100";canceled.vaultBalances.base="100";
  placed.custodyState.totalBase="100";canceled.custodyState.totalBase="100";
  assert.equal(compareOrderLockSnapshots(init,placed,"place","ask").amountAtoms,"60");
@@ -36,6 +38,8 @@ test("exact bid quote lock and remaining cancellation require expected raw atoms
  const init=make(100,0,1000,0);
  const placed=make(100,0,700,300);
  const cancelled=make(100,0,820,180);
+ placed.marketState={askCount:0,bidCount:1,nextSequence:"2"};
+ cancelled.marketState={askCount:0,bidCount:0,nextSequence:"2"};
  for(const state of [placed,cancelled]){
   state.vaultBalances.quote="1000";state.custodyState.totalQuote="1000";
  }
@@ -48,4 +52,19 @@ test("exact bid quote lock and remaining cancellation require expected raw atoms
  assert.throws(()=>compareOrderLockSnapshots(init,badOpposite,"place","bid","300"),/opposite/i);
  const badCustody=structuredClone(placed);badCustody.custodyState.totalQuote="999";
  assert.throws(()=>compareOrderLockSnapshots(init,badCustody,"place","bid","300"),/custody/i);
+});
+
+test("order header checks reject forged count, unexpected sequence and opposite side movement",()=>{
+ const before=make(100,0,100,0),after=make(90,10,100,0);
+ after.vaultBalances.base="100";after.custodyState.totalBase="100";
+ after.marketState={askCount:1,bidCount:0,nextSequence:"2"};
+ assert.equal(compareOrderLockSnapshots(before,after,"place","ask","10").marketHeaderTransitionsChecked,true);
+ const badCount=structuredClone(after);badCount.marketState.askCount=0;
+ assert.throws(()=>compareOrderLockSnapshots(before,badCount,"place","ask","10"),/count delta/i);
+ const badSeq=structuredClone(after);badSeq.marketState.nextSequence="3";
+ assert.throws(()=>compareOrderLockSnapshots(before,badSeq,"place","ask","10"),/sequence delta/i);
+ const badOther=structuredClone(after);badOther.marketState.bidCount=1;
+ assert.throws(()=>compareOrderLockSnapshots(before,badOther,"place","ask","10"),/opposite-side/i);
+ const missing=structuredClone(after);delete missing.marketState;
+ assert.throws(()=>compareOrderLockSnapshots(before,missing,"place","ask","10"),/Market header/i);
 });
