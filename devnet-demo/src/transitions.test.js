@@ -31,3 +31,21 @@ test("maker ask lock and partial cancellation conserve collateral and keep vault
  const corrupted=structuredClone(placed);corrupted.vaultBalances.base="41";
  assert.throws(()=>compareOrderLockSnapshots(init,corrupted,"place","ask"),/vault/i);
 });
+
+test("exact bid quote lock and remaining cancellation require expected raw atoms",()=>{
+ const init=make(100,0,1000,0);
+ const placed=make(100,0,700,300);
+ const cancelled=make(100,0,820,180);
+ for(const state of [placed,cancelled]){
+  state.vaultBalances.quote="1000";state.custodyState.totalQuote="1000";
+ }
+ assert.equal(compareOrderLockSnapshots(init,placed,"place","bid","300").amountAtoms,"300");
+ assert.equal(compareOrderLockSnapshots(placed,cancelled,"cancel","bid","120").amountAtoms,"120");
+ assert.throws(()=>compareOrderLockSnapshots(init,placed,"place","bid","299"),/expected raw amount/i);
+ assert.throws(()=>compareOrderLockSnapshots(placed,cancelled,"cancel","bid","300"),/expected raw amount/i);
+ assert.throws(()=>compareOrderLockSnapshots(init,placed,"place","bid","0"),/positive/i);
+ const badOpposite=structuredClone(placed);badOpposite.makerState.freeBase="99";
+ assert.throws(()=>compareOrderLockSnapshots(init,badOpposite,"place","bid","300"),/opposite/i);
+ const badCustody=structuredClone(placed);badCustody.custodyState.totalQuote="999";
+ assert.throws(()=>compareOrderLockSnapshots(init,badCustody,"place","bid","300"),/custody/i);
+});
