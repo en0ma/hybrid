@@ -34,7 +34,8 @@ async function main(){
   report.provisioned=true;
   exec("funded-lifecycle.js",env);
   const evidence=JSON.parse(await readFile(env.HYBRID_EVIDENCE_FILE,"utf8"));
-  if(evidence.completed!==true||evidence.tradeSettlement?.verified!==true||
+  if(evidence.completed!==true||evidence.finalAudit?.verified!==true||
+   evidence.tradeSettlement?.verified!==true||
    evidence.tradeSettlement?.partialBookFillVerified!==true||evidence.stages?.length!==6||
    evidence.stages.some(s=>!s.signature)||
    new Set(evidence.stages.map(s=>s.signature)).size!==6||
