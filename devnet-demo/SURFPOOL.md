@@ -207,3 +207,7 @@ A manual GitHub Actions workflow, `Funded Surfpool lifecycle evidence`, is avail
 ## Rent-safe seeded fixture accounts
 
 The local provisioner now queries Surfpool for each unique seeded account data size's actual rent-exempt minimum and funds every seeded Hybrid market/book/owner page and classic SPL mint/token account at or above that requirement (or 0.01 SOL, whichever is greater). It verifies lamports as well as exact owner and data bytes on read-back. This prevents large linked-book pages from beginning a funded transaction in an unexpectedly underfunded state. It remains a local RPC fixture seed rather than proof of a production System Program account-creation flow.
+
+## Submitted-signature recovery on failed runs
+
+The lifecycle runner records a stage before simulation and immediately persists a submitted signature in its in-memory evidence journal as soon as Solana RPC accepts the raw transaction, **before** confirmation and receipt lookup. The stage status advances from `simulating` to `submitted`, `confirmed`, and `snapshotted`; if a later step fails, the failure evidence includes the last known state and any signature. The top-level `run-report.json` also projects `partialStages` when available so a timed-out run can be audited against RPC rather than retried blindly. An accepted signature or `submitted` status is **not** proof of transaction success; only independently retrieved successful receipts and the completed evidence gates count.
