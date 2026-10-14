@@ -14,6 +14,7 @@ import {deriveMarketAccounts} from "./manifest.js";
 import {verifyReceiptOrderLink} from "./receipt-policy.js";
 import {compareMakerSnapshots,compareOrderLockSnapshots} from "./transitions.js";
 import {verifyAskTradeSettlement} from "./trade-settlement.js";
+import {verifyFinalLifecycle} from "./final-lifecycle-audit.js";
 const program=new PublicKey(PROGRAM_ID),tokenProgram=new PublicKey(TOKEN_PROGRAM_ID);
 const p=x=>new PublicKey(x);
 const meta=(pubkey,isWritable=false,isSigner=false)=>({pubkey,isWritable,isSigner});
@@ -142,6 +143,9 @@ export async function runFundedLifecycle({rpc,c,maker,taker,onJournal=async()=>{
   compareMakerSnapshots(withdrawal.before,withdrawal.after,"withdraw","base",c.withdrawBaseAtoms);
   verifyReceiptOrderLink(ix.place.data,ix.cancel.data,sequence);
   journal.expectedSequence=String(sequence);
+  journal.finalAudit=verifyFinalLifecycle({initial,deposit:deposit.after,
+   trade:trade.after,final:withdrawal.after,
+   placeAmount:c.placeBaseAtoms,withdrawAmount:c.withdrawBaseAtoms});
   journal.completed=true;
   await persist();
  }catch(error){
