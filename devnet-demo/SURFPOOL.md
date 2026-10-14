@@ -104,3 +104,7 @@ When a decoded expected order is supplied, both asks and bids must match exact c
 ## Missing sidecar / order evidence
 
 A snapshot with an incomplete `bookOrders` object cannot support a claim about an order on the omitted side. When an expected sequence is supplied and book evidence is included, the transition checker fails closed if either snapshot lacks the selected side's decoded array, instead of silently returning `orderIdentityChecked: false`. Set `HYBRID_BID_OWNER0` to the authenticated full bid head-sidecar address when validating bid identities. Older snapshots without any decoded book data can still provide limited collateral/header checks, but must not be characterized as per-order proof.
+
+## Mandatory full-book evidence for funded lifecycle
+
+For the Issue #60 funded fixture, set `HYBRID_REQUIRE_FULL_BOOK=1` and `HYBRID_BID_OWNER0=<FULL_BID_HEAD_SIDECAR_PUBKEY>` before `snapshot:maker`. Missing the bid sidecar is a hard error when the market has active bids or full-book mode is requested. The JSON `fullBookVerified` field is true only if both ask and bid books were decoded and their counts matched the market header. The full-book flag validates visibility and account structure, **not** execution, solvency, or signatures. For read-only ask-only smoke on an empty bid book, omission of the bid side is still permitted unless full-book mode is requested.
