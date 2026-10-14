@@ -18,6 +18,28 @@ function command(name,args,env){
  const result=spawnSync(name,args,{cwd:resolve(".."),env,stdio:"inherit",timeout:600000});
  if(result.error||result.status!==0)throw Error(name+" failed: "+(result.error?.message||result.status));
 }
+export function programChunks(binary,bytesPerChunk=256*1024){
+ if(!Buffer.isBuffer(binary)||binary.length<4||!binary.subarray(0,4).equals(Buffer.from([0x7f,0x45,0x4c,0x46])))
+  throw Error("Expected compiled ELF SBF program binary");
+ if(!Number.isSafeInteger(bytesPerChunk)||bytesPerChunk<1||bytesPerChunk>1024*1024)
+  throw Error("Invalid program chunk size");
+ const chunks=[];
+ for(let offset=0;offset<binary.length;offset+=bytesPerChunk)
+  chunks.push({offset,data:binary.subarray(offset,offset+bytesPerChunk).toString("hex")});
+ return chunks;
+}
+export async function uploadSurfpoolProgram(url,binary,call=fetch){
+ const chunks=programChunks(binary);
+ for(const {offset,data} of chunks){
+  const response=await call(url,{method:"POST",headers:{"content-type":"application/json"},
+   body:JSON.stringify({jsonrpc:"2.0",id:offset+1,method:"surfnet_writeProgram",
+    params:[PROGRAM_ID,data,offset]})});
+  if(!response.ok)throw Error("surfnet_writeProgram HTTP "+response.status+" at "+offset);
+  const result=await response.json();
+  if(result.error)throw Error("surfnet_writeProgram failed at "+offset+": "+JSON.stringify(result.error));
+ }
+ return {chunks:chunks.length,bytes:binary.length};
+}
 async function main(){
  const cfg=clusterConfig("surfpool",process.env.SOLANA_RPC_URL||"http://127.0.0.1:8899");
  const rpc=new Connection(cfg.url,"confirmed");await assertCluster(rpc,"surfpool");
@@ -27,11 +49,18 @@ async function main(){
   console.log(JSON.stringify({deployed:true,alreadyPresent:true,program:PROGRAM_ID,rpc:cfg.url}));
   return;
  }
- if(!keypath)throw Error("HYBRID_PROGRAM_KEYPAIR is required to deploy to the pinned program ID");
- checkedProgramKeypair(JSON.parse(await readFile(resolve(keypath),"utf8")));
+ if(keypath)checkedProgramKeypair(JSON.parse(await readFile(resolve(keypath),"utf8")));
  const binary=resolve("..",process.env.HYBRID_SBF_PATH||"target/deploy/hybrid_program.so");
  if(process.env.HYBRID_SKIP_BUILD!=="1")
   command("cargo",["build-sbf","--manifest-path","program/Cargo.toml"],process.env);
+ if(!keypath){
+  const elf=await readFile(binary);
+  const upload=await uploadSurfpoolProgram(cfg.url,elf);
+  const deployed=await rpc.getAccountInfo(new PublicKey(PROGRAM_ID),"confirmed");
+  if(!deployed?.executable)throw Error("Surfpool program write returned but fixed-ID program is not executable");
+  console.log(JSON.stringify({deployed:true,method:"surfnet_writeProgram",program:PROGRAM_ID,rpc:cfg.url,...upload}));
+  return;
+ }
  const payer=process.env.HYBRID_DEPLOY_PAYER;
  if(!payer)throw Error("HYBRID_DEPLOY_PAYER is required for a funded local deployment");
  const args=["program","deploy","--url",cfg.url,"--keypair",resolve(payer),
