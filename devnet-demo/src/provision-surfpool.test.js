@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {Keypair,PublicKey} from "@solana/web3.js";
-import {marketBytes,detachedBookPage,classicMintBytes,classicTokenBytes,provisioningPlan} from "./provision-surfpool.js";
+import {marketBytes,detachedBookPage,classicMintBytes,classicTokenBytes,provisioningPlan,surfpoolAccountPayload} from "./provision-surfpool.js";
 import {decodeMarketHeader} from "./market.js";
 import {decodeOwnedBookPage} from "./book.js";
 import {decodeCustody} from "./custody.js";
@@ -48,4 +48,14 @@ test("seeded market and classic SPL accounts have nonzero funds and expected byt
  for(const x of plan.accounts)assert.ok(x.data.length===128||x.data.length===1552||x.data.length===1040||x.data.length===82||x.data.length===165);
  const mint=plan.accounts.find(x=>x.name==="baseMint").data;
  assert.equal(mint.readBigUInt64LE(36),1000000n);
+});
+
+test("Surfpool 1.6.1 account payload uses bare hex and preserves rent lamports",()=>{
+ const k=keys(),a=provisioningPlan(k).accounts[0],payload=surfpoolAccountPayload(a,12_345_678);
+ assert.equal(payload.data,a.data.toString("hex"));
+ assert.ok(!payload.data.startsWith("0x"));
+ assert.equal(payload.owner,a.owner);
+ assert.equal(payload.lamports,12_345_678);
+ assert.equal(payload.executable,false);
+ assert.throws(()=>surfpoolAccountPayload(a,-1),/lamports/);
 });
