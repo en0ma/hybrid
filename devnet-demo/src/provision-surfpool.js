@@ -108,11 +108,8 @@ export async function provisionSurfpool({rpc,keys,rpcUrl}){
  const rentBySize=new Map(await Promise.all(sizes.map(async size=>
   [size,await rpc.getMinimumBalanceForRentExemption(size,"confirmed")])));
  for(const a of plan.accounts){
-  await cheatcode(rpcUrl,"surfnet_setAccount",[a.address,{
-   data:a.data.toString("hex"),executable:false,
-   lamports:Math.max(rentBySize.get(a.data.length),10_000_000),
-   owner:a.owner,rentEpoch:0
-  }]);
+  await cheatcode(rpcUrl,"surfnet_setAccount",[a.address,
+   surfpoolAccountPayload(a,Math.max(rentBySize.get(a.data.length),10_000_000))]);
  }
  // Read-back validates the RPC actually persisted the bytes and ownership.
  const observed=await rpc.getMultipleAccountsInfo(plan.accounts.map(a=>new PublicKey(a.address)),"confirmed");
