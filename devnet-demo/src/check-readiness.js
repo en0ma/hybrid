@@ -4,6 +4,7 @@ import {Connection,PublicKey} from "@solana/web3.js";
 import {PROGRAM_ID,TOKEN_PROGRAM_ID} from "./abi.js";
 import {decodeCustody,verifyCustodyLinks} from "./custody.js";
 import {decodeMarketHeader,verifyMarketActivation} from "./market.js";
+import {verifyClassicMint} from "./mint.js";
 
 const names=["market","askOwner","bidOwner","baseVault","quoteVault"];
 const args=process.argv.slice(2);
@@ -86,8 +87,13 @@ if(custodyState){
   mintChecks=mintNames.map(([name,address,decimals],i)=>{
     const a=mintInfos.value[i];
     const row={name,address,exists:!!a,valid:true};
-    if(!a||!a.owner.equals(token)||a.data.length!==82||a.data[45]!==decimals||
-      a.data[46]!==1){
+    if(!a||!a.owner.equals(token)){
+      row.valid=false;
+      row.error="SPL mint account absent or wrong program owner";
+    }else{
+      verifyClassicMint(a.data,decimals);
+    }
+    if(false){
       row.valid=false;
       row.error="SPL mint owner, layout, initialization or decimals mismatch";
     }
