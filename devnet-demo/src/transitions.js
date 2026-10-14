@@ -1,5 +1,6 @@
 // Pure collateral accounting transition checks on JSON snapshots.
 // These checks do not establish correct fills or token conservation by themselves.
+import {verifyOwnedOrderTransition} from "./book.js";
 const values=["freeBase","lockedBase","freeQuote","lockedQuote"];
 export function compareMakerSnapshots(before,after,action,asset,amount){
   const a=before?.makerState,b=after?.makerState;
@@ -104,6 +105,14 @@ export function compareOrderLockSnapshots(before,after,action,side,expectedAmoun
        BigInt(before.custodyState[field])!==BigInt(after.custodyState[field]))
       throw Error("Order lock/cancel unexpectedly changed custody totals");
   }
+  let orderIdentityChecked=false;
+  if(expectedSequence!==undefined&&before.bookOrders?.[side]&&after.bookOrders?.[side]){
+    const detail=verifyOwnedOrderTransition(before.bookOrders[side],after.bookOrders[side],
+      action,expectedSequence,before.maker,Number(after.bookOrders[side].find(x=>x.sequence===String(expectedSequence))?.pageIndex ?? before.bookOrders[side].find(x=>x.sequence===String(expectedSequence))?.pageIndex));
+    if(action==="cancel"&&side==="ask"&&BigInt(detail.order.baseQty)!==actual)
+      throw Error("Canceled ask remaining quantity does not match released collateral");
+    orderIdentityChecked=true;
+  }
   return {action,side,amountAtoms:actual.toString(),
-    makerAssetConserved:true,vaultsAndCustodyUnchanged:true,marketHeaderTransitionsChecked:true,sequenceExpectationChecked:expectedSequence!==undefined};
+    makerAssetConserved:true,vaultsAndCustodyUnchanged:true,marketHeaderTransitionsChecked:true,sequenceExpectationChecked:expectedSequence!==undefined,orderIdentityChecked};
 }
