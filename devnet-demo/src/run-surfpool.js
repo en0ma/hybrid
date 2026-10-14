@@ -10,7 +10,7 @@ const dir=resolve(process.env.HYBRID_FIXTURE_DIR||"./.surfpool-fixture");
 const url=clusterConfig("surfpool",process.env.SOLANA_RPC_URL||"http://127.0.0.1:8899").url;
 const exec=(stage,env)=>{
  const result=spawnSync(process.execPath,[resolve("src",stage)],{
-  cwd:process.cwd(),env:{...process.env,...env},stdio:"inherit",timeout:180000,
+  cwd:process.cwd(),env:{...process.env,...env},stdio:"inherit",timeout:900000,
  });
  if(result.error||result.status!==0)throw Error(stage+" failed: "+(result.error?.message||"exit "+result.status));
 };
@@ -22,7 +22,7 @@ async function main(){
   HYBRID_MAKER_KEYPAIR:join(dir,"maker.json"),
   HYBRID_TAKER_KEYPAIR:join(dir,"taker.json"),
   HYBRID_EVIDENCE_FILE:join(dir,"lifecycle-evidence.json")};
- const report={program:PROGRAM_ID,rpc:url,deployed:false,provisioned:false,lifecycleCompleted:false,
+ const report={program:PROGRAM_ID,rpc:url,deployed:false,provisioned:false,receiptsVerified:false,lifecycleCompleted:false,
   startedAt:new Date().toISOString()};
  try{
   if(!(await rpc.getAccountInfo(new PublicKey(PROGRAM_ID),"confirmed"))?.executable)
@@ -39,6 +39,23 @@ async function main(){
    evidence.stages.some(s=>!s.signature)||
    new Set(evidence.stages.map(s=>s.signature)).size!==6||
    evidence.stages.map(s=>s.stage).join(",")!=="init,deposit,place,trade,cancel,withdraw")throw Error("Incomplete six-stage on-chain evidence");
+  // Independent RPC-level verification must succeed before completion can be claimed.
+  const sigs=evidence.stages.map(stage=>stage.signature);
+  const verifier=spawnSync(process.execPath,[resolve("src","verify-receipts.js"),...sigs],{
+   cwd:process.cwd(),
+   env:{...process.env,...env,HYBRID_EXPECTED_SEQUENCE:String(evidence.expectedSequence)},
+   encoding:"utf8",timeout:180000,
+  });
+  if(verifier.error||verifier.status!==0)
+   throw Error("Independent signed receipt check failed: "+
+    (verifier.error?.message||verifier.stderr||"exit "+verifier.status));
+  const verified=JSON.parse(verifier.stdout);
+  if(verified.cluster!=="surfpool"||verified.market!==evidence.market||
+    verified.report?.length!==6||verified.orderReceiptLink?.receiptSequenceLinked!==true||
+    verified.report.some((item,i)=>item.signature!==sigs[i]))
+   throw Error("Independent receipt chain did not match lifecycle evidence");
+  await writeFile(join(dir,"verified-receipts.json"),JSON.stringify(verified,null,2)+"\n",{mode:0o600});
+  report.receiptsVerified=true;
   report.lifecycleCompleted=true;
   report.signatures=evidence.stages.map(s=>({stage:s.stage,signature:s.signature,slot:s.slot}));
  }catch(error){
