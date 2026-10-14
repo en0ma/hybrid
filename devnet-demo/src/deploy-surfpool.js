@@ -33,7 +33,7 @@ export async function uploadSurfpoolProgram(url,binary,call=fetch){
  for(const {offset,data} of chunks){
   const response=await call(url,{method:"POST",headers:{"content-type":"application/json"},
    body:JSON.stringify({jsonrpc:"2.0",id:offset+1,method:"surfnet_writeProgram",
-    params:[PROGRAM_ID,"0x"+data,offset]})});
+    params:[PROGRAM_ID,data,offset]})});
   if(!response.ok)throw Error("surfnet_writeProgram HTTP "+response.status+" at "+offset);
   const result=await response.json();
   if(result.error)throw Error("surfnet_writeProgram failed at "+offset+": "+JSON.stringify(result.error));
