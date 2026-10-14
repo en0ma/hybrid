@@ -17,7 +17,9 @@ const exec=(stage,env)=>{
 async function main(){
  const rpc=new Connection(url,"confirmed");await assertCluster(rpc,"surfpool");
  if(!(await rpc.getAccountInfo(new PublicKey(PROGRAM_ID),"confirmed"))?.executable)
-  throw Error("Hybrid SBF program must be deployed before the one-command lifecycle");
+  exec("deploy-surfpool.js",{SOLANA_RPC_URL:url});
+ if(!(await rpc.getAccountInfo(new PublicKey(PROGRAM_ID),"confirmed"))?.executable)
+  throw Error("Hybrid SBF program deployment did not complete");
  await mkdir(dir,{recursive:true,mode:0o700});
  const env={HYBRID_CLUSTER:"surfpool",SOLANA_RPC_URL:url,HYBRID_FIXTURE_DIR:dir,
   HYBRID_FIXTURE_CONFIG:join(dir,"fixture.json"),
