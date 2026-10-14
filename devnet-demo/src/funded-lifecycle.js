@@ -94,7 +94,14 @@ async function send(rpc,payer,signers,ix,onSubmitted=()=>{}){
  await onSubmitted(signature);
  const confirmed=await rpc.confirmTransaction({signature,blockhash,lastValidBlockHeight},"confirmed");
  if(confirmed.value.err)throw Error("Confirmed transaction failed: "+signature+" "+JSON.stringify(confirmed.value.err));
- const receipt=await rpc.getTransaction(signature,{commitment:"confirmed",maxSupportedTransactionVersion:0});
+ // Confirmation and transaction indexing need not become visible atomically.
+ // Retry a null receipt briefly; a confirmed failure is never retried.
+ let receipt=null;
+ for(let attempt=0;attempt<10;attempt++){
+  receipt=await rpc.getTransaction(signature,{commitment:"confirmed",maxSupportedTransactionVersion:0});
+  if(receipt)break;
+  await new Promise(r=>setTimeout(r,500));
+ }
  if(!receipt||receipt.meta?.err)throw Error("Confirmed receipt missing/failed: "+signature);
  return {signature,slot:receipt.slot,feeLamports:receipt.meta.fee,simulationUnits:simulation.value.unitsConsumed};
 }
