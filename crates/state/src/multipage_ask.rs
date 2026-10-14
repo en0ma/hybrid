@@ -51,7 +51,7 @@ pub fn apply_linked_ask_fills(
 
     let mut result_pages = Vec::with_capacity(pages.len());
     let mut result_sidecars = Vec::with_capacity(pages.len());
-    let surviving_page_count = entries.len().max(1).div_ceil(ASKS_PER_PAGE);
+    // Preserve an already linked two-page maker ABI after partial fills.\n    // Shrinking to a single page would prevent opcode 31 cancellation.\n    // Constructing both pages here also avoids copying large page structs\n    // into a second Vec during SBF execution.\n    let surviving_page_count = entries.len().max(1).div_ceil(ASKS_PER_PAGE).max(if pages.len() == 2 { 2 } else { 1 });
     for index in 0..surviving_page_count {
         let mut page = AskPage::default();
         let mut owners = AskOwnerPage::default();
