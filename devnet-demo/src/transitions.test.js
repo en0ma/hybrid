@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {compareMakerSnapshots,compareOrderLockSnapshots} from "./transitions.js";
+import {compareMakerSnapshots,compareOrderLockSnapshots,quoteForBaseAtPrice} from "./transitions.js";
 const make=(freeBase,lockedBase,freeQuote,lockedQuote)=>({cluster:"surfpool",rpc:"http://127.0.0.1:8899/",slot:1,market:"m",maker:"u",custodyState:{totalBase:String(freeBase),totalQuote:String(freeQuote)},makerState:{
  market:"m",owner:"u",freeBase:String(freeBase),lockedBase:String(lockedBase),
  freeQuote:String(freeQuote),lockedQuote:String(lockedQuote)},vaultBalances:{base:String(freeBase),quote:String(freeQuote)},marketState:{askCount:0,bidCount:0,nextSequence:"1"}});
@@ -92,7 +92,25 @@ test("when book snapshots exist, order sequence and maker identity are verified"
  after.marketState={askCount:1,bidCount:0,nextSequence:"6"};
  const order={sequence:"5",owner:"u",pageIndex:0,baseQty:"10",priceX64:"1"};
  before.bookOrders={ask:[]};after.bookOrders={ask:[order]};
+ before.bookSlot=before.slot;after.bookSlot=after.slot;
  assert.equal(compareOrderLockSnapshots(before,after,"place","ask","10","5").orderIdentityChecked,true);
  const wrong=structuredClone(after);wrong.bookOrders.ask[0].owner="someone-else";
  assert.throws(()=>compareOrderLockSnapshots(before,wrong,"place","ask","10","5"),/owner/i);
+});
+
+test("bid price Q64 rounded-up collateral and atomic book slot checks",()=>{
+ const Q=(1n<<64n).toString();
+ assert.equal(quoteForBaseAtPrice("3",((1n<<64n)/2n+1n).toString()).toString(),"2");
+ assert.equal(quoteForBaseAtPrice("3",Q).toString(),"3");
+ const before=make(0,0,10,0),after=make(0,0,7,3);
+ before.marketState={askCount:0,bidCount:0,nextSequence:"9"};
+ after.marketState={askCount:0,bidCount:1,nextSequence:"10"};
+ after.vaultBalances.quote="10";after.custodyState.totalQuote="10";
+ before.bookOrders={bid:[]};after.bookOrders={bid:[{sequence:"9",owner:"u",pageIndex:0,baseQty:"3",priceX64:Q}]};
+ before.bookSlot=1;after.bookSlot=1;
+ assert.equal(compareOrderLockSnapshots(before,after,"place","bid","3","9").orderIdentityChecked,true);
+ const wrong=structuredClone(after);wrong.bookOrders.bid[0].priceX64=((1n<<65n)).toString();
+ assert.throws(()=>compareOrderLockSnapshots(before,wrong,"place","bid","3","9"),/exact collateral/i);
+ const stale=structuredClone(after);stale.bookSlot=2;
+ assert.throws(()=>compareOrderLockSnapshots(before,stale,"place","bid","3","9"),/single RPC context slot/i);
 });
