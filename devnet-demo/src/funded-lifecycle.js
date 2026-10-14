@@ -12,6 +12,7 @@ import {decodeCustody} from "./custody.js";
 import {deriveMarketAccounts} from "./manifest.js";
 import {verifyReceiptOrderLink} from "./receipt-policy.js";
 import {compareMakerSnapshots,compareOrderLockSnapshots} from "./transitions.js";
+import {verifyAskTradeSettlement} from "./trade-settlement.js";
 const program=new PublicKey(PROGRAM_ID),tokenProgram=new PublicKey(TOKEN_PROGRAM_ID);
 const p=x=>new PublicKey(x);
 const meta=(pubkey,isWritable=false,isSigner=false)=>({pubkey,isWritable,isSigner});
@@ -57,17 +58,18 @@ export function lifecycleInstructions(c,maker,taker,sequence){
 }
 async function snapshot(rpc,c,maker){
  const keys=deriveMarketAccounts(c.market,maker.toBase58());
- const addresses=[p(c.market),p(keys.custody),p(keys.makerBalance),p(c.baseVault),p(c.quoteVault)];
+ const addresses=[p(c.market),p(keys.custody),p(keys.makerBalance),p(c.baseVault),p(c.quoteVault),p(c.takerBaseToken),p(c.takerQuoteToken)];
  const batch=await rpc.getMultipleAccountsInfoAndContext(addresses,"confirmed");
- const [market,custody,balance,baseVault,quoteVault]=batch.value;
- if(!market||!custody||!baseVault||!quoteVault)throw Error("Fixture account missing");
+ const [market,custody,balance,baseVault,quoteVault,takerBase,takerQuote]=batch.value;
+ if(!market||!custody||!baseVault||!quoteVault||!takerBase||!takerQuote)throw Error("Fixture account missing");
  const vaultBalances={base:baseVault.data.readBigUInt64LE(64).toString(),
   quote:quoteVault.data.readBigUInt64LE(64).toString()};
  return {cluster:"surfpool",rpc:rpc.rpcEndpoint,slot:batch.context.slot,market:c.market,
   maker:maker.toBase58(),marketState:decodeMarketHeader(market.data),
   custodyState:decodeCustody(custody.data),
   makerState:balance?decodeMakerBalance(balance.data,c.market,maker.toBase58()):null,
-  vaultBalances};
+  vaultBalances,takerBalances:{base:takerBase.data.readBigUInt64LE(64).toString(),
+   quote:takerQuote.data.readBigUInt64LE(64).toString()}};
 }
 async function send(rpc,payer,signers,ix){
  const {blockhash,lastValidBlockHeight}=await rpc.getLatestBlockhash("confirmed");
@@ -92,8 +94,10 @@ export async function runFundedLifecycle({rpc,c,maker,taker}){
  const record=async(stage,sender,ix,signers)=>{
   const before=await snapshot(rpc,c,maker.publicKey);
   const receipt=await send(rpc,sender,signers,ix);
+  const entry={stage,...receipt,before};
+  journal.stages.push(entry);
   const after=await snapshot(rpc,c,maker.publicKey);
-  journal.stages.push({stage,...receipt,before,after});
+  entry.after=after;
   return {before,after};
  };
  try{
@@ -106,7 +110,8 @@ export async function runFundedLifecycle({rpc,c,maker,taker}){
   compareMakerSnapshots(deposit.before,deposit.after,"deposit","base",c.placeBaseAtoms);
   const placement=await record("place",maker,ix.place,[maker]);
   compareOrderLockSnapshots(placement.before,placement.after,"place","ask",c.placeBaseAtoms,sequence);
-  await record("trade",taker,ix.swap,[taker]);
+  const trade=await record("trade",taker,ix.swap,[taker]);
+  journal.tradeSettlement=verifyAskTradeSettlement(trade.before,trade.after);
   const cancel=await record("cancel",maker,ix.cancel,[maker]);
   compareOrderLockSnapshots(cancel.before,cancel.after,"cancel","ask",undefined,sequence);
   // Withdrawal is only valid if the remaining unlocked free base is sufficient.
