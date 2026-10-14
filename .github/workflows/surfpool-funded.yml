@@ -28,8 +28,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: devnet-demo/package-lock.json
       - name: Install Solana SBF toolchain
         run: |
           set -euo pipefail
@@ -51,7 +49,8 @@ jobs:
           cargo build-sbf --help > /dev/null
           surfpool --version
       - name: Install fixture runner dependencies
-        run: npm ci
+        # This package does not commit package-lock.json; npm ci/cache require one.
+        run: npm install --no-save --no-audit --no-fund
       - name: Start isolated Surfpool runtime
         run: |
           set -euo pipefail
