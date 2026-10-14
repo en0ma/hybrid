@@ -6,6 +6,7 @@ import {decodeMarketHeader} from "./market.js";
 import {decodeCustody} from "./custody.js";
 import {decodeMakerBalance} from "./maker-balance.js";
 import {decodeOwnedBookPage,combineOwnedBookPages} from "./book.js";
+import {requireBidSidecar,verifyFullBook} from "./book-policy.js";
 const args=process.argv.slice(2);
 if(args.length!==2){console.error("Usage: npm run snapshot:maker -- <MARKET> <MAKER>");process.exit(2);}
 const mode=process.env.HYBRID_CLUSTER||"surfpool";
@@ -39,8 +40,10 @@ for(const side of ["ask","bid"]){
  const bidOwner=process.env.HYBRID_BID_OWNER0?new PublicKey(process.env.HYBRID_BID_OWNER0):null;
  const headOwner=side==="ask"?owner0:bidOwner;
  if(!headOwner){
-  if(side==="bid"&&!requireFullBook&&marketStatePre.bidCount===0)continue;
-  if(side==="bid")throw Error("Bid owner sidecar required for active bids or full-book verification; set HYBRID_BID_OWNER0");
+  if(side==="bid"){
+   requireBidSidecar(marketStatePre.bidCount,requireFullBook,false);
+   continue;
+  }
   throw Error("Missing ask head owner");
  }
  if(side==="bid"&&!marketStatePre.bidOwnerTag.every((v,i)=>v===headOwner.toBytes()[i]))
@@ -97,12 +100,11 @@ for(const side of ["ask","bid"]){
  const expected=side==="ask"?marketState.askCount:marketState.bidCount;
  if(ownedOrders[side].length!==expected)throw Error("Decoded book count differs from market header");
 }
-if(requireFullBook&&(!Array.isArray(ownedOrders.ask)||!Array.isArray(ownedOrders.bid)))
- throw Error("Full-book snapshot requires both ask and bid ownership evidence");
+const fullBookVerified=verifyFullBook(ownedOrders,requireFullBook);
 const report={cluster:mode,rpc:cfg.url,slot:result.context.slot,market:market.toBase58(),
  maker:maker.toBase58(),custody:custody.toBase58(),makerPda:balance.toBase58(),
  marketState:{...marketState,bidOwnerTag:[...marketState.bidOwnerTag]},
  custodyState,makerState,vaultBalances:{base:vaultAmounts[0],quote:vaultAmounts[1]},
- bookOrders:ownedOrders,bookSlot:bookResponse.context.slot,fullBookVerified:!!(ownedOrders.ask&&ownedOrders.bid),
+ bookOrders:ownedOrders,bookSlot:bookResponse.context.slot,fullBookVerified,
  warning:"Maker, custody, vault and linked book accounts were fetched in one RPC batch at the reported slot; this does not establish a signed transaction or market-wide solvency."};
 console.log(JSON.stringify(report,null,2));
