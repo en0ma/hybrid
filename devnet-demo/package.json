@@ -15,7 +15,8 @@
     "print:manifest": "node src/print-manifest.js",
     "check:fixture": "node src/fixture-preflight.js",
     "run:funded-lifecycle": "node src/funded-lifecycle.js",
-    "provision:surfpool": "node src/provision-surfpool.js"
+    "provision:surfpool": "node src/provision-surfpool.js",
+    "run:surfpool": "node src/run-surfpool.js"
   },
   "dependencies": {
     "@solana/web3.js": "^1.98.4",
