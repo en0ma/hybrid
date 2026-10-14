@@ -120,6 +120,9 @@ export function compareOrderLockSnapshots(before,after,action,side,expectedAmoun
     }
   }
   let orderIdentityChecked=false;
+  if(expectedSequence!==undefined&&(before.bookOrders||after.bookOrders)&&
+     (!Array.isArray(before.bookOrders?.[side])||!Array.isArray(after.bookOrders?.[side])))
+    throw Error("Selected-side book evidence missing; order identity cannot be verified");
   if(expectedSequence!==undefined&&before.bookOrders?.[side]&&after.bookOrders?.[side]){
     const detail=verifyOwnedOrderTransition(before.bookOrders[side],after.bookOrders[side],
       action,expectedSequence,before.maker,Number(after.bookOrders[side].find(x=>x.sequence===String(expectedSequence))?.pageIndex ?? before.bookOrders[side].find(x=>x.sequence===String(expectedSequence))?.pageIndex));
