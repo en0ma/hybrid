@@ -41,4 +41,5 @@ async function main(){
  if(!deployed?.executable)throw Error("Deployment CLI returned but pinned program is not executable on Surfpool");
  console.log(JSON.stringify({deployed:true,program:PROGRAM_ID,rpc:cfg.url,binary}));
 }
-main().catch(e=>{console.error(e.message);process.exitCode=1;});
+if(process.argv[1]&&resolve(process.argv[1])===new URL(import.meta.url).pathname)
+ main().catch(e=>{console.error(e.message);process.exitCode=1;});
