@@ -101,9 +101,11 @@ export async function provisionSurfpool({rpc,keys,rpcUrl}){
  // Never replace pre-existing accounts: protect earlier runs and unrelated markets.
  const existing=await rpc.getMultipleAccountsInfo(plan.accounts.map(a=>new PublicKey(a.address)),"confirmed");
  if(existing.some(Boolean))throw Error("Fixture accounts already exist; use a fresh Surfpool instance/keys");
+ if(!(await rpc.getAccountInfo(TOKEN,"confirmed"))?.executable)
+  throw Error("Classic SPL Token program missing from Surfpool; token settlement cannot execute");
  for(const a of plan.accounts){
   await cheatcode(rpcUrl,"surfnet_setAccount",[a.address,{
-   data:a.data.toString("hex"),executable:false,lamports:10000000,
+   data:"0x"+a.data.toString("hex"),executable:false,lamports:10000000,
    owner:a.owner,rentEpoch:0
   }]);
  }
