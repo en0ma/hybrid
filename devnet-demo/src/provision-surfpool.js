@@ -27,10 +27,9 @@ export function marketBytes(askOwner,bidOwner){
 export function detachedBookPage(index,ownerSidecar=false){
  if(![0,1].includes(index))throw Error("Expected book page 0 or 1");
  const data=Buffer.alloc(ownerSidecar?1040:1552);
- if(index===1){
-  data.writeUInt32LE(1,2);
-  data.writeUInt32LE(0xffffffff,6);data.writeUInt32LE(0xffffffff,10);
- }
+ data.writeUInt32LE(index,2);
+ data.writeUInt32LE(0xffffffff,6);
+ data.writeUInt32LE(0xffffffff,10);
  return data;
 }
 export function classicMintBytes(mintAuthority,decimals=6){
