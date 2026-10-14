@@ -219,3 +219,7 @@ The lifecycle CLI now writes its restricted-permission evidence file at every me
 ## Whole-lifecycle final accounting gate
 
 After all six signed operations, the funded runner now performs a final, independent **net conservation** reconciliation across the initial pre-maker state, post-deposit, post-trade, and post-withdrawal snapshots. It requires an empty ask/bid book, zero locked maker collateral, exactly one allocated market sequence, unchanged taker balances outside the trade, and exact agreement between remaining maker free base/quote and net custody/vault changes (`deposit - taker base fill - withdraw`, `taker quote paid`). The resulting `finalAudit.verified` must be true for the orchestrator and self-hosted CI to report completion. The audit cannot replace an actual successful signed Surfpool run; it strengthens the evidence required from one.
+
+## Confirmed receipt indexing delay
+
+A signed transaction may be confirmed before the RPC endpoint returns an indexed `getTransaction` response. The funded runner now retries a missing receipt up to ten times with a short delay after successful confirmation, without resubmitting the transaction. A reported transaction error still fails immediately; absent receipts eventually fail with the submitted signature retained in the durable journal for manual RPC investigation. The final independent six-receipt verification remains required.
