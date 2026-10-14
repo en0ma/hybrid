@@ -9,6 +9,7 @@ import {clusterConfig,assertCluster} from "./cluster.js";
 import {decodeMarketHeader} from "./market.js";
 import {decodeMakerBalance} from "./maker-balance.js";
 import {decodeCustody} from "./custody.js";
+import {decodeOwnedBookPage,combineOwnedBookPages} from "./book.js";
 import {deriveMarketAccounts} from "./manifest.js";
 import {verifyReceiptOrderLink} from "./receipt-policy.js";
 import {compareMakerSnapshots,compareOrderLockSnapshots} from "./transitions.js";
@@ -58,14 +59,25 @@ export function lifecycleInstructions(c,maker,taker,sequence){
 }
 async function snapshot(rpc,c,maker){
  const keys=deriveMarketAccounts(c.market,maker.toBase58());
- const addresses=[p(c.market),p(keys.custody),p(keys.makerBalance),p(c.baseVault),p(c.quoteVault),p(c.takerBaseToken),p(c.takerQuoteToken)];
+ const addresses=[p(c.market),p(keys.custody),p(keys.makerBalance),p(c.baseVault),p(c.quoteVault),p(c.takerBaseToken),p(c.takerQuoteToken),
+  p(keys.askPage0),p(c.askOwner),p(keys.askPage1),p(keys.askOwnerPage1),
+  p(keys.bidPage0),p(c.bidOwner),p(keys.bidPage1),p(keys.bidOwnerPage1)];
  const batch=await rpc.getMultipleAccountsInfoAndContext(addresses,"confirmed");
- const [market,custody,balance,baseVault,quoteVault,takerBase,takerQuote]=batch.value;
- if(!market||!custody||!baseVault||!quoteVault||!takerBase||!takerQuote)throw Error("Fixture account missing");
+ const [market,custody,balance,baseVault,quoteVault,takerBase,takerQuote,...books]=batch.value;
+ if(!market||!custody||!baseVault||!quoteVault||!takerBase||!takerQuote||books.some(x=>!x))throw Error("Fixture account missing");
+ const bookOrders={};
+ for(const [side,offset] of [["ask",0],["bid",4]]){
+  const pages=[0,1].map(index=>decodeOwnedBookPage(books[offset+index*2].data,
+   books[offset+index*2+1].data,side,index));
+  bookOrders[side]=combineOwnedBookPages(pages,side);
+ }
+ const header=decodeMarketHeader(market.data);
+ if(bookOrders.ask.length!==header.askCount||bookOrders.bid.length!==header.bidCount)
+  throw Error("Linked book order counts do not match market header");
  const vaultBalances={base:baseVault.data.readBigUInt64LE(64).toString(),
   quote:quoteVault.data.readBigUInt64LE(64).toString()};
  return {cluster:"surfpool",rpc:rpc.rpcEndpoint,slot:batch.context.slot,market:c.market,
-  maker:maker.toBase58(),marketState:decodeMarketHeader(market.data),
+  maker:maker.toBase58(),marketState:header,bookSlot:batch.context.slot,bookOrders,
   custodyState:decodeCustody(custody.data),
   makerState:balance?decodeMakerBalance(balance.data,c.market,maker.toBase58()):null,
   vaultBalances,takerBalances:{base:takerBase.data.readBigUInt64LE(64).toString(),
