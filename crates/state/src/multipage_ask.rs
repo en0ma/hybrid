@@ -147,14 +147,8 @@ mod tests {
         assert_eq!(owners[0].owners[0], [2; 32]);
         assert_eq!(pages.len(), 2);
         assert_eq!(owners.len(), 2);
-        assert_eq!(
-            pages[0].links(),
-            crate::PageLinks::new(0, None, Some(1))
-        );
-        assert_eq!(
-            pages[1].links(),
-            crate::PageLinks::new(1, Some(0), None)
-        );
+        assert_eq!(pages[0].links(), crate::PageLinks::new(0, None, Some(1)));
+        assert_eq!(pages[1].links(), crate::PageLinks::new(1, Some(0), None));
         assert_eq!(pages[1].len(), 0);
     }
 
