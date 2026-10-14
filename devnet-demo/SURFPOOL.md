@@ -126,3 +126,22 @@ After capturing the market's `nextSequence` **before** the isolated placement, s
 ## Isolated Hybrid calls in each receipt
 
 The receipt verifier now requires exactly one **top-level Hybrid instruction** per lifecycle transaction. A transaction containing the expected stage opcode alongside another Hybrid instruction fails, rather than being mistaken for an isolated stage. Unrelated system/SPL instructions are still allowed. This does not currently inspect Hybrid invocations nested within CPI inner instructions; independent state snapshots and signed transaction analysis remain necessary for a complete execution claim.
+
+## Signed funded lifecycle runner (provisioned Surfpool only)
+
+A first executable six-stage runner is available via `npm run run:funded-lifecycle`. It requires the **Hybrid program already deployed** and a **preprovisioned** local market with custody, two linked ask pages and owner sidecars, SPL mints/vaults, and funded maker/taker SPL token accounts. This script does **not** deploy a binary, mint tokens, create a market, or fabricate receipt evidence.
+
+Create an untracked fixture config JSON with these fields (all keys are real fixture public keys): `market`, `askOwner`, `bidOwner`, `baseVault`, `quoteVault`, `baseMint`, `quoteMint`, `makerBaseToken`, `makerQuoteToken`, `takerBaseToken`, `takerQuoteToken`, `priceX64`, `sqrtPriceX64`, `placeBaseAtoms`, `tradeQuoteAtoms`, and `withdrawBaseAtoms`. The ask price/sqrt pair must pass on-chain validation; the taker's quote input must consume **some but not all** of the maker's posted ask. The withdrawal amount must be available after canceling the remaining ask. The maker must start with no maker-balance PDA, and the supplied SPL token accounts must already be sufficiently funded.
+
+```sh
+export HYBRID_CLUSTER=surfpool
+export SOLANA_RPC_URL=http://127.0.0.1:8899
+export HYBRID_FIXTURE_CONFIG=/absolute/path/to/fixture.json
+export HYBRID_MAKER_KEYPAIR=/absolute/path/to/maker.json
+export HYBRID_TAKER_KEYPAIR=/absolute/path/to/taker.json
+export HYBRID_EVIDENCE_FILE=/absolute/path/to/evidence.json
+cd devnet-demo
+npm run run:funded-lifecycle
+```
+
+The runner signs and simulates each transaction, submits it to the loopback RPC, waits for confirmation, captures its actual signature and fee, and reads maker/custody/vault snapshots before and after each stage. It checks deposit, placement, cancellation and withdrawal collateral transitions and the cancellation sequence. It writes a local JSON report, including partial-stage results and an error when a stage fails. Keep signing keys and evidence files out of source control. This is **not** a deterministic provisioning script: provisioning and actual on-RPC execution remain outstanding until a valid local fixture is supplied and the full report says `completed: true`. The existing book decoder and receipt verifier provide additional independent evidence; run them separately for full-book checks.
