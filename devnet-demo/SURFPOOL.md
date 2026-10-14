@@ -145,3 +145,29 @@ npm run run:funded-lifecycle
 ```
 
 The runner signs and simulates each transaction, submits it to the loopback RPC, waits for confirmation, captures its actual signature and fee, and reads maker/custody/vault snapshots before and after each stage. It checks deposit, placement, cancellation and withdrawal collateral transitions and the cancellation sequence. It writes a local JSON report, including partial-stage results and an error when a stage fails. Keep signing keys and evidence files out of source control. This is **not** a deterministic provisioning script: provisioning and actual on-RPC execution remain outstanding until a valid local fixture is supplied and the full report says `completed: true`. The existing book decoder and receipt verifier provide additional independent evidence; run them separately for full-book checks.
+
+## Automated local Surfpool provisioning (Issue #60)
+
+The `provision:surfpool` command seeds a fresh, **offline loopback-only** Surfpool instance with the market header, empty two-page ask/bid books, legacy page-0 owner sidecars, canonical tail PDAs, classic SPL mints, zeroed vaults and funded maker/taker token accounts. It uses Surfpool's `surfnet_setAccount` development cheatcode to create these controlled fixture states; **never use this outside local testing**. It then sends real signed Hybrid opcode 11 (custody initialize) and opcode 29 (attach book) transactions. The program itself must already be deployed at the compiled fixed ID. Keys are generated once and stored with file permissions 0600; existing fixture-account collisions cause an error rather than overwriting other balances.
+
+```sh
+# Terminal A, after building/deploying the Hybrid SBF program:
+surfpool start --offline --no-tui
+
+# Terminal B:
+cd devnet-demo
+npm install
+export HYBRID_CLUSTER=surfpool
+export SOLANA_RPC_URL=http://127.0.0.1:8899
+export HYBRID_FIXTURE_DIR=./.surfpool-fixture
+npm run provision:surfpool
+
+# Run six actual signed maker/taker steps against the newly provisioned state:
+export HYBRID_FIXTURE_CONFIG=./.surfpool-fixture/fixture.json
+export HYBRID_MAKER_KEYPAIR=./.surfpool-fixture/maker.json
+export HYBRID_TAKER_KEYPAIR=./.surfpool-fixture/taker.json
+export HYBRID_EVIDENCE_FILE=./.surfpool-fixture/lifecycle-evidence.json
+npm run run:funded-lifecycle
+```
+
+Provisioning writes `provision-evidence.json` with actual on-chain custody initialization and book-link receipts, plus the fixture JSON used by the lifecycle runner. The SPL mint/token accounts and market/page initial states are cheatcode-seeded, not constructed by genuine mint or System Program transactions. As a result, fixture provisioning is appropriate for deterministic local settlement execution but **does not prove real-cluster onboarding or independent minting correctness**. A successful lifecycle still requires actual Surfpool execution and signed receipts. Do not commit the fixture directory, keypairs or evidence containing local secrets. Using a fresh Surfpool network is recommended; the provisioner refuses to clobber existing fixture accounts.
