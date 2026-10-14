@@ -102,9 +102,15 @@ export async function provisionSurfpool({rpc,keys,rpcUrl}){
  if(existing.some(Boolean))throw Error("Fixture accounts already exist; use a fresh Surfpool instance/keys");
  if(!(await rpc.getAccountInfo(TOKEN,"confirmed"))?.executable)
   throw Error("Classic SPL Token program missing from Surfpool; token settlement cannot execute");
+ // Seed accounts at or above the real cluster rent-exempt minimum, not a flat
+ // lamport estimate: linked pages are larger than basic SPL token accounts.
+ const sizes=[...new Set(plan.accounts.map(a=>a.data.length))];
+ const rentBySize=new Map(await Promise.all(sizes.map(async size=>
+  [size,await rpc.getMinimumBalanceForRentExemption(size,"confirmed")])));
  for(const a of plan.accounts){
   await cheatcode(rpcUrl,"surfnet_setAccount",[a.address,{
-   data:"0x"+a.data.toString("hex"),executable:false,lamports:10000000,
+   data:"0x"+a.data.toString("hex"),executable:false,
+   lamports:Math.max(rentBySize.get(a.data.length),10_000_000),
    owner:a.owner,rentEpoch:0
   }]);
  }
@@ -112,7 +118,8 @@ export async function provisionSurfpool({rpc,keys,rpcUrl}){
  const observed=await rpc.getMultipleAccountsInfo(plan.accounts.map(a=>new PublicKey(a.address)),"confirmed");
  for(let i=0;i<plan.accounts.length;i++){
   const a=plan.accounts[i],actual=observed[i];
-  if(!actual||!actual.owner.equals(new PublicKey(a.owner))||!actual.data.equals(a.data))
+  if(!actual||!actual.owner.equals(new PublicKey(a.owner))||!actual.data.equals(a.data)||
+     actual.lamports<rentBySize.get(a.data.length))
    throw Error("Surfpool seeded account read-back mismatch: "+a.name);
  }
  for(const actor of [keys.market,keys.maker,keys.taker]){
