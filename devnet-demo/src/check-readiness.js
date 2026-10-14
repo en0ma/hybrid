@@ -91,7 +91,8 @@ if(custodyState){
       row.valid=false;
       row.error="SPL mint account absent or wrong program owner";
     }else{
-      verifyClassicMint(a.data,decimals);
+      try{verifyClassicMint(a.data,decimals);}
+      catch(error){row.valid=false;row.error=error.message;}
     }
     row.decimals=a?.data[44];
     return row;
