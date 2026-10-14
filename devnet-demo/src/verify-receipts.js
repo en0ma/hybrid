@@ -5,6 +5,7 @@ import {clusterConfig,assertCluster} from "./cluster.js";
 import {Connection,PublicKey} from "@solana/web3.js";
 import {PROGRAM_ID} from "./abi.js";
 import {verifiesTradeMovement,tokenBalanceDeltas} from "./evidence.js";
+import {verifyReceiptOrderLink} from "./receipt-policy.js";
 const sigs=process.argv.slice(2);
 const full=sigs.length===6;
 const steps=full?["initialize maker","deposit","place","trade","cancel","withdraw"]:["place","trade","cancel"];
@@ -25,6 +26,7 @@ let previousSlot=0;
 let placingMaker=null;
 let placedSide=null;
 let placedPage=null;
+let placeInstruction=null,cancelInstruction=null;
 for(let i=0;i<sigs.length;i++){
   const tx=await connection.getParsedTransaction(sigs[i],{commitment:"confirmed",maxSupportedTransactionVersion:0});
   if(!tx||tx.meta?.err)throw Error("Transaction missing or failed at position "+(i+1));
@@ -49,10 +51,11 @@ for(let i=0;i<sigs.length;i++){
   if([13,14].includes(opcode)&&data.length!==10)throw Error("Invalid collateral instruction length");
   if(opcode===30){
     if(data.length!==43)throw Error("Invalid linked place instruction length");
-    placedSide=data[1];placedPage=data[2];
+    placedSide=data[1];placedPage=data[2];placeInstruction=data;
   }
   if(opcode===31){
     if(data.length!==11)throw Error("Invalid linked cancel instruction length");
+    cancelInstruction=data;
     if(data[1]!==placedSide||data[2]!==placedPage)
       throw Error("Cancellation targets another book side or page");
   }
@@ -101,6 +104,8 @@ for(let i=0;i<sigs.length;i++){
     opcodes,feeLamports:tx.meta.fee,
     preTokenBalances:tx.meta.preTokenBalances||[],postTokenBalances:tx.meta.postTokenBalances||[]});
 }
+const expectedSequence=process.env.HYBRID_EXPECTED_SEQUENCE;
+const orderReceiptLink=expectedSequence?verifyReceiptOrderLink(placeInstruction,cancelInstruction,expectedSequence):null;
 console.log(JSON.stringify({cluster:mode,program:program.toBase58(),
-  market:commonMarket,placingMaker,
-  warning:"Receipts share a market and authenticated maker; they do not prove the same order sequence, correct fills, market funding or vault solvency. Inspect decoded state.",report},null,2));
+  market:commonMarket,placingMaker,orderReceiptLink,
+  warning:orderReceiptLink?"Cancellation sequence matches supplied expectation but receipt verification alone cannot establish placement allocation, fills or custody conservation. Inspect snapshots.":"Receipt chain does not establish canceled sequence identity without HYBRID_EXPECTED_SEQUENCE from a pre-placement snapshot. Inspect decoded state.",report},null,2));
