@@ -97,25 +97,32 @@ async function send(rpc,payer,signers,ix,onSubmitted=()=>{}){
  if(!receipt||receipt.meta?.err)throw Error("Confirmed receipt missing/failed: "+signature);
  return {signature,slot:receipt.slot,feeLamports:receipt.meta.fee,simulationUnits:simulation.value.unitsConsumed};
 }
-export async function runFundedLifecycle({rpc,c,maker,taker}){
+export async function runFundedLifecycle({rpc,c,maker,taker,onJournal=async()=>{}}){
  validateFixtureConfig(c);
  if(maker.publicKey.equals(taker.publicKey))throw Error("Maker and taker must be distinct");
  const deployed=await rpc.getAccountInfo(program,"confirmed");
  if(!deployed?.executable)throw Error("Hybrid SBF program absent on Surfpool");
  const journal={cluster:"surfpool",market:c.market,maker:maker.publicKey.toBase58(),
   taker:taker.publicKey.toBase58(),startedAt:new Date().toISOString(),stages:[],completed:false};
+ const persist=async()=>onJournal(journal);
  const record=async(stage,sender,ix,signers)=>{
   const before=await snapshot(rpc,c,maker.publicKey);
   const entry={stage,status:"simulating",before};
   journal.stages.push(entry);
+  await persist();
   const receipt=await send(rpc,sender,signers,ix,signature=>{
    entry.signature=signature;
    entry.status="submitted";
+   // Do not wait for disk writes before confirmation; flush synchronously
+   // at the next awaited boundary to preserve a submitted signature.
   });
+  await persist();
   Object.assign(entry,receipt,{status:"confirmed"});
+  await persist();
   const after=await snapshot(rpc,c,maker.publicKey);
   entry.after=after;
   entry.status="snapshotted";
+  await persist();
   return {before,after};
  };
  try{
@@ -138,10 +145,12 @@ export async function runFundedLifecycle({rpc,c,maker,taker}){
   verifyReceiptOrderLink(ix.place.data,ix.cancel.data,sequence);
   journal.expectedSequence=String(sequence);
   journal.completed=true;
+  await persist();
  }catch(error){
   journal.error=error.message;
+  await persist();
   throw Object.assign(Error(error.message),{journal});
- }finally{journal.finishedAt=new Date().toISOString();}
+ }finally{journal.finishedAt=new Date().toISOString();await persist();}
  return journal;
 }
 async function main(){
@@ -151,12 +160,13 @@ async function main(){
  const cfg=clusterConfig("surfpool",process.env.SOLANA_RPC_URL||"http://127.0.0.1:8899");
  const rpc=new Connection(cfg.url,"confirmed");
  await assertCluster(rpc,"surfpool");
- let report;
- try{report=await runFundedLifecycle({rpc,c,maker,taker});}
- catch(e){report=e.journal||{completed:false,error:e.message};process.exitCode=1;}
  const destination=resolve(process.env.HYBRID_EVIDENCE_FILE||"./surfpool-lifecycle-evidence.json");
  await mkdir(dirname(destination),{recursive:true});
- await writeFile(destination,JSON.stringify(report,null,2)+"\n",{mode:0o600});
+ const onJournal=async journal=>writeFile(destination,JSON.stringify(journal,null,2)+"\n",{mode:0o600});
+ let report;
+ try{report=await runFundedLifecycle({rpc,c,maker,taker,onJournal});}
+ catch(e){report=e.journal||{completed:false,error:e.message};process.exitCode=1;}
+ await onJournal(report);
  console.log(JSON.stringify({completed:report.completed,stages:report.stages?.map(x=>({stage:x.stage,signature:x.signature,slot:x.slot})),error:report.error,evidence:destination},null,2));
 }
 if(process.argv[1]&&resolve(process.argv[1])===new URL(import.meta.url).pathname){
