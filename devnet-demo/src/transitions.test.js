@@ -83,3 +83,16 @@ test("sequence expectations enforce Rust placement allocation and cancellation b
  assert.throws(()=>compareOrderLockSnapshots(after,canceled,"cancel","ask","20","8"),/precede/i);
  assert.throws(()=>compareOrderLockSnapshots(after,canceled,"cancel","ask","20","0"),/positive/i);
 });
+
+test("when book snapshots exist, order sequence and maker identity are verified",()=>{
+ const before=make(100,0,0,0),after=make(90,10,0,0);
+ after.vaultBalances.base="100";after.custodyState.totalBase="100";
+ before.maker="u";after.maker="u";
+ before.marketState={askCount:0,bidCount:0,nextSequence:"5"};
+ after.marketState={askCount:1,bidCount:0,nextSequence:"6"};
+ const order={sequence:"5",owner:"u",pageIndex:0,baseQty:"10",priceX64:"1"};
+ before.bookOrders={ask:[]};after.bookOrders={ask:[order]};
+ assert.equal(compareOrderLockSnapshots(before,after,"place","ask","10","5").orderIdentityChecked,true);
+ const wrong=structuredClone(after);wrong.bookOrders.ask[0].owner="someone-else";
+ assert.throws(()=>compareOrderLockSnapshots(before,wrong,"place","ask","10","5"),/owner/i);
+});
