@@ -114,3 +114,15 @@ test("bid price Q64 rounded-up collateral and atomic book slot checks",()=>{
  const stale=structuredClone(after);stale.bookSlot=2;
  assert.throws(()=>compareOrderLockSnapshots(before,stale,"place","bid","3","9"),/single RPC context slot/i);
 });
+
+test("fail closed when selected-side order evidence is missing",()=>{
+ const a=make(0,0,100,0),b=make(0,0,90,10);
+ a.marketState={askCount:0,bidCount:0,nextSequence:"11"};
+ b.marketState={askCount:0,bidCount:1,nextSequence:"12"};
+ b.custodyState.totalQuote="100";b.vaultBalances.quote="100";
+ a.bookOrders={ask:[]};b.bookOrders={ask:[]};
+ a.bookSlot=a.slot;b.bookSlot=b.slot;
+ assert.throws(()=>compareOrderLockSnapshots(a,b,"place","bid","10","11"),/Selected-side book evidence missing/);
+ const missing=structuredClone(b);delete missing.bookOrders;
+ assert.throws(()=>compareOrderLockSnapshots(a,missing,"place","bid","10","11"),/single RPC context slot/);
+});
