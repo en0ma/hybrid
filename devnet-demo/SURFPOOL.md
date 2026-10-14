@@ -112,3 +112,7 @@ For the Issue #60 funded fixture, set `HYBRID_REQUIRE_FULL_BOOK=1` and `HYBRID_B
 ## Readiness mint validation
 
 `check:readiness` validates the classic SPL Token mint's 82-byte layout with decimal precision at byte offset 44 and the initialized flag at byte offset 45. It rejects mismatched decimals and uninitialized mints; the former incorrect comparison against bytes 45/46 has been fixed. This checks mint layout correctness, not the availability of funded maker/taker token accounts.
+
+## Non-signing funded fixture preflight
+
+Run `HYBRID_CLUSTER=surfpool npm run check:fixture` from `devnet-demo` before attempting Issue #60 execution. It reports missing local Surfpool, Solana and Cargo CLIs, loopback RPC connectivity, fixed-ID program deployment and full-book bid-owner configuration. Exit status is nonzero when these prerequisites are absent. Set `HYBRID_BID_OWNER0` to the actual bid head sidecar address for full-book verification. A green preflight merely establishes **provisioning prerequisites**—it does **not** create or fund a market, deploy the binary, sign any transaction, or prove conservation. For actual completion, capture all six confirmed signed receipts and the corresponding state snapshots.
