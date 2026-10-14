@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {fixturePreflightReport} from "./fixture-preflight.js";
+import {fixturePreflightReport,validSidecarAddress} from "./fixture-preflight.js";
 test("preflight fails closed when required tools or program deployment are missing",()=>{
  const report=fixturePreflightReport({tools:{surfpool:true,solana:false,cargo:true},
   programExecutable:false,rpcReachable:true,fullBookConfigured:false});
@@ -14,4 +14,12 @@ test("preflight ready only means provisioning prerequisites, not lifecycle execu
   programExecutable:true,rpcReachable:true,fullBookConfigured:true});
  assert.equal(report.readyForProvisioning,true);
  assert.match(report.evidence,/No signed transactions/);
+});
+
+test("full-book sidecar configuration requires a nonzero canonical public key",()=>{
+ assert.equal(validSidecarAddress(undefined),false);
+ assert.equal(validSidecarAddress("not-a-pubkey"),false);
+ assert.equal(validSidecarAddress("11111111111111111111111111111111"),false);
+ assert.equal(validSidecarAddress(""),false);
+ assert.equal(validSidecarAddress("US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"),true);
 });
