@@ -37,7 +37,7 @@ export function classicMintBytes(mintAuthority,decimals=6){
  const data=Buffer.alloc(82);
  data.writeUInt32LE(1,0);
  new PublicKey(mintAuthority).toBuffer().copy(data,4);
- data[44]=decimals;data[45]=1;
+ writeU64(data,36,1000000n);data[44]=decimals;data[45]=1;
  return data;
 }
 export function classicTokenBytes(mint,owner,amount=0n){
@@ -103,9 +103,16 @@ export async function provisionSurfpool({rpc,keys,rpcUrl}){
  if(existing.some(Boolean))throw Error("Fixture accounts already exist; use a fresh Surfpool instance/keys");
  for(const a of plan.accounts){
   await cheatcode(rpcUrl,"surfnet_setAccount",[a.address,{
-   data:"0x"+a.data.toString("hex"),executable:false,lamports:10000000,
+   data:a.data.toString("hex"),executable:false,lamports:10000000,
    owner:a.owner,rentEpoch:0
   }]);
+ }
+ // Read-back validates the RPC actually persisted the bytes and ownership.
+ const observed=await rpc.getMultipleAccountsInfo(plan.accounts.map(a=>new PublicKey(a.address)),"confirmed");
+ for(let i=0;i<plan.accounts.length;i++){
+  const a=plan.accounts[i],actual=observed[i];
+  if(!actual||!actual.owner.equals(new PublicKey(a.owner))||!actual.data.equals(a.data))
+   throw Error("Surfpool seeded account read-back mismatch: "+a.name);
  }
  for(const actor of [keys.market,keys.maker,keys.taker]){
   const sig=await rpc.requestAirdrop(actor.publicKey,5000000000);
