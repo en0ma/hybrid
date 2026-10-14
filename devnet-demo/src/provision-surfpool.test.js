@@ -41,3 +41,11 @@ test("provisioning plan supplies all required market, book, mint and funded toke
  assert.equal(plan.accounts.find(x=>x.name==="takerQuoteToken").data.readBigUInt64LE(64),1000000n);
  assert.equal(plan.accounts.find(x=>x.name==="baseVault").data.readBigUInt64LE(64),0n);
 });
+
+test("seeded market and classic SPL accounts have nonzero funds and expected byte lengths",()=>{
+ const k=keys(),plan=provisioningPlan(k);
+ assert.equal(plan.accounts.filter(x=>x.owner!=="US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx").length,6);
+ for(const x of plan.accounts)assert.ok(x.data.length===128||x.data.length===1552||x.data.length===1040||x.data.length===82||x.data.length===165);
+ const mint=plan.accounts.find(x=>x.name==="baseMint").data;
+ assert.equal(mint.readBigUInt64LE(36),1000000n);
+});
