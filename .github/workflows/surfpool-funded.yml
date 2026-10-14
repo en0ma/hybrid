@@ -33,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           # Must not share fixture state with other jobs on this self-hosted runner.
-          surfpool start --offline --no-tui > surfpool.log 2>&1 &
+          surfpool start --offline --ci --no-deploy > surfpool.log 2>&1 &
           echo $! > surfpool.pid
           for i in $(seq 1 40); do
             if curl -fsS -X POST -H 'content-type: application/json' \
