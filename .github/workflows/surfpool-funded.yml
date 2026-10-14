@@ -55,10 +55,12 @@ jobs:
           const d=".surfpool-fixture/";
           const run=JSON.parse(readFileSync(d+"run-report.json"));
           const evidence=JSON.parse(readFileSync(d+"lifecycle-evidence.json"));
-          if(!run.deployed||!run.provisioned||!run.lifecycleCompleted||
+          const receipts=JSON.parse(readFileSync(d+"verified-receipts.json"));
+          if(!run.deployed||!run.provisioned||!run.lifecycleCompleted||!run.receiptsVerified||
             !evidence.completed||!evidence.tradeSettlement?.verified||
             !evidence.tradeSettlement?.partialBookFillVerified||
-            evidence.stages?.length!==6||
+            evidence.stages?.length!==6||receipts.report?.length!==6||
+            receipts.orderReceiptLink?.receiptSequenceLinked!==true||
             new Set(evidence.stages.map(x=>x.signature)).size!==6)
             throw Error("Funded Surfpool receipt verification incomplete");
           console.log(JSON.stringify({market:evidence.market,stages:run.signatures,
@@ -75,6 +77,7 @@ jobs:
             devnet-demo/.surfpool-fixture/run-report.json
             devnet-demo/.surfpool-fixture/provision-evidence.json
             devnet-demo/.surfpool-fixture/lifecycle-evidence.json
+            devnet-demo/.surfpool-fixture/verified-receipts.json
             devnet-demo/surfpool.log
           # Never upload .surfpool-fixture/*.json glob: it contains secret keypairs.
       - name: Stop local runtime
