@@ -223,3 +223,7 @@ After all six signed operations, the funded runner now performs a final, indepen
 ## Confirmed receipt indexing delay
 
 A signed transaction may be confirmed before the RPC endpoint returns an indexed `getTransaction` response. The funded runner now retries a missing receipt up to ten times with a short delay after successful confirmation, without resubmitting the transaction. A reported transaction error still fails immediately; absent receipts eventually fail with the submitted signature retained in the durable journal for manual RPC investigation. The final independent six-receipt verification remains required.
+
+## Fixed-ID deployment without original program keypair
+
+The Surfpool-only deployer now uses documented `surfnet_writeProgram` to upload the compiled ELF to the **pinned** Hybrid program ID when `HYBRID_PROGRAM_KEYPAIR` is unset. Writes use bounded 256 KiB hex chunks and explicit byte offsets; an RPC error or a non-executable read-back is fatal. This local simulator cheatcode does **not** constitute an ordinary funded Solana program deployment. Set `HYBRID_PROGRAM_KEYPAIR` and `HYBRID_DEPLOY_PAYER` to continue using the real Solana CLI deployment path. The self-hosted workflow therefore no longer requires access to the pinned program secret key when the local cheatcode is supported. It still requires Surfpool, Node, SBF Cargo toolchain, and signed fixture transactions. Confirm the actual workflow run and evidence before closing Issue #60.
