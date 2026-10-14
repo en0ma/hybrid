@@ -32,7 +32,9 @@ async function main(){
   exec("funded-lifecycle.js",env);
   const evidence=JSON.parse(await readFile(env.HYBRID_EVIDENCE_FILE,"utf8"));
   if(evidence.completed!==true||evidence.stages?.length!==6||
-   evidence.stages.some(s=>!s.signature))throw Error("Incomplete six-stage on-chain evidence");
+   evidence.stages.some(s=>!s.signature)||
+   new Set(evidence.stages.map(s=>s.signature)).size!==6||
+   evidence.stages.map(s=>s.stage).join(",")!=="init,deposit,place,trade,cancel,withdraw")throw Error("Incomplete six-stage on-chain evidence");
   report.lifecycleCompleted=true;
   report.signatures=evidence.stages.map(s=>({stage:s.stage,signature:s.signature,slot:s.slot}));
  }catch(error){
