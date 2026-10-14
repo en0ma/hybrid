@@ -3,6 +3,11 @@
 import {spawnSync} from "node:child_process";
 import {Connection,PublicKey} from "@solana/web3.js";
 import {PROGRAM_ID} from "./abi.js";
+export function validSidecarAddress(value){
+ if(!value)return false;
+ try{return new PublicKey(value).toBase58()===value&&value!==PublicKey.default.toBase58();}
+ catch{return false;}
+}
 import {clusterConfig,assertCluster} from "./cluster.js";
 export function fixturePreflightReport({tools,programExecutable,rpcReachable,fullBookConfigured}){
  const missing=[];
@@ -34,7 +39,7 @@ if(process.argv[1]&&import.meta.url===new URL("file://"+process.argv[1]).href){
  }catch(e){rpcError=e.message;}
  const report={cluster:"surfpool",rpc:cfg.url,slot,program:PROGRAM_ID,tools:toolAvailability,rpcError,
   ...fixturePreflightReport({tools:toolAvailability,rpcReachable,programExecutable,
-   fullBookConfigured:!!process.env.HYBRID_BID_OWNER0})};
+   fullBookConfigured:validSidecarAddress(process.env.HYBRID_BID_OWNER0)})};
  console.log(JSON.stringify(report,null,2));
  if(!report.readyForProvisioning)process.exitCode=1;
 }
