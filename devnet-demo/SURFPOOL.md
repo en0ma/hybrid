@@ -108,3 +108,7 @@ A snapshot with an incomplete `bookOrders` object cannot support a claim about a
 ## Mandatory full-book evidence for funded lifecycle
 
 For the Issue #60 funded fixture, set `HYBRID_REQUIRE_FULL_BOOK=1` and `HYBRID_BID_OWNER0=<FULL_BID_HEAD_SIDECAR_PUBKEY>` before `snapshot:maker`. Missing the bid sidecar is a hard error when the market has active bids or full-book mode is requested. The JSON `fullBookVerified` field is true only if both ask and bid books were decoded and their counts matched the market header. The full-book flag validates visibility and account structure, **not** execution, solvency, or signatures. For read-only ask-only smoke on an empty bid book, omission of the bid side is still permitted unless full-book mode is requested.
+
+## Readiness mint validation
+
+`check:readiness` validates the classic SPL Token mint's 82-byte layout with decimal precision at byte offset 44 and the initialized flag at byte offset 45. It rejects mismatched decimals and uninitialized mints; the former incorrect comparison against bytes 45/46 has been fixed. This checks mint layout correctness, not the availability of funded maker/taker token accounts.
