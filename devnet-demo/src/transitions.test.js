@@ -94,6 +94,8 @@ test("when book snapshots exist, order sequence and maker identity are verified"
  before.bookOrders={ask:[]};after.bookOrders={ask:[order]};
  before.bookSlot=before.slot;after.bookSlot=after.slot;
  assert.equal(compareOrderLockSnapshots(before,after,"place","ask","10","5").orderIdentityChecked,true);
+ assert.equal(compareOrderLockSnapshots(before,after,"place","ask","10","5",0).orderIdentityChecked,true);
+ assert.throws(()=>compareOrderLockSnapshots(before,after,"place","ask","10","5",1),/page mismatch/i);
  const wrong=structuredClone(after);wrong.bookOrders.ask[0].owner="someone-else";
  assert.throws(()=>compareOrderLockSnapshots(before,wrong,"place","ask","10","5"),/owner/i);
 });
