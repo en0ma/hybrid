@@ -93,6 +93,14 @@ async function send(rpc,signers,ix){
  if(confirm.value.err)throw Error("Hybrid init transaction failed: "+signature);
  return signature;
 }
+export function surfpoolAccountPayload(account,lamports){
+ if(!account||!Buffer.isBuffer(account.data)||typeof account.owner!=="string")
+  throw Error("Expected seeded account bytes and owner");
+ if(!Number.isSafeInteger(lamports)||lamports<=0)
+  throw Error("Invalid seeded lamports");
+ return {data:account.data.toString("hex"),executable:false,lamports,
+  owner:account.owner,rentEpoch:0};
+}
 export async function provisionSurfpool({rpc,keys,rpcUrl}){
  const deployed=await rpc.getAccountInfo(PROGRAM,"confirmed");
  if(!deployed?.executable)throw Error("Deploy fixed-ID Hybrid SBF program before provisioning");
