@@ -64,6 +64,8 @@ if(!m||!m.owner.equals(program)||!c||!c.owner.equals(program))
  throw Error("Market or custody absent / wrong program owner");
 const marketState=decodeMarketHeader(m.data);
 const custodyState=decodeCustody(c.data);
+// Recheck against final market state: bids may have appeared since discovery.
+requireBidSidecar(marketState.bidCount,requireFullBook,bookKeys.some(x=>x.side==="bid"));
 if(custodyState.market!==market.toBase58()||
  custodyState.baseVault!==initialCustody.baseVault||
  custodyState.quoteVault!==initialCustody.quoteVault)
