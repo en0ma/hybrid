@@ -6,6 +6,7 @@ import {Connection,PublicKey} from "@solana/web3.js";
 import {PROGRAM_ID} from "./abi.js";
 import {verifiesTradeMovement,tokenBalanceDeltas} from "./evidence.js";
 import {verifyReceiptOrderLink} from "./receipt-policy.js";
+import {selectIsolatedHybridInstruction} from "./isolated-receipt.js";
 const sigs=process.argv.slice(2);
 const full=sigs.length===6;
 const steps=full?["initialize maker","deposit","place","trade","cancel","withdraw"]:["place","trade","cancel"];
@@ -31,12 +32,9 @@ for(let i=0;i<sigs.length;i++){
   const tx=await connection.getParsedTransaction(sigs[i],{commitment:"confirmed",maxSupportedTransactionVersion:0});
   if(!tx||tx.meta?.err)throw Error("Transaction missing or failed at position "+(i+1));
   const instructions=tx.transaction.message.instructions;
-  const hits=instructions.filter(ix=>ix.programId.equals(program));
-  // ParsedTransaction contains partially decoded instructions with base58
-  // program instruction data; verify opcode separately only after decoding.
   const {default:bs58}=await import("bs58");
-  const matching=hits.filter(ix=>"data" in ix && wanted[i].has(bs58.decode(ix.data)[0]));
-  if(matching.length!==1)throw Error("Expected exactly one Hybrid instruction at position "+(i+1));
+  const selected=selectIsolatedHybridInstruction(instructions,program,wanted[i],s=>bs58.decode(s));
+  const matching=[selected.instruction];
   const market=matching[0].accounts[0]?.toBase58();
   const signedKeys=new Set(tx.transaction.message.accountKeys.filter(x=>x.signer).map(x=>x.pubkey.toBase58()));
   if(!market)throw Error("Hybrid market account is missing");
