@@ -109,7 +109,7 @@ export async function provisionSurfpool({rpc,keys,rpcUrl}){
   [size,await rpc.getMinimumBalanceForRentExemption(size,"confirmed")])));
  for(const a of plan.accounts){
   await cheatcode(rpcUrl,"surfnet_setAccount",[a.address,{
-   data:"0x"+a.data.toString("hex"),executable:false,
+   data:a.data.toString("hex"),executable:false,
    lamports:Math.max(rentBySize.get(a.data.length),10_000_000),
    owner:a.owner,rentEpoch:0
   }]);
