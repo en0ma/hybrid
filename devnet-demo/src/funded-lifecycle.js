@@ -90,7 +90,7 @@ async function send(rpc,payer,signers,ix,onSubmitted=()=>{}){
  const simulation=await rpc.simulateTransaction(tx);
  if(simulation.value.err)throw Error("Simulation failed: "+JSON.stringify({error:simulation.value.err,logs:simulation.value.logs}));
  const signature=await rpc.sendRawTransaction(tx.serialize(),{skipPreflight:false,maxRetries:0});
- onSubmitted(signature);
+ await onSubmitted(signature);
  const confirmed=await rpc.confirmTransaction({signature,blockhash,lastValidBlockHeight},"confirmed");
  if(confirmed.value.err)throw Error("Confirmed transaction failed: "+signature+" "+JSON.stringify(confirmed.value.err));
  const receipt=await rpc.getTransaction(signature,{commitment:"confirmed",maxSupportedTransactionVersion:0});
@@ -110,13 +110,11 @@ export async function runFundedLifecycle({rpc,c,maker,taker,onJournal=async()=>{
   const entry={stage,status:"simulating",before};
   journal.stages.push(entry);
   await persist();
-  const receipt=await send(rpc,sender,signers,ix,signature=>{
+  const receipt=await send(rpc,sender,signers,ix,async signature=>{
    entry.signature=signature;
    entry.status="submitted";
-   // Do not wait for disk writes before confirmation; flush synchronously
-   // at the next awaited boundary to preserve a submitted signature.
+   await persist();
   });
-  await persist();
   Object.assign(entry,receipt,{status:"confirmed"});
   await persist();
   const after=await snapshot(rpc,c,maker.publicKey);
