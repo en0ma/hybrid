@@ -15,8 +15,6 @@ jobs:
       HYBRID_CLUSTER: surfpool
       SOLANA_RPC_URL: http://127.0.0.1:8899
       HYBRID_FIXTURE_DIR: ./.surfpool-fixture
-      HYBRID_PROGRAM_KEYPAIR: ${{ secrets.HYBRID_PROGRAM_KEYPAIR_PATH }}
-      HYBRID_DEPLOY_PAYER: ${{ secrets.HYBRID_DEPLOY_PAYER_PATH }}
     defaults:
       run:
         working-directory: devnet-demo
@@ -28,7 +26,6 @@ jobs:
           set -euo pipefail
           node --version
           cargo --version
-          solana --version
           surfpool --version
       - name: Install fixture runner dependencies
         run: npm ci
@@ -46,7 +43,7 @@ jobs:
           done
           cat surfpool.log
           exit 1
-      - name: Execute deployment, funded provision, six signed trades and checks
+      - name: Execute keyless pinned-ID deployment and six-stage funded lifecycle
         run: npm run run:surfpool
       - name: Fail unless evidence proves six confirmed stages
         run: |
