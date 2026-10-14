@@ -1,6 +1,11 @@
 name: Funded Surfpool lifecycle evidence
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/surfpool-funded.yml"
+      - "devnet-demo/src/**"
+      - "program/**"
 
 permissions:
   contents: read
