@@ -42,7 +42,7 @@ export function compareMakerSnapshots(before,after,action,asset,amount){
   return {action,delta,checked:true,verifiedVaultTransfers:true,verifiedCustodyTotals:true};
 }
 
-export function compareOrderLockSnapshots(before,after,action,side,expectedAmount){
+export function compareOrderLockSnapshots(before,after,action,side,expectedAmount,expectedSequence){
   if(!["place","cancel"].includes(action)||!["ask","bid"].includes(side))
     throw Error("Expected place/cancel and ask/bid");
   if(before.cluster!==after.cluster||before.rpc!==after.rpc||
@@ -65,6 +65,14 @@ export function compareOrderLockSnapshots(before,after,action,side,expectedAmoun
   const afterCount=BigInt(after.marketState[countField]);
   const beforeSeq=BigInt(before.marketState.nextSequence);
   const afterSeq=BigInt(after.marketState.nextSequence);
+  if(expectedSequence!==undefined){
+    const seq=BigInt(expectedSequence);
+    if(seq<=0n)throw Error("Expected order sequence must be positive");
+    if(action==="place"&&seq!==beforeSeq)
+      throw Error("Placed order sequence must equal pre-placement nextSequence");
+    if(action==="cancel"&&seq>=beforeSeq)
+      throw Error("Canceled sequence must precede market nextSequence");
+  }
   const countDelta=action==="place"?1n:-1n;
   if(afterCount-beforeCount!==countDelta)
     throw Error("Market order count delta inconsistent with placement/cancellation");
@@ -97,5 +105,5 @@ export function compareOrderLockSnapshots(before,after,action,side,expectedAmoun
       throw Error("Order lock/cancel unexpectedly changed custody totals");
   }
   return {action,side,amountAtoms:actual.toString(),
-    makerAssetConserved:true,vaultsAndCustodyUnchanged:true,marketHeaderTransitionsChecked:true};
+    makerAssetConserved:true,vaultsAndCustodyUnchanged:true,marketHeaderTransitionsChecked:true,sequenceExpectationChecked:expectedSequence!==undefined};
 }
