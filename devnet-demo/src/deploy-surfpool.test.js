@@ -24,6 +24,7 @@ test("Surfpool upload uses fixed ID without secret key and detects RPC failure",
  assert.equal(requests[0].method,"surfnet_writeProgram");
  assert.equal(requests[0].params[0],PROGRAM_ID);
  assert.equal(requests[0].params[2],0);
+ assert.equal(requests[0].params[1],"0x"+elf.toString("hex"));
  await assert.rejects(uploadSurfpoolProgram("http://127.0.0.1:8899",elf,
   async()=>({ok:true,json:async()=>({error:{code:-1,message:"bad write"}})})),/bad write/);
 });
