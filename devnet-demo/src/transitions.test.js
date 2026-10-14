@@ -68,3 +68,18 @@ test("order header checks reject forged count, unexpected sequence and opposite 
  const missing=structuredClone(after);delete missing.marketState;
  assert.throws(()=>compareOrderLockSnapshots(before,missing,"place","ask","10"),/Market header/i);
 });
+
+test("sequence expectations enforce Rust placement allocation and cancellation bounds",()=>{
+ const before=make(100,0,0,0),after=make(80,20,0,0);
+ after.vaultBalances.base="100";after.custodyState.totalBase="100";
+ before.marketState={askCount:0,bidCount:0,nextSequence:"7"};
+ after.marketState={askCount:1,bidCount:0,nextSequence:"8"};
+ assert.equal(compareOrderLockSnapshots(before,after,"place","ask","20","7").sequenceExpectationChecked,true);
+ assert.throws(()=>compareOrderLockSnapshots(before,after,"place","ask","20","8"),/pre-placement/i);
+ const canceled=make(100,0,0,0);
+ canceled.vaultBalances.base="100";canceled.custodyState.totalBase="100";
+ canceled.marketState={askCount:0,bidCount:0,nextSequence:"8"};
+ assert.equal(compareOrderLockSnapshots(after,canceled,"cancel","ask","20","7").sequenceExpectationChecked,true);
+ assert.throws(()=>compareOrderLockSnapshots(after,canceled,"cancel","ask","20","8"),/precede/i);
+ assert.throws(()=>compareOrderLockSnapshots(after,canceled,"cancel","ask","20","0"),/positive/i);
+});
