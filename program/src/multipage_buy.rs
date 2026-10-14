@@ -255,8 +255,14 @@ mod linked_maker_tests {
         restore_two_page_maker_chain(&mut pages, &mut owners);
         assert_eq!(pages.len(), 2);
         assert_eq!(owners.len(), 2);
-        assert_eq!(pages[0].links(), hybrid_state::PageLinks::new(0, None, Some(1)));
-        assert_eq!(pages[1].links(), hybrid_state::PageLinks::new(1, Some(0), None));
+        assert_eq!(
+            pages[0].links(),
+            hybrid_state::PageLinks::new(0, None, Some(1))
+        );
+        assert_eq!(
+            pages[1].links(),
+            hybrid_state::PageLinks::new(1, Some(0), None)
+        );
         assert_eq!(owners[0].links(), pages[0].links());
         assert_eq!(owners[1].links(), pages[1].links());
         hybrid_state::validate_ask_chain(&pages).unwrap();
