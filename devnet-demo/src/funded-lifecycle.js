@@ -83,13 +83,14 @@ async function snapshot(rpc,c,maker){
   vaultBalances,takerBalances:{base:takerBase.data.readBigUInt64LE(64).toString(),
    quote:takerQuote.data.readBigUInt64LE(64).toString()}};
 }
-async function send(rpc,payer,signers,ix){
+async function send(rpc,payer,signers,ix,onSubmitted=()=>{}){
  const {blockhash,lastValidBlockHeight}=await rpc.getLatestBlockhash("confirmed");
  const tx=new Transaction({feePayer:payer.publicKey,recentBlockhash:blockhash}).add(ix);
  tx.sign(...signers);
  const simulation=await rpc.simulateTransaction(tx);
  if(simulation.value.err)throw Error("Simulation failed: "+JSON.stringify({error:simulation.value.err,logs:simulation.value.logs}));
  const signature=await rpc.sendRawTransaction(tx.serialize(),{skipPreflight:false,maxRetries:0});
+ onSubmitted(signature);
  const confirmed=await rpc.confirmTransaction({signature,blockhash,lastValidBlockHeight},"confirmed");
  if(confirmed.value.err)throw Error("Confirmed transaction failed: "+signature+" "+JSON.stringify(confirmed.value.err));
  const receipt=await rpc.getTransaction(signature,{commitment:"confirmed",maxSupportedTransactionVersion:0});
@@ -105,11 +106,16 @@ export async function runFundedLifecycle({rpc,c,maker,taker}){
   taker:taker.publicKey.toBase58(),startedAt:new Date().toISOString(),stages:[],completed:false};
  const record=async(stage,sender,ix,signers)=>{
   const before=await snapshot(rpc,c,maker.publicKey);
-  const receipt=await send(rpc,sender,signers,ix);
-  const entry={stage,...receipt,before};
+  const entry={stage,status:"simulating",before};
   journal.stages.push(entry);
+  const receipt=await send(rpc,sender,signers,ix,signature=>{
+   entry.signature=signature;
+   entry.status="submitted";
+  });
+  Object.assign(entry,receipt,{status:"confirmed"});
   const after=await snapshot(rpc,c,maker.publicKey);
   entry.after=after;
+  entry.status="snapshotted";
   return {before,after};
  };
  try{
