@@ -30,6 +30,7 @@ const preliminaryMarket=await rpc.getAccountInfo(market,"confirmed");
 if(!preliminaryMarket||!preliminaryMarket.owner.equals(program))throw Error("Market missing");
 const marketStatePre=decodeMarketHeader(preliminaryMarket.data);
 // Capture both sides' order pages and their owner sidecars in one RPC response.
+const requireFullBook=process.env.HYBRID_REQUIRE_FULL_BOOK==="1";
 const bookKeys=[];
 for(const side of ["ask","bid"]){
  const owner0=side==="ask"?new PublicKey(marketStatePre.askOwner):null;
@@ -38,7 +39,8 @@ for(const side of ["ask","bid"]){
  const bidOwner=process.env.HYBRID_BID_OWNER0?new PublicKey(process.env.HYBRID_BID_OWNER0):null;
  const headOwner=side==="ask"?owner0:bidOwner;
  if(!headOwner){
-  if(side==="bid")continue;
+  if(side==="bid"&&!requireFullBook&&marketStatePre.bidCount===0)continue;
+  if(side==="bid")throw Error("Bid owner sidecar required for active bids or full-book verification; set HYBRID_BID_OWNER0");
   throw Error("Missing ask head owner");
  }
  if(side==="bid"&&!marketStatePre.bidOwnerTag.every((v,i)=>v===headOwner.toBytes()[i]))
@@ -95,10 +97,12 @@ for(const side of ["ask","bid"]){
  const expected=side==="ask"?marketState.askCount:marketState.bidCount;
  if(ownedOrders[side].length!==expected)throw Error("Decoded book count differs from market header");
 }
+if(requireFullBook&&(!Array.isArray(ownedOrders.ask)||!Array.isArray(ownedOrders.bid)))
+ throw Error("Full-book snapshot requires both ask and bid ownership evidence");
 const report={cluster:mode,rpc:cfg.url,slot:result.context.slot,market:market.toBase58(),
  maker:maker.toBase58(),custody:custody.toBase58(),makerPda:balance.toBase58(),
  marketState:{...marketState,bidOwnerTag:[...marketState.bidOwnerTag]},
  custodyState,makerState,vaultBalances:{base:vaultAmounts[0],quote:vaultAmounts[1]},
- bookOrders:ownedOrders,bookSlot:bookResponse.context.slot,
+ bookOrders:ownedOrders,bookSlot:bookResponse.context.slot,fullBookVerified:!!(ownedOrders.ask&&ownedOrders.bid),
  warning:"Maker, custody, vault and linked book accounts were fetched in one RPC batch at the reported slot; this does not establish a signed transaction or market-wide solvency."};
 console.log(JSON.stringify(report,null,2));
