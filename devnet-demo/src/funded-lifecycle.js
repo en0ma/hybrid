@@ -121,11 +121,11 @@ export async function runFundedLifecycle({rpc,c,maker,taker}){
   const deposit=await record("deposit",maker,ix.deposit,[maker]);
   compareMakerSnapshots(deposit.before,deposit.after,"deposit","base",c.placeBaseAtoms);
   const placement=await record("place",maker,ix.place,[maker]);
-  compareOrderLockSnapshots(placement.before,placement.after,"place","ask",c.placeBaseAtoms,sequence);
+  compareOrderLockSnapshots(placement.before,placement.after,"place","ask",c.placeBaseAtoms,sequence,0);
   const trade=await record("trade",taker,ix.swap,[taker]);
   journal.tradeSettlement=verifyAskTradeSettlement(trade.before,trade.after);
   const cancel=await record("cancel",maker,ix.cancel,[maker]);
-  compareOrderLockSnapshots(cancel.before,cancel.after,"cancel","ask",undefined,sequence);
+  compareOrderLockSnapshots(cancel.before,cancel.after,"cancel","ask",undefined,sequence,0);
   // Withdrawal is only valid if the remaining unlocked free base is sufficient.
   const withdrawal=await record("withdraw",maker,ix.withdraw,[maker]);
   compareMakerSnapshots(withdrawal.before,withdrawal.after,"withdraw","base",c.withdrawBaseAtoms);
