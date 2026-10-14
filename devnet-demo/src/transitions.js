@@ -43,6 +43,14 @@ export function compareMakerSnapshots(before,after,action,asset,amount){
   return {action,delta,checked:true,verifiedVaultTransfers:true,verifiedCustodyTotals:true};
 }
 
+export function quoteForBaseAtPrice(baseQty,priceX64){
+ const base=BigInt(baseQty),price=BigInt(priceX64),q64=1n<<64n;
+ if(base<=0n||base>=(1n<<64n)||price<=0n||price>=(1n<<128n))throw Error("Invalid bid quantity/price");
+ const quote=(base*price+q64-1n)/q64;
+ if(quote<=0n||quote>=(1n<<64n))throw Error("Bid quote obligation out of range");
+ return quote;
+}
+
 export function compareOrderLockSnapshots(before,after,action,side,expectedAmount,expectedSequence){
   if(!["place","cancel"].includes(action)||!["ask","bid"].includes(side))
     throw Error("Expected place/cancel and ask/bid");
@@ -105,12 +113,18 @@ export function compareOrderLockSnapshots(before,after,action,side,expectedAmoun
        BigInt(before.custodyState[field])!==BigInt(after.custodyState[field]))
       throw Error("Order lock/cancel unexpectedly changed custody totals");
   }
+  if(before.bookOrders||after.bookOrders){
+    for(const snapshot of [before,after]){
+      if(!snapshot.bookOrders||!Number.isSafeInteger(snapshot.bookSlot)||snapshot.bookSlot!==snapshot.slot)
+        throw Error("Book/collateral snapshot must use a single RPC context slot");
+    }
+  }
   let orderIdentityChecked=false;
   if(expectedSequence!==undefined&&before.bookOrders?.[side]&&after.bookOrders?.[side]){
     const detail=verifyOwnedOrderTransition(before.bookOrders[side],after.bookOrders[side],
       action,expectedSequence,before.maker,Number(after.bookOrders[side].find(x=>x.sequence===String(expectedSequence))?.pageIndex ?? before.bookOrders[side].find(x=>x.sequence===String(expectedSequence))?.pageIndex));
-    if(action==="cancel"&&side==="ask"&&BigInt(detail.order.baseQty)!==actual)
-      throw Error("Canceled ask remaining quantity does not match released collateral");
+    const required=side==="ask"?BigInt(detail.order.baseQty):quoteForBaseAtPrice(detail.order.baseQty,detail.order.priceX64);
+    if(required!==actual)throw Error("Order quantity/price does not match exact collateral movement");
     orderIdentityChecked=true;
   }
   return {action,side,amountAtoms:actual.toString(),
