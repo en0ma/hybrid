@@ -601,7 +601,7 @@ async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
         .unwrap();
     let head = AskPage::decode_from(&head.data).unwrap();
     assert_eq!(head.len(), 1);
-    assert_eq!(head.links(), PageLinks::new(0, None, None));
+    assert_eq!(head.links(), PageLinks::new(0, None, Some(1)));
     assert_eq!(head.as_slice()[0].sequence, 2);
     assert_eq!(head.as_slice()[0].base_qty, 175);
 
@@ -613,7 +613,7 @@ async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
         .unwrap();
     let owners = AskOwnerPage::decode_from(&owners.data).unwrap();
     assert_eq!(owners.len(), 1);
-    assert_eq!(owners.links(), PageLinks::new(0, None, None));
+    assert_eq!(owners.links(), PageLinks::new(0, None, Some(1)));
     let maker_b = context
         .banks_client
         .get_account(f.maker_b_balance)
@@ -633,7 +633,7 @@ async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
         .unwrap();
     let retired = AskPage::decode_from(&retired.data).unwrap();
     assert_eq!(retired.len(), 0);
-    assert_eq!(retired.links(), PageLinks::new(1, None, None));
+    assert_eq!(retired.links(), PageLinks::new(1, Some(0), None));
 
     let retired_owners = context
         .banks_client
@@ -643,7 +643,7 @@ async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
         .unwrap();
     let retired_owners = AskOwnerPage::decode_from(&retired_owners.data).unwrap();
     assert_eq!(retired_owners.len(), 0);
-    assert_eq!(retired_owners.links(), PageLinks::new(1, None, None));
+    assert_eq!(retired_owners.links(), PageLinks::new(1, Some(0), None));
 
     let quote = context
         .banks_client
@@ -683,7 +683,7 @@ async fn linked_buy_then_legacy_buy_consumes_compacted_head_with_real_tokens() {
         .unwrap()
         .unwrap();
     let head = AskPage::decode_from(&head.data).unwrap();
-    assert_eq!(head.links(), PageLinks::new(0, None, None));
+    assert_eq!(head.links(), PageLinks::new(0, None, Some(1)));\n    // Unlink the empty tail explicitly before using the legacy head-only ABI.\n    let unlink = linked_maker_ix(&f, 32, 0, None, &[]);\n    let hash = context.get_new_latest_blockhash().await.unwrap();\n    let tx = Transaction::new_signed_with_payer(\n        &[unlink],\n        Some(&context.payer.pubkey()),\n        &[&context.payer, &f.market_signer],\n        hash,\n    );\n    context.banks_client.process_transaction(tx).await.unwrap();
     assert_eq!(head.len(), 1);
     assert_eq!(head.as_slice()[0].base_qty, 50);
 
@@ -795,7 +795,7 @@ async fn detached_buy_page_closes_to_market_and_recreates_canonical_tail() {
     );
     context.banks_client.process_transaction(tx).await.unwrap();
 
-    let before = context
+    // The tail stays linked after a partial fill; unlink it under the market\n    // signing authority before reclaiming the detached account.\n    let unlink = linked_maker_ix(&f, 32, 0, None, &[]);\n    let hash = context.get_new_latest_blockhash().await.unwrap();\n    let tx = Transaction::new_signed_with_payer(\n        &[unlink],\n        Some(&context.payer.pubkey()),\n        &[&context.payer, &f.market_signer],\n        hash,\n    );\n    context.banks_client.process_transaction(tx).await.unwrap();\n\n    let before = context
         .banks_client
         .get_account(f.market)
         .await
