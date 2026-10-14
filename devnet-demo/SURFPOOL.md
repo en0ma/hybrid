@@ -122,3 +122,7 @@ Run `HYBRID_CLUSTER=surfpool npm run check:fixture` from `devnet-demo` before at
 ## Receipt linkage to placed sequence
 
 After capturing the market's `nextSequence` **before** the isolated placement, set `HYBRID_EXPECTED_SEQUENCE` to that decimal sequence and run `verify:receipts` with either the three or six confirmed transaction signatures. The receipt checker now decodes the canceled sequence from opcode 31 and requires an exact match to the expected order sequence, as well as a matching placement side/page. The JSON result includes `orderReceiptLink.receiptSequenceLinked` when this check ran. If the variable is unset, the receipt command retains its weaker validation and emits an explicit warning; it does **not** claim verified order identity. This comparison assumes the expected sequence was independently obtained from a legitimate pre-placement market snapshot, and by itself does not prove that the sequence was originally inserted, still funded, or correctly settled.
+
+## Isolated Hybrid calls in each receipt
+
+The receipt verifier now requires exactly one **top-level Hybrid instruction** per lifecycle transaction. A transaction containing the expected stage opcode alongside another Hybrid instruction fails, rather than being mistaken for an isolated stage. Unrelated system/SPL instructions are still allowed. This does not currently inspect Hybrid invocations nested within CPI inner instructions; independent state snapshots and signed transaction analysis remain necessary for a complete execution claim.
