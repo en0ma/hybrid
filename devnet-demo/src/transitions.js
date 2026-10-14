@@ -51,7 +51,7 @@ export function quoteForBaseAtPrice(baseQty,priceX64){
  return quote;
 }
 
-export function compareOrderLockSnapshots(before,after,action,side,expectedAmount,expectedSequence){
+export function compareOrderLockSnapshots(before,after,action,side,expectedAmount,expectedSequence,expectedPageIndex){
   if(!["place","cancel"].includes(action)||!["ask","bid"].includes(side))
     throw Error("Expected place/cancel and ask/bid");
   if(before.cluster!==after.cluster||before.rpc!==after.rpc||
@@ -125,7 +125,8 @@ export function compareOrderLockSnapshots(before,after,action,side,expectedAmoun
     throw Error("Selected-side book evidence missing; order identity cannot be verified");
   if(expectedSequence!==undefined&&before.bookOrders?.[side]&&after.bookOrders?.[side]){
     const detail=verifyOwnedOrderTransition(before.bookOrders[side],after.bookOrders[side],
-      action,expectedSequence,before.maker,Number(after.bookOrders[side].find(x=>x.sequence===String(expectedSequence))?.pageIndex ?? before.bookOrders[side].find(x=>x.sequence===String(expectedSequence))?.pageIndex));
+      action,expectedSequence,before.maker,expectedPageIndex===undefined?
+       Number(after.bookOrders[side].find(x=>x.sequence===String(expectedSequence))?.pageIndex ?? before.bookOrders[side].find(x=>x.sequence===String(expectedSequence))?.pageIndex):expectedPageIndex);
     const required=side==="ask"?BigInt(detail.order.baseQty):quoteForBaseAtPrice(detail.order.baseQty,detail.order.priceX64);
     if(required!==actual)throw Error("Order quantity/price does not match exact collateral movement");
     orderIdentityChecked=true;
