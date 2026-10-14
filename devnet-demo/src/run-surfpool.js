@@ -60,6 +60,13 @@ async function main(){
   report.signatures=evidence.stages.map(s=>({stage:s.stage,signature:s.signature,slot:s.slot}));
  }catch(error){
   report.error=error.message;
+  // Preserve any chain-submitted signatures even when a child stage fails.
+  try{
+   const partial=JSON.parse(await readFile(env.HYBRID_EVIDENCE_FILE,"utf8"));
+   if(Array.isArray(partial.stages))
+    report.partialStages=partial.stages.map(x=>({stage:x.stage,status:x.status||"unknown",
+     signature:x.signature||null,slot:x.slot??null}));
+  }catch{/* No lifecycle journal was written (for example provisioning failed). */}
   process.exitCode=1;
  }finally{
   report.finishedAt=new Date().toISOString();
