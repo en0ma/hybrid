@@ -7,10 +7,9 @@ permissions:
 
 jobs:
   six-stage-funded-lifecycle:
-    # Deliberately opt-in: requires a trusted machine with Surfpool, Solana CLI,
-    # SBF-capable Cargo, and the pinned-ID program deployment key or deployment.
-    runs-on: [self-hosted, linux, surfpool]
-    timeout-minutes: 25
+    # Opt-in, disposable GitHub-hosted VM: no custom runner or program secret.
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
     env:
       HYBRID_CLUSTER: surfpool
       SOLANA_RPC_URL: http://127.0.0.1:8899
@@ -21,19 +20,38 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-      - name: Verify local execution tools
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: devnet-demo/package-lock.json
+      - name: Install Solana SBF toolchain
+        run: |
+          set -euo pipefail
+          curl -fsSL https://release.anza.xyz/stable/install -o /tmp/agave-installer.sh
+          sh /tmp/agave-installer.sh
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Install Surfpool
+        run: |
+          set -euo pipefail
+          curl -fsSL https://run.surfpool.run/ -o /tmp/surfpool-installer.sh
+          bash /tmp/surfpool-installer.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Verify SBF and Surfpool commands
         run: |
           set -euo pipefail
           node --version
           cargo --version
+          cargo build-sbf --help > /dev/null
           surfpool --version
       - name: Install fixture runner dependencies
         run: npm ci
       - name: Start isolated Surfpool runtime
         run: |
           set -euo pipefail
-          # Must not share fixture state with other jobs on this self-hosted runner.
-          surfpool start --offline --ci --no-deploy > surfpool.log 2>&1 &
+          # Disposable VM: no keys or ledger state survive the workflow.
+          NO_DNA=1 surfpool start --offline --ci --no-deploy > surfpool.log 2>&1 &
           echo $! > surfpool.pid
           for i in $(seq 1 40); do
             if curl -fsS -X POST -H 'content-type: application/json' \
