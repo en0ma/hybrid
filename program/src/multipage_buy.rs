@@ -177,17 +177,9 @@ pub(super) fn process_multipage_buy(
             .settle_ask(fill.base_qty, fill.quote_qty)
             .map_err(|_| ProgramError::InsufficientFunds)?;
     }
-    let (mut next_pages, mut next_sidecars, removed) =
+    let (next_pages, next_sidecars, removed) =
         hybrid_state::multipage_ask::apply_linked_ask_fills(&pages, &sidecars, fills)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-    // Linked maker place/cancel (opcodes 30/31) address a fixed two-page chain.
-    // Compaction can retire page 1 even for a partial fill, which would make
-    // the maker's subsequent cancellation impossible. Keep the empty tail
-    // linked for the two-page ABI; the generic state compactor remains free
-    // to retire trailing pages for callers without this fixed-page contract.
-    if count == 2 && next_pages.len() == 1 {
-        restore_two_page_maker_chain(&mut next_pages, &mut next_sidecars);
-    }
     market.ask_count = market
         .ask_count
         .checked_sub(u32::try_from(removed).map_err(|_| ProgramError::InvalidAccountData)?)
@@ -226,47 +218,6 @@ pub(super) fn process_multipage_buy(
         store_maker_balance(account, state)?;
     }
     store_custody(custody_account, &custody)
-}
-
-#[inline(never)]
-fn restore_two_page_maker_chain(
-    pages: &mut Vec<hybrid_state::AskPage>,
-    sidecars: &mut Vec<hybrid_state::AskOwnerPage>,
-) {
-    let head = hybrid_state::PageLinks::new(0, None, Some(1));
-    let tail = hybrid_state::PageLinks::new(1, Some(0), None);
-    pages[0].set_links(head);
-    sidecars[0].set_links(head);
-    let mut empty_tail = hybrid_state::AskPage::default();
-    let mut empty_owners = hybrid_state::AskOwnerPage::default();
-    empty_tail.set_links(tail);
-    empty_owners.set_links(tail);
-    pages.push(empty_tail);
-    sidecars.push(empty_owners);
-}
-
-#[cfg(test)]
-mod linked_maker_tests {
-    use super::*;
-    #[test]
-    fn a_partially_filled_two_page_book_keeps_the_empty_tail_linked() {
-        let mut pages = vec![hybrid_state::AskPage::default()];
-        let mut owners = vec![hybrid_state::AskOwnerPage::default()];
-        restore_two_page_maker_chain(&mut pages, &mut owners);
-        assert_eq!(pages.len(), 2);
-        assert_eq!(owners.len(), 2);
-        assert_eq!(
-            pages[0].links(),
-            hybrid_state::PageLinks::new(0, None, Some(1))
-        );
-        assert_eq!(
-            pages[1].links(),
-            hybrid_state::PageLinks::new(1, Some(0), None)
-        );
-        assert_eq!(owners[0].links(), pages[0].links());
-        assert_eq!(owners[1].links(), pages[1].links());
-        hybrid_state::validate_ask_chain(&pages).unwrap();
-    }
 }
 
 /// Isolate large page/owner-page encode temporaries from the settlement
