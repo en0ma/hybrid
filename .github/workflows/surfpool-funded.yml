@@ -57,7 +57,8 @@ jobs:
           const evidence=JSON.parse(readFileSync(d+"lifecycle-evidence.json"));
           const receipts=JSON.parse(readFileSync(d+"verified-receipts.json"));
           if(!run.deployed||!run.provisioned||!run.lifecycleCompleted||!run.receiptsVerified||
-            !evidence.completed||!evidence.tradeSettlement?.verified||
+            !evidence.completed||!evidence.finalAudit?.verified||
+            !evidence.tradeSettlement?.verified||
             !evidence.tradeSettlement?.partialBookFillVerified||
             evidence.stages?.length!==6||receipts.report?.length!==6||
             receipts.orderReceiptLink?.receiptSequenceLinked!==true||
