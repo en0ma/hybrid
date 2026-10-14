@@ -16,3 +16,14 @@ test("rejects forged vault, custody, maker and absent fills",()=>{
  assert.throws(()=>verifyAskTradeSettlement(pre,{...post,makerState:{...post.makerState,freeQuote:"19"}}),/maker/);
  assert.throws(()=>verifyAskTradeSettlement(pre,{...post,takerBalances:{base:"0",quote:"980"}}),/positive/);
 });
+
+test("partial filled ask ties on-chain book reduction to exact taker base tokens",()=>{
+ const order={sequence:"1",owner:"owner",pageIndex:0,priceX64:"18446744073709551616",
+  sqrtPriceX64:"18446744073709551616",baseQty:"100"};
+ const a={...pre,bookOrders:{ask:[order],bid:[]}};
+ const b={...post,bookOrders:{ask:[{...order,baseQty:"80"}],bid:[]}};
+ assert.equal(verifyAskTradeSettlement(a,b).partialBookFillVerified,true);
+ assert.throws(()=>verifyAskTradeSettlement(a,{...b,bookOrders:{ask:[{...order,baseQty:"81"}],bid:[]}}),/book quantity/);
+ assert.throws(()=>verifyAskTradeSettlement(a,{...b,bookOrders:{ask:[{...order,owner:"attacker",baseQty:"80"}],bid:[]}}),/identity/);
+ assert.throws(()=>verifyAskTradeSettlement(a,{...b,bookOrders:{ask:[],bid:[]}}),/partially fill/);
+});
