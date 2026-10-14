@@ -93,10 +93,6 @@ if(custodyState){
     }else{
       verifyClassicMint(a.data,decimals);
     }
-    if(false){
-      row.valid=false;
-      row.error="SPL mint owner, layout, initialization or decimals mismatch";
-    }
     row.decimals=a?.data[44];
     return row;
   });
