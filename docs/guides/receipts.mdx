@@ -19,10 +19,10 @@ A confirmed signature is necessary but not enough. The local funded run addition
 cd devnet-demo
 npm run run:surfpool
 # The runner writes evidence into .surfpool-fixture/
-npm run verify:receipts
+cat .surfpool-fixture/verified-receipts.json
 ```
 
-The standalone verifier needs the fixture / receipt context created by the runner; consult `devnet-demo/src/verify-receipts.js` for inputs before calling it in another environment.
+`run:surfpool` executes the receipt verifier as part of the lifecycle. To verify arbitrary existing transactions separately, invoke `npm run verify:receipts -- <PLACE_SIGNATURE> <TRADE_SIGNATURE> <CANCEL_SIGNATURE>` with exactly three chronological transaction signatures (or the script's supported six-signature variant).
 
 ## Safe CI artifacts
 

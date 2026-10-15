@@ -18,6 +18,7 @@ function visit(x){
 visit(config.navigation);
 if(!allowed.size)throw Error("No pages declared in Mintlify navigation");
 const missing=[...allowed].filter(p=>!existsSync(join(root,p+".mdx")));
+if(!config.background?.color?.light||!config.background?.color?.dark)throw Error("Mintlify background.color needs light and dark values");
 if(missing.length)throw Error("Missing Mintlify pages: "+missing.join(", "));
 const links=[];
 for(const p of allowed){

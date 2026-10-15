@@ -8,8 +8,10 @@
     "dark": "#5EEAD4"
   },
   "background": {
-    "light": "#FFFFFF",
-    "dark": "#0B1220"
+    "color": {
+      "light": "#FFFFFF",
+      "dark": "#0B1220"
+    }
   },
   "favicon": "/assets/favicon.svg",
   "navigation": {
@@ -48,13 +50,15 @@
             "pages": [
               "architecture/overview",
               "architecture/accounts",
-              "architecture/instructions"
+              "architecture/instructions",
+              "architecture/account-reference"
             ]
           },
           {
             "group": "Developer guides",
             "icon": "terminal",
             "pages": [
+              "guides/first-trade",
               "guides/wallet-smoke",
               "guides/receipts"
             ]

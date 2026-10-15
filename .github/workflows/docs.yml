@@ -23,3 +23,9 @@ jobs:
           node-version: "22"
       - name: Validate Mintlify pages and internal links
         run: node docs/scripts/check-docs.mjs
+      - name: Mintlify schema, pages and MDX validation
+        working-directory: docs
+        run: npx --yes mint@latest validate
+      - name: Mintlify broken links
+        working-directory: docs
+        run: npx --yes mint@latest broken-links
