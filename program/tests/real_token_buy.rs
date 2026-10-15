@@ -683,7 +683,17 @@ async fn linked_buy_then_legacy_buy_consumes_compacted_head_with_real_tokens() {
         .unwrap()
         .unwrap();
     let head = AskPage::decode_from(&head.data).unwrap();
-    assert_eq!(head.links(), PageLinks::new(0, None, Some(1)));\n    // Unlink the empty tail explicitly before using the legacy head-only ABI.\n    let unlink = linked_maker_ix(&f, 32, 0, None, &[]);\n    let hash = context.get_new_latest_blockhash().await.unwrap();\n    let tx = Transaction::new_signed_with_payer(\n        &[unlink],\n        Some(&context.payer.pubkey()),\n        &[&context.payer, &f.market_signer],\n        hash,\n    );\n    context.banks_client.process_transaction(tx).await.unwrap();
+    assert_eq!(head.links(), PageLinks::new(0, None, Some(1)));
+    // Unlink the empty tail explicitly before using the legacy head-only ABI.
+    let unlink = linked_maker_ix(&f, 32, 0, None, &[]);
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[unlink],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.market_signer],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
     assert_eq!(head.len(), 1);
     assert_eq!(head.as_slice()[0].base_qty, 50);
 
@@ -795,7 +805,19 @@ async fn detached_buy_page_closes_to_market_and_recreates_canonical_tail() {
     );
     context.banks_client.process_transaction(tx).await.unwrap();
 
-    // The tail stays linked after a partial fill; unlink it under the market\n    // signing authority before reclaiming the detached account.\n    let unlink = linked_maker_ix(&f, 32, 0, None, &[]);\n    let hash = context.get_new_latest_blockhash().await.unwrap();\n    let tx = Transaction::new_signed_with_payer(\n        &[unlink],\n        Some(&context.payer.pubkey()),\n        &[&context.payer, &f.market_signer],\n        hash,\n    );\n    context.banks_client.process_transaction(tx).await.unwrap();\n\n    let before = context
+    // The tail stays linked after a partial fill; unlink it under the market
+    // signing authority before reclaiming the detached account.
+    let unlink = linked_maker_ix(&f, 32, 0, None, &[]);
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[unlink],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.market_signer],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    let before = context
         .banks_client
         .get_account(f.market)
         .await
