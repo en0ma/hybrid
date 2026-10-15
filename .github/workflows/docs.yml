@@ -23,18 +23,7 @@ jobs:
           node-version: "22"
       - name: Validate Mintlify pages and internal links
         run: node docs/scripts/check-docs.mjs
-      - name: Stage isolated Mintlify documentation root
-        run: |
-          mkdir -p "$RUNNER_TEMP/hybrid-mintlify"
-          cp -a docs/. "$RUNNER_TEMP/hybrid-mintlify/"
-          # Mintlify locates the Git root when collecting MDX; create a fresh
-          # content-only repository to prevent scanning unrelated milestones.
-          git -C "$RUNNER_TEMP/hybrid-mintlify" init --quiet
-      - name: Mintlify schema, pages and MDX validation
-        working-directory: ${{ runner.temp }}/hybrid-mintlify
-        env:
-          GITHUB_WORKSPACE: ${{ runner.temp }}/hybrid-mintlify
-        run: npx --yes mintlify@latest validate
-      - name: Mintlify broken links
-        working-directory: ${{ runner.temp }}/hybrid-mintlify
-        run: npx --yes mintlify@latest broken-links
+      - name: Install MDX compiler
+        run: npm install --no-save --prefix docs @mdx-js/mdx@3.1.1
+      - name: Compile all published MDX pages
+        run: node docs/scripts/validate-mdx.mjs
