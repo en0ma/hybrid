@@ -1,0 +1,34 @@
+---
+title: "Glossary"
+description: "Common vocabulary for traders, market makers and integrators."
+icon: "book-a"
+---
+
+# Protocol vocabulary
+
+| Term | Meaning |
+| --- | --- |
+| **Market** | A Hybrid state instance connecting a base/quote pair, books and custody. |
+| **Base / quote** | Assets priced against one another; quantities and amounts are stored as raw integer atoms. |
+| **Ask / bid** | An offer to sell base / buy base, respectively. |
+| **Maker / taker** | Maker supplies a resting order; taker executes against available orders. |
+| **Active liquidity** | Explicit orders with price, remaining quantity and time-priority sequence. |
+| **Passive liquidity** | Price/liquidity state represented without an individual explicit order for each unit. |
+| **Q64** | Unsigned fixed-point encoding for price or sqrt price using 64 fractional bits. |
+| **Order sequence** | Monotonic value identifying time priority and supporting cancellation. |
+| **Order page** | Bounded storage for sorted ask or bid entries. |
+| **Owner sidecar** | Parallel maker-identity account for entries in an order page. |
+| **Linked pages** | Canonically ordered page chain with link metadata and bounded traversal. |
+| **Custody PDA** | Program-owned market accounting state identifying vaults, mints and totals. |
+| **Vault authority PDA** | Program-derived signing authority controlling custody SPL Token accounts. |
+| **Maker balance PDA** | Free and locked base/quote collateral associated with a maker in a market. |
+| **Free collateral** | Credited tokens eligible for locking or withdrawal. |
+| **Locked collateral** | Tokens reserved for resting orders and unavailable for immediate withdrawal. |
+| **Exact-in / exact-out** | Execution bounded by fixed input or requested output and corresponding slippage constraint. |
+| **Fill plan** | Deterministic selection of affected orders and token quantities. |
+| **Settlement** | Token transfers plus updates to order state and maker balances. |
+| **Receipt** | RPC evidence of an executed transaction; a receipt alone is not a complete settlement audit. |
+| **SBF** | Solana executable program binary target. |
+| **Surfpool** | Local testing runtime used by the reproducible funded integration runner. |
+
+For byte layouts see [account reference](/architecture/account-reference).

@@ -6,6 +6,19 @@ Hybrid combines explicit price-time-prioritized limit orders with a deterministi
 
 > **Status:** The complete six-stage, funded **local Surfpool** maker/taker lifecycle has been verified with six signed receipts, a partial fill audit and final balance reconciliation. This is **not** a claim of public-devnet or mainnet deployment readiness.
 
+## Why Hybrid
+
+Hybrid is built for markets that need **explicit price-time execution**, deterministic fill accounting and program-enforced maker collateral—not just a black-box swap quote. The architecture combines a conventional active limit-order book with compressed passive pricing primitives, and separates execution planning, persistent state and settlement into independently testable components.
+
+| For | Benefit |
+| --- | --- |
+| **Traders** | Exact-in/out constraints, visible resting orders and verifiable token settlement |
+| **Market makers** | Inventory-aware collateral locks, partial-fill accounting and cancellation controls |
+| **Protocol designers** | Reusable Rust engine/state/settlement boundaries and deterministic testing |
+| **DEX operators** | A Solana-native executable, documented account graph and reproducible lifecycle audit |
+
+See **[Why Hybrid](./docs/start/why-hybrid.mdx)**, **[For traders](./docs/audiences/traders.mdx)**, **[For market makers](./docs/audiences/market-makers.mdx)**, and **[For DEX teams](./docs/audiences/dex-teams.mdx)**.
+
 ## Architecture
 
 ![Hybrid system architecture, from wallet to SBF execution, order state and SPL vaults](docs/assets/diagrams/architecture.svg)
@@ -28,6 +41,12 @@ Hybrid combines two liquidity models:
 ![Hybrid collateral custody and settlement flow](docs/assets/diagrams/custody.svg)
 
 [Edit the custody architecture diagram in Excalidraw](docs/assets/diagrams/custody.excalidraw).
+
+## A complete trading lifecycle
+
+![Hybrid protocol lifecycle — editable Excalidraw](docs/assets/diagrams/lifecycle.svg)
+
+[Edit the lifecycle diagram](docs/assets/diagrams/lifecycle.excalidraw) · [Market launch guide](./docs/deployment/launch-market.mdx) · [Operational runbook](./docs/deployment/operator-runbook.mdx)
 
 ## 📚 Developer documentation
 

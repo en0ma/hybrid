@@ -1,0 +1,39 @@
+---
+title: "Execution invariants"
+description: "Solvency, authorization, determinism and state integrity."
+icon: "shield-check"
+---
+
+# What must always remain true
+
+Hybrid is intended to support deterministic order execution and collateral-backed settlement. Its key invariants span the engine, persistent state and SPL Token custody.
+
+## Conservation and collateral
+
+1. Maker available + reserved assets cannot be arbitrarily created by order mutation.
+2. An ask must reserve its base inventory; a bid reserves its quote obligation.
+3. Fills must use the canonical execution plan and debit only available locked inventory.
+4. Unfilled cancellation releases reserve to the same maker's free balance.
+5. Only free assets can be withdrawn.
+6. Custody totals and token vault balances must remain reconcilable.
+
+## Order integrity
+
+- Book ordering respects side-specific price priority and insertion sequence.
+- Ownership sidecars stay parallel to their price/quantity entries across compaction.
+- Linked page traversal is bounded, canonical and cycle-free.
+- An order cannot be filled past its remaining quantity.
+- Slippage protection is checked on-chain for exact-in/out requests.
+
+## Account and authority integrity
+
+- Market-bound PDAs are derived and validated.
+- Every signer is authenticated, including maker ownership for mutation.
+- SPL token vault authority and mint identity are checked before movements.
+- Programs reject unsupported account arrangements and unsupported settlement paths.
+
+## Evidence
+
+CI contains deterministic Rust unit/integration tests, SBF tests, fuzz targets, compute-unit guardrails, and a funded integration flow with transaction receipts and a final accounting audit.
+
+[Testing suite](/operations/testing-and-security) · [Trust boundaries](/protocol/trust-boundaries)

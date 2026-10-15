@@ -1,0 +1,29 @@
+---
+title: "For protocol designers"
+description: "Component boundaries, extension points and invariants for protocol engineering."
+icon: "boxes"
+---
+
+# Design on explicit boundaries
+
+The implementation splits deterministic quote planning (`crates/engine`), fixed account data and page linking (`crates/state`), maker collateral / settlement checks (`crates/settlement`), and Solana account validation / token CPI (`program`).
+
+![Hybrid execution architecture](/assets/diagrams/architecture.svg)
+
+## Where to extend
+
+| Design objective | Surface | Required verification |
+| --- | --- | --- |
+| Alternate quote logic | Engine | Deterministic amount and fill-plan tests |
+| New state layout | State | Round trips, versioning and byte budgets |
+| Settlement semantics | Settlement + program | Balance conservation, authorization and SBF integration |
+| Additional order-page capacity | State + program linked pages | Link traversal, sidecar alignment and compute-unit bounds |
+| New client UX | Wallet harness / adapters | Simulation, signer account validation and receipt audits |
+
+## Protocol invariants
+
+An order's owner mapping must follow its entry through insertion, fill and compaction. Locked collateral cannot be spent twice. SPL custody must reconcile to accounted assets. A failed transaction cannot leave a partial mutation. Prefer **fail-closed instruction boundaries** to silently routing through unsupported settlement branches.
+
+<Info>These are architectural design guidelines, not a claim that arbitrary extensions are already implemented. Any ABI change needs executable tests and account-layout compatibility analysis.</Info>
+
+[Assurance invariants](/protocol/invariants) · [Trust boundaries](/protocol/trust-boundaries)

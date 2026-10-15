@@ -1,0 +1,28 @@
+---
+title: "Trust boundaries"
+description: "Security ownership from wallet signature to post-trade audit."
+icon: "fingerprint"
+---
+
+# Trust is enforced at different layers
+
+![Client, program and settlement architecture](/assets/diagrams/architecture.svg)
+
+| Layer | Responsibility | Do not assume |
+| --- | --- | --- |
+| Client / wallet | Build transaction, select network, approve signing | User-provided accounts are valid |
+| RPC | Submit/simulate and return account / transaction data | Simulation guarantees inclusion |
+| Hybrid SBF program | Validate signers, accounts, page chains and collateral rules | External client validation replaces on-chain checks |
+| SPL Token program | Move base / quote under valid token authority | A successful CPI proves market-level accounting |
+| Receipt verifier | Read signatures, sequence, token changes and final state | A signature alone proves settlement correctness |
+| Operator | Deploy, provision, observe, manage keys and respond to incidents | A program-specific pause or recovery instruction exists without proof |
+
+## Key boundaries
+
+A maker cannot mutate another maker's orders merely by providing the right page. A taker cannot bypass slippage checks by changing wallet UI parameters. Vault token authority must be derived and signed correctly. Markets require compatible initialized sidecars and custody state.
+
+## Deployment safety
+
+Protocol teams should define explicit authorization and upgrade procedures and secure deployment credentials. Keep program upgrades, market administration, user trading and automated monitoring as separate responsibilities.
+
+[Operator runbook](/deployment/operator-runbook) · [Invariants](/protocol/invariants)

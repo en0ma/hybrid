@@ -25,6 +25,8 @@
             "icon": "compass",
             "pages": [
               "index",
+              "start/why-hybrid",
+              "start/glossary",
               "start/quickstart",
               "start/status"
             ]
@@ -36,6 +38,16 @@
               "concepts/hybrid-liquidity",
               "concepts/orders-and-matching",
               "concepts/collateral"
+            ]
+          },
+          {
+            "group": "Use Hybrid",
+            "icon": "users",
+            "pages": [
+              "audiences/traders",
+              "audiences/market-makers",
+              "audiences/protocol-designers",
+              "audiences/dex-teams"
             ]
           }
         ]
@@ -74,7 +86,9 @@
             "icon": "server",
             "pages": [
               "deployment/local-surfpool",
-              "deployment/public-devnet"
+              "deployment/public-devnet",
+              "deployment/launch-market",
+              "deployment/operator-runbook"
             ]
           },
           {
@@ -83,6 +97,14 @@
             "pages": [
               "operations/testing-and-security",
               "contributing"
+            ]
+          },
+          {
+            "group": "Protocol assurance",
+            "icon": "shield",
+            "pages": [
+              "protocol/invariants",
+              "protocol/trust-boundaries"
             ]
           }
         ]

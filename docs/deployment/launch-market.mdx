@@ -1,0 +1,35 @@
+---
+title: "Launch a Hybrid market"
+description: "Provisioning checklist for a new trading pair and environment."
+icon: "rocket"
+---
+
+# Market provisioning
+
+Use this checklist when bringing up a new Hybrid trading pair. The exact operator instructions depend on deployed program authority and supported initialization utilities; do not substitute example account addresses for actual deployment state.
+
+![Market deployment and execution topology](/assets/diagrams/architecture.svg)
+
+## Before provisioning
+
+- Choose base and quote SPL Token mints and verify decimals.
+- Establish the program deployment ID and signed upgrade/administration key policy.
+- Identify the market authority, payer and maker/taker test keys.
+- Plan the vault and page rent budget.
+- Capture a reproducible deployment manifest (network, program, market, token mints, vaults and sidecars).
+
+## Provisioning order
+
+<Steps>
+<Step title="Deploy executable">Build SBF and deploy through authorized Solana tooling; confirm executable owner and bytecode hash.</Step>
+<Step title="Initialize market state">Create a market account and canonical book page storage with correct program ownership.</Step>
+<Step title="Activate custody">Initialize custody (opcode 11) and the SPL base and quote vaults under the vault-authority PDA.</Step>
+<Step title="Bind owner sidecars">Create and bind page-0 sidecars; initialize and link further pages where needed.</Step>
+<Step title="Onboard maker">Initialize maker balance, fund tokens and perform a collateralized placement and cancellation.</Step>
+<Step title="Execute a trade">Use a separate taker signer with the correct SPL Token accounts and settlement bounds.</Step>
+<Step title="Audit">Compare order pages, balances, custody totals and signed transaction receipts.</Step>
+</Steps>
+
+<Warning>The Surfpool runner provisions disposable accounts through a local-test interface. Public-network deployment and market initialization require real key authority and supported operators. Validate every address and instruction against the program ABI.</Warning>
+
+[Account model](/architecture/accounts) · [Devnet guide](/deployment/public-devnet) · [Operator runbook](/deployment/operator-runbook)
