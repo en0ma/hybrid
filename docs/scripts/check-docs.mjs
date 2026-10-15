@@ -26,6 +26,11 @@ for(const p of allowed){
  if(!/^title: /m.test(text.split("---")[1]))throw Error(p+" missing page title");
  for(const m of text.matchAll(/(?:href=|\]\()\"?(\/[a-z][a-z0-9/-]*)/g))links.push({page:p,target:m[1]});
 }
-const broken=links.filter(({target})=>!allowed.has(target.slice(1)));
+const broken=links.filter(({target})=>!target.startsWith("/assets/")&&!allowed.has(target.slice(1)));
+const assetLinks=links.filter(({target})=>target.startsWith("/assets/"));
+for(const {target} of assetLinks){
+ if(!existsSync(join(root,target.slice(1)+".svg"))&& !existsSync(join(root,target.slice(1))))
+  throw Error("Missing diagram asset: "+target);
+}
 if(broken.length)throw Error("Undeclared internal links: "+JSON.stringify(broken));
 console.log("Mintlify documentation verified:",allowed.size,"pages;",links.length,"internal links;",groups.length,"navigation groups.");
