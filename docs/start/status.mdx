@@ -1,0 +1,30 @@
+---
+title: "Project status & limitations"
+description: "What the repository proves today, and what remains outside the tested scope."
+icon: "gauge"
+---
+
+## Verified today
+
+<Card title="Funded local lifecycle" icon="check-circle">
+The hosted GitHub Actions Surfpool workflow built the SBF ELF, deployed the pinned program ID, provisioned a local market and confirmed **init → deposit → place → trade → cancel → withdraw**. It also validated six independent transaction receipts, linked order sequence and settlement/accounting evidence.
+</Card>
+
+The relevant work was merged in [PR #59](https://github.com/en0ma/hybrid/pull/59), with tracking [issue #60](https://github.com/en0ma/hybrid/issues/60) completed.
+
+## Supported versus planned
+
+| Capability | Status |
+| --- | --- |
+| Rust deterministic quote / fill planning | Implemented and tested |
+| Collateralized maker balance, deposit / withdraw | Implemented |
+| Bounded active ask / bid matching | Implemented |
+| Linked-book page validation and maker operations | Implemented |
+| Funded local Surfpool lifecycle and receipt audit | **Verified in CI** |
+| Browser wallet smoke harness | Available for configured devnet markets |
+| Public devnet end-to-end deployment proof | **Not established by the local Surfpool result** |
+| Mainnet readiness / external security audit | **Not claimed** |
+
+<Warning>
+The repository contains passive-liquidity components and instructions, but **do not infer that every passive execution path is production-ready**. The funded integration evidence specifically demonstrates the active-order lifecycle.
+</Warning>

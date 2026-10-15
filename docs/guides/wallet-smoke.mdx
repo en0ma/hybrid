@@ -1,0 +1,49 @@
+---
+title: "Wallet smoke guide"
+description: "Connect a browser wallet and safely exercise an initialized Hybrid market."
+icon: "wallet"
+---
+
+## Prerequisites
+
+A browser wallet configured for **Solana devnet**, devnet SOL for transaction fees, and a **previously deployed and funded** compatible Hybrid market with custody, vaults, linked page accounts and sidecars.
+
+<Warning>
+The browser UI **does not deploy or provision a market**. A completed local Surfpool CI fixture does not automatically create public devnet accounts.
+</Warning>
+
+## Start the interface
+
+```bash
+cd devnet-demo
+npm install
+npm run dev
+```
+
+## Derive canonical addresses
+
+```bash
+npm run print:manifest -- <MARKET_PUBKEY> [MAKER_PUBKEY]
+```
+
+Supply the actual page-0 owner sidecars and vault addresses from your deployment operator. Do not synthesize these sidecar keys.
+
+## Check market readiness
+
+```bash
+npm run check:readiness -- <MARKET> <ASK_OWNER> <BID_OWNER> <BASE_VAULT> <QUOTE_VAULT>
+```
+
+This is a **read-only preflight**: it checks account ownership, program executable status and relevant custody fields. It does not guarantee sufficient liquidity or prove end-to-end funding.
+
+## Exercise wallet operations
+
+<Steps>
+<Step title="Inspect">Connect wallet and refresh a market / vault account snapshot.</Step>
+<Step title="Prepare maker">Initialize maker balance if necessary; deposit SPL collateral before placing an order.</Step>
+<Step title="Submit">Preview/simulate; approve the intended place or trade instruction in the wallet.</Step>
+<Step title="Cancel and withdraw">Cancel unfilled quantity and withdraw only free collateral.</Step>
+<Step title="Verify">Capture real signatures and run the receipt verifier.</Step>
+</Steps>
+
+Use [receipt verification](/guides/receipts) to distinguish a successful transaction from proven settlement.

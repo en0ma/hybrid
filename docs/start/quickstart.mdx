@@ -1,0 +1,56 @@
+---
+title: "Quickstart"
+description: "Clone Hybrid, run its tests and start the wallet smoke interface."
+icon: "rocket"
+---
+
+## Prerequisites
+
+- Git and a recent Rust toolchain with Cargo
+- Node.js **22** for parity with the funded CI runner (the wallet harness specifies Node.js 20+)
+- Anza/Solana CLI with `cargo build-sbf` for building the on-chain program
+- Surfpool CLI when running the isolated funded flow
+
+## Clone and inspect
+
+```bash
+git clone https://github.com/en0ma/hybrid.git
+cd hybrid
+cargo test --workspace
+```
+
+## Run the browser developer harness
+
+```bash
+cd devnet-demo
+npm install
+npm test
+npm run build
+npm run dev
+```
+
+Visit the local URL reported by Vite. The app is a **developer smoke interface**, not a hosted exchange or automatic market provisioner. It requires a supported wallet, compatible initialized market and funded SPL token accounts.
+
+## Run a real local lifecycle
+
+<CodeGroup>
+```bash Linux / macOS
+# Terminal 1, repository root
+NO_DNA=1 surfpool start --offline --ci --no-deploy
+```
+
+```bash Linux / macOS
+# Terminal 2, repository root
+cd devnet-demo
+export HYBRID_CLUSTER=surfpool
+export SOLANA_RPC_URL=http://127.0.0.1:8899
+export HYBRID_FIXTURE_DIR=./.surfpool-fixture
+npm run run:surfpool
+```
+</CodeGroup>
+
+<Warning>
+The local runner provisions **disposable test keys and accounts**. Do not reuse test keypairs, funded fixture files or local cheatcodes with real assets or public networks.
+</Warning>
+
+Follow the [Surfpool deployment guide](/deployment/local-surfpool) for evidence artifacts and success criteria.

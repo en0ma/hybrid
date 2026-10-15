@@ -1,0 +1,29 @@
+---
+title: "Contributing"
+description: "How to make changes to the protocol and its developer documentation."
+icon: "git-pull-request"
+---
+
+## Code contributions
+
+1. Fork or branch from the main repository.
+2. Keep instruction and state changes accompanied by Rust and SBF regression tests.
+3. Run `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace`.
+4. Where program state or trading behavior changes, run the funded local Surfpool workflow and inspect independent receipts.
+5. Open a focused pull request with behavior, ABI/security implications and evidence links.
+
+## Documentation contributions
+
+Mintlify sources live under `docs/`, with a **single** `docs/docs.json` navigation source and MDX pages.
+
+```bash
+npm install -g mint
+cd docs
+mint dev
+```
+
+Verify internal page links, screenshots (if added), accuracy against implementation and dark/light readability before submitting changes.
+
+<Info>
+The docs use the Mintlify **Palm** theme, teal accents and Lucide-style icons. Keep terminology precise: local Surfpool proof, public devnet configuration and mainnet production status are distinct.
+</Info>

@@ -1,0 +1,28 @@
+---
+title: "Orders & matching"
+description: "Price-time priority, canonical fill plans and linked book pages."
+icon: "arrow-left-right"
+---
+
+## Price-time ordered books
+
+An **ask** offers base tokens for quote tokens. A **bid** offers quote tokens for base tokens. Ask pages sort by ascending price and then sequence; bid pages sort by descending price and then sequence.
+
+Each active order has a corresponding maker identity in a **parallel owner sidecar**. Keeping price-time entries separate from ownership metadata reduces the amount of data needed by read-mostly matcher operations.
+
+## Canonical fill plans
+
+The matching engine produces bounded active-fill records that identify the order index, base filled and quote consumed. Settlement uses the plan to update collateral and book entries without choosing a different set of makers.
+
+<Steps>
+<Step title="Quote">Compute a deterministic active fill plan under exact-in or exact-out constraints.</Step>
+<Step title="Validate">Verify account identity, owner sidecars, collateral and slippage bounds.</Step>
+<Step title="Settle">Transfer SPL tokens and credit/debit maker balances atomically.</Step>
+<Step title="Compact">Decrease partial quantities; remove fully filled orders; preserve the maker-compatible linked-page layout when required.</Step>
+</Steps>
+
+## Linked page ABI
+
+The program supports canonical **page 0 and page 1** linked maker operations, plus bounded multipage execution paths. A partially filled two-page book can retain an empty linked tail until explicitly unlinked by the market signer. Do not assume an empty tail is automatically detached.
+
+See [Accounts and PDAs](/architecture/accounts) and [Instruction map](/architecture/instructions).

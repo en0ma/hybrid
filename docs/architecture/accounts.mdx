@@ -1,0 +1,34 @@
+---
+title: "Accounts & PDAs"
+description: "Canonical market, custody, page and maker-balance account relationships."
+icon: "database"
+---
+
+## Canonical addresses
+
+| Account | Derivation or source |
+| --- | --- |
+| Hybrid program | `US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx` |
+| Custody state | `["custody", market]` |
+| Vault authority | `["vault-authority", market]` |
+| Maker balance | `["maker-balance", market, maker]` |
+| Ask page | `["ask-page", market, page_index_le_u32]` |
+| Bid page | `["bid-page", market, page_index_le_u32]` |
+| Page-1 ask owner sidecar | `["ask-owner-page", market, page_index_le_u32]` |
+| Page-1 bid owner sidecar | `["bid-owner-page", market, page_index_le_u32]` |
+
+<Warning>
+**Page-0 owner sidecars are not safely derived from a guessed PDA seed.** They are separately created Hybrid-owned accounts bound to the market header during initialization. Use authenticated deployment metadata or on-chain state to obtain them.
+</Warning>
+
+## Selected fixed account sizes
+
+- Market header: **128 bytes**
+- Custody state: **192 bytes**
+- Maker balance (current custody account): **112 bytes**
+
+The repository enforces persistent account-layout byte budgets in CI. For field-level encoding and compatibility rules, consult `crates/state/src/lib.rs` and `program/src/lib.rs`.
+
+## Ownership checks
+
+Clients and programs must confirm the program ID, SPL Token program, vault mint/authority, market ownership and page/sidecar parallelism. Correct PDA derivation alone is not a complete security check.
