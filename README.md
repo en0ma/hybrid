@@ -8,7 +8,7 @@ Hybrid combines explicit price-time-prioritized limit orders with a deterministi
 
 ## Architecture
 
-![Hybrid protocol architecture — Excalidraw](docs/assets/diagrams/architecture.svg)
+![Hybrid system architecture, from wallet to SBF execution, order state and SPL vaults](docs/assets/diagrams/architecture.svg)
 
 [Edit the architecture diagram in Excalidraw](docs/assets/diagrams/architecture.excalidraw).
 
@@ -19,11 +19,15 @@ Hybrid combines two liquidity models:
 - **Active CLOB orders:** priced, time-prioritized maker asks and bids with explicit quantities and parallel ownership sidecars.
 - **Compressed passive liquidity:** a liquidity/price boundary model used by the deterministic quote engine; execution coverage depends on the selected instruction path.
 
-![Hybrid liquidity models — Excalidraw](docs/assets/diagrams/liquidity.svg)
+![Hybrid active and passive liquidity architecture](docs/assets/diagrams/liquidity.svg)
 
 [Edit the liquidity diagram in Excalidraw](docs/assets/diagrams/liquidity.excalidraw).
 
 **Custody and execution:** Makers deposit SPL tokens into market vaults, then lock collateral when placing orders. Taker fills consume locked balances, atomically transfer SPL tokens, and credit the received asset to maker balances. Cancel releases the unfilled reserve; only free collateral is withdrawable.
+
+![Hybrid collateral custody and settlement flow](docs/assets/diagrams/custody.svg)
+
+[Edit the custody architecture diagram in Excalidraw](docs/assets/diagrams/custody.excalidraw).
 
 ## 📚 Developer documentation
 
