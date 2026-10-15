@@ -29,7 +29,9 @@ jobs:
           cp -a docs/. "$RUNNER_TEMP/hybrid-mintlify/"
       - name: Mintlify schema, pages and MDX validation
         working-directory: ${{ runner.temp }}/hybrid-mintlify
-        run: npx --yes mint@latest validate
+        env:
+          GITHUB_WORKSPACE: ${{ runner.temp }}/hybrid-mintlify
+        run: npx --yes mintlify@latest validate
       - name: Mintlify broken links
         working-directory: ${{ runner.temp }}/hybrid-mintlify
-        run: npx --yes mint@latest broken-links
+        run: npx --yes mintlify@latest broken-links
