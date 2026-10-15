@@ -23,9 +23,13 @@ jobs:
           node-version: "22"
       - name: Validate Mintlify pages and internal links
         run: node docs/scripts/check-docs.mjs
+      - name: Stage isolated Mintlify documentation root
+        run: |
+          mkdir -p "$RUNNER_TEMP/hybrid-mintlify"
+          cp -a docs/. "$RUNNER_TEMP/hybrid-mintlify/"
       - name: Mintlify schema, pages and MDX validation
-        working-directory: docs
+        working-directory: ${{ runner.temp }}/hybrid-mintlify
         run: npx --yes mint@latest validate
       - name: Mintlify broken links
-        working-directory: docs
+        working-directory: ${{ runner.temp }}/hybrid-mintlify
         run: npx --yes mint@latest broken-links
