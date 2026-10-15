@@ -20,17 +20,9 @@ hybrid/
 
 ## Execution boundary
 
-```mermaid
-flowchart TD
-  Wallet["Wallet / developer harness"] --> RPC["Solana RPC"]
-  RPC --> Program["Hybrid SBF program"]
-  Program --> Engine["hybrid-engine"]
-  Program --> State["hybrid-state"]
-  Program --> Settle["hybrid-settlement"]
-  Program --> Vaults["SPL Token vaults"]
-  State --> Pages["Ask / bid pages and maker sidecars"]
-  Settle --> Balances["Maker free / locked balances"]
-```
+![Hybrid architecture diagram](/assets/diagrams/architecture.svg)
+
+The diagram source is [editable Excalidraw](https://github.com/en0ma/hybrid/blob/docs/mintlify-developer-portal/docs/assets/diagrams/architecture.excalidraw).
 
 ## Trust boundaries
 

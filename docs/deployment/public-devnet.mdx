@@ -1,12 +1,12 @@
 ---
-title: "Public devnet prerequisites"
-description: "Requirements for a real public devnet test without confusing it with local Surfpool."
+title: "Deploy to Solana devnet"
+description: "Configure and deploy a compatible Hybrid program and test market on Solana devnet."
 icon: "cloud"
 ---
 
-## Public devnet is a separate milestone
+## Deploy and configure a devnet market
 
-The browser harness accepts public **Solana devnet**, but it requires an already deployed compatible program and correctly initialized accounts. The repository's local Surfpool integration evidence does **not** establish that a public devnet market has been provisioned.
+The wallet harness supports Solana **devnet** and expects a deployed compatible program, a provisioned market, and funded SPL token accounts.
 
 ## Operator checklist
 
@@ -20,7 +20,7 @@ The browser harness accepts public **Solana devnet**, but it requires an already
 - Independently verify receipts, order state, token balances and final settlement.
 
 <Warning>
-Do not attempt to deploy under the pinned program ID unless you **control its authorized deployment/upgrade key**. A local Surfpool keyless upload does not confer that authority on public devnet.
+Do not attempt to deploy under the pinned program ID unless you **control its authorized deployment/upgrade key**. Use the appropriate deployment and upgrade authority for the target network.
 </Warning>
 
 For the supported browser-side workflow, follow the [Wallet smoke guide](/guides/wallet-smoke). Deployment orchestration and funding remain operator responsibilities.

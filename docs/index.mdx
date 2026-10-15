@@ -8,10 +8,6 @@ icon: "house"
 
 A Solana-native trading protocol combining **explicit central-limit-order-book orders** with a **compressed passive-liquidity architecture**.
 
-<Note>
-**Current proof point:** The full six-stage funded lifecycle is verified on an isolated **local Surfpool runtime**. This is not a claim of a production mainnet deployment or a completed public-devnet beta.
-</Note>
-
 <Columns cols={2}>
   <Card title="Get started" icon="rocket" href="/start/quickstart">
     Explore the workspace and run the local developer harness.
@@ -27,6 +23,12 @@ A Solana-native trading protocol combining **explicit central-limit-order-book o
   </Card>
 </Columns>
 
+## How Hybrid works
+
+![Hybrid liquidity model](/assets/diagrams/liquidity.svg)
+
+See [liquidity concepts](/concepts/hybrid-liquidity) and [architecture](/architecture/overview). These diagrams are editable in Excalidraw via the source files in the repository.
+
 ## The lifecycle
 
 <Steps>
@@ -37,10 +39,6 @@ A Solana-native trading protocol combining **explicit central-limit-order-book o
   <Step title="Cancel">Release remaining locked collateral on unfilled quantity.</Step>
   <Step title="Withdraw">Transfer eligible free collateral back to the maker.</Step>
 </Steps>
-
-<Info>
-The [funded Surfpool CI workflow](https://github.com/en0ma/hybrid/actions/workflows/surfpool-funded.yml) checks six distinct confirmed signatures, receipt linkage, trade settlement, partial book fill, and final balance reconciliation.
-</Info>
 
 ## Where to go next
 

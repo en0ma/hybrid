@@ -6,6 +6,25 @@ Hybrid combines explicit price-time-prioritized limit orders with a deterministi
 
 > **Status:** The complete six-stage, funded **local Surfpool** maker/taker lifecycle has been verified with six signed receipts, a partial fill audit and final balance reconciliation. This is **not** a claim of public-devnet or mainnet deployment readiness.
 
+## Architecture
+
+![Hybrid protocol architecture — Excalidraw](docs/assets/diagrams/architecture.svg)
+
+[Edit the architecture diagram in Excalidraw](docs/assets/diagrams/architecture.excalidraw).
+
+## Core concepts
+
+Hybrid combines two liquidity models:
+
+- **Active CLOB orders:** priced, time-prioritized maker asks and bids with explicit quantities and parallel ownership sidecars.
+- **Compressed passive liquidity:** a liquidity/price boundary model used by the deterministic quote engine; execution coverage depends on the selected instruction path.
+
+![Hybrid liquidity models — Excalidraw](docs/assets/diagrams/liquidity.svg)
+
+[Edit the liquidity diagram in Excalidraw](docs/assets/diagrams/liquidity.excalidraw).
+
+**Custody and execution:** Makers deposit SPL tokens into market vaults, then lock collateral when placing orders. Taker fills consume locked balances, atomically transfer SPL tokens, and credit the received asset to maker balances. Cancel releases the unfilled reserve; only free collateral is withdrawable.
+
 ## 📚 Developer documentation
 
 **[Explore the Mintlify documentation source →](./docs/index.mdx)**
@@ -21,9 +40,9 @@ Hybrid combines explicit price-time-prioritized limit orders with a deterministi
 | [Public devnet prerequisites](./docs/deployment/public-devnet.mdx) | What a genuine network deployment requires |
 | [Security and testing](./docs/operations/testing-and-security.mdx) | Verification gates, boundaries and invariants |
 
-**Design:** Mintlify Palm, teal-on-slate accents and icon-led navigation. The portal is stored in `docs/`; connect a Mintlify project to publish it. No hosted docs URL is claimed yet.
+**Docs:** Mintlify Palm design with teal-on-slate accents, rich icons, and editable Excalidraw diagrams. The site source lives in `docs/`.
 
-## Architecture at a glance
+## Repository layout
 
 ```text
 crates/engine      deterministic execution plans and quotes

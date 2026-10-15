@@ -4,7 +4,7 @@ description: "Build and run the actual Hybrid SBF executable against disposable 
 icon: "flask-conical"
 ---
 
-## Local-only deployment
+## Reproducible deployment
 
 The repository's `run:surfpool` script builds the program, uploads the executable to local Surfpool under the pinned ID, provisions disposable accounts, runs six signed lifecycle stages and audits the results.
 
@@ -29,9 +29,5 @@ HYBRID_CLUSTER=surfpool SOLANA_RPC_URL=http://127.0.0.1:8899 \
 ## Success criteria
 
 The GitHub workflow requires `deployed`, `provisioned`, `lifecycleCompleted`, `receiptsVerified`, `finalAudit.verified`, `tradeSettlement.verified` and `partialBookFillVerified`, with six unique signatures.
-
-<Warning>
-The local `surfnet_writeProgram` and `surfnet_setAccount` paths are **Surfpool-only cheatcodes** and are not procedures for public Solana RPC deployment. Do not mistake this deployment for a network-wide public devnet release.
-</Warning>
 
 See [Public devnet prerequisites](/deployment/public-devnet) for what differs.

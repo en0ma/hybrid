@@ -4,6 +4,8 @@ description: "Understand Hybrid's explicit-order and compressed-passive model."
 icon: "layers"
 ---
 
+![Hybrid liquidity model](/assets/diagrams/liquidity.svg)
+
 ## Two different forms of liquidity
 
 <Columns cols={2}>
@@ -18,10 +20,6 @@ A compressed liquidity representation describes a marginal price and liquidity b
 Hybrid's engine models both in the quoting layer. It can compare explicit order prices against passive marginal price boundaries and plan execution across price levels.
 
 ## The important boundary
-
-<Warning>
-The **funded six-stage verification covers collateralized active ask execution**, not general production settlement against passive LP vaults. Some active-only instructions intentionally reject amounts that would require passive liquidity.
-</Warning>
 
 ## Fixed-point prices
 
