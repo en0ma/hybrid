@@ -1,0 +1,25 @@
+name: Documentation checks
+on:
+  pull_request:
+    paths:
+      - "README.md"
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+  push:
+    branches: [main]
+    paths:
+      - "README.md"
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+permissions:
+  contents: read
+jobs:
+  docs-navigation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate Mintlify pages and internal links
+        run: node docs/scripts/check-docs.mjs
