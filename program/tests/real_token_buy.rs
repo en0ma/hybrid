@@ -601,7 +601,7 @@ async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
         .unwrap();
     let head = AskPage::decode_from(&head.data).unwrap();
     assert_eq!(head.len(), 1);
-    assert_eq!(head.links(), PageLinks::new(0, None, None));
+    assert_eq!(head.links(), PageLinks::new(0, None, Some(1)));
     assert_eq!(head.as_slice()[0].sequence, 2);
     assert_eq!(head.as_slice()[0].base_qty, 175);
 
@@ -613,7 +613,7 @@ async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
         .unwrap();
     let owners = AskOwnerPage::decode_from(&owners.data).unwrap();
     assert_eq!(owners.len(), 1);
-    assert_eq!(owners.links(), PageLinks::new(0, None, None));
+    assert_eq!(owners.links(), PageLinks::new(0, None, Some(1)));
     let maker_b = context
         .banks_client
         .get_account(f.maker_b_balance)
@@ -633,7 +633,7 @@ async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
         .unwrap();
     let retired = AskPage::decode_from(&retired.data).unwrap();
     assert_eq!(retired.len(), 0);
-    assert_eq!(retired.links(), PageLinks::new(1, None, None));
+    assert_eq!(retired.links(), PageLinks::new(1, Some(0), None));
 
     let retired_owners = context
         .banks_client
@@ -643,7 +643,7 @@ async fn linked_exact_out_buy_retires_page_and_preserves_owner_mapping() {
         .unwrap();
     let retired_owners = AskOwnerPage::decode_from(&retired_owners.data).unwrap();
     assert_eq!(retired_owners.len(), 0);
-    assert_eq!(retired_owners.links(), PageLinks::new(1, None, None));
+    assert_eq!(retired_owners.links(), PageLinks::new(1, Some(0), None));
 
     let quote = context
         .banks_client
@@ -666,6 +666,7 @@ async fn linked_buy_then_legacy_buy_consumes_compacted_head_with_real_tokens() {
     let f = fixture_with_linked(true);
     let first = multipage_buy_instruction(&f, 23, 250, 250, true);
     let second = swap_instruction(&f, 15, 50, 50);
+    let unlink = linked_maker_ix(&f, 32, 0, None, &[]);
     let mut context = f.program_test.start_with_context().await;
     let hash = context.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
@@ -683,7 +684,16 @@ async fn linked_buy_then_legacy_buy_consumes_compacted_head_with_real_tokens() {
         .unwrap()
         .unwrap();
     let head = AskPage::decode_from(&head.data).unwrap();
-    assert_eq!(head.links(), PageLinks::new(0, None, None));
+    assert_eq!(head.links(), PageLinks::new(0, None, Some(1)));
+    // Unlink the empty tail explicitly before using the legacy head-only ABI.
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[unlink],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.market_signer],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
     assert_eq!(head.len(), 1);
     assert_eq!(head.as_slice()[0].base_qty, 50);
 
@@ -774,6 +784,7 @@ async fn detached_buy_page_closes_to_market_and_recreates_canonical_tail() {
     let swap = multipage_buy_instruction(&f, 23, 250, 250, true);
     let close = lifecycle_close_instruction(&f);
     let mut recreate = lifecycle_recreate_instruction(&f, Pubkey::default());
+    let unlink = linked_maker_ix(&f, 32, 0, None, &[]);
     let mut context = f.program_test.start_with_context().await;
 
     // A live linked tail must never be eligible for rent recovery.
@@ -791,6 +802,17 @@ async fn detached_buy_page_closes_to_market_and_recreates_canonical_tail() {
         &[swap],
         Some(&context.payer.pubkey()),
         &[&context.payer, &f.taker],
+        hash,
+    );
+    context.banks_client.process_transaction(tx).await.unwrap();
+
+    // The tail stays linked after a partial fill; unlink it under the market
+    // signing authority before reclaiming the detached account.
+    let hash = context.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[unlink],
+        Some(&context.payer.pubkey()),
+        &[&context.payer, &f.market_signer],
         hash,
     );
     context.banks_client.process_transaction(tx).await.unwrap();

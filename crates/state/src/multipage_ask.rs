@@ -51,7 +51,15 @@ pub fn apply_linked_ask_fills(
 
     let mut result_pages = Vec::with_capacity(pages.len());
     let mut result_sidecars = Vec::with_capacity(pages.len());
-    let surviving_page_count = entries.len().max(1).div_ceil(ASKS_PER_PAGE);
+    // Preserve an already linked two-page maker ABI after partial fills.
+    // Shrinking to a single page would prevent opcode 31 cancellation.
+    // Constructing both pages here also avoids copying large page structs
+    // into a second Vec during SBF execution.
+    let surviving_page_count = entries
+        .len()
+        .max(1)
+        .div_ceil(ASKS_PER_PAGE)
+        .max(if pages.len() == 2 { 2 } else { 1 });
     for index in 0..surviving_page_count {
         let mut page = AskPage::default();
         let mut owners = AskOwnerPage::default();
@@ -137,8 +145,11 @@ mod tests {
         assert_eq!(pages[0].entries[0].base_qty, 150);
         assert_eq!(pages[0].entries[0].sequence, 2);
         assert_eq!(owners[0].owners[0], [2; 32]);
-        assert_eq!(pages.len(), 1);
-        assert_eq!(owners.len(), 1);
+        assert_eq!(pages.len(), 2);
+        assert_eq!(owners.len(), 2);
+        assert_eq!(pages[0].links(), crate::PageLinks::new(0, None, Some(1)));
+        assert_eq!(pages[1].links(), crate::PageLinks::new(1, Some(0), None));
+        assert_eq!(pages[1].len(), 0);
     }
 
     #[test]

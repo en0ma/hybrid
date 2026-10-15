@@ -1,0 +1,106 @@
+name: Funded Surfpool lifecycle evidence
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/surfpool-funded.yml"
+      - "devnet-demo/src/**"
+      - "program/**"
+
+permissions:
+  contents: read
+
+jobs:
+  six-stage-funded-lifecycle:
+    # Opt-in, disposable GitHub-hosted VM: no custom runner or program secret.
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      HYBRID_CLUSTER: surfpool
+      SOLANA_RPC_URL: http://127.0.0.1:8899
+      HYBRID_FIXTURE_DIR: ./.surfpool-fixture
+    defaults:
+      run:
+        working-directory: devnet-demo
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Solana SBF toolchain
+        run: |
+          set -euo pipefail
+          curl -fsSL https://release.anza.xyz/stable/install -o /tmp/agave-installer.sh
+          sh /tmp/agave-installer.sh
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Install Surfpool
+        run: |
+          set -euo pipefail
+          curl -fsSL https://run.surfpool.run/ -o /tmp/surfpool-installer.sh
+          bash /tmp/surfpool-installer.sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Verify SBF and Surfpool commands
+        run: |
+          set -euo pipefail
+          node --version
+          cargo --version
+          cargo build-sbf --help > /dev/null
+          surfpool --version
+      - name: Install fixture runner dependencies
+        # This package does not commit package-lock.json; npm ci/cache require one.
+        run: npm install --no-save --no-audit --no-fund
+      - name: Start isolated Surfpool runtime
+        run: |
+          set -euo pipefail
+          # Disposable VM: no keys or ledger state survive the workflow.
+          NO_DNA=1 surfpool start --offline --ci --no-deploy > surfpool.log 2>&1 &
+          echo $! > surfpool.pid
+          for i in $(seq 1 40); do
+            if curl -fsS -X POST -H 'content-type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"getGenesisHash"}' \
+              "${SOLANA_RPC_URL}" | grep -q '"result"'; then exit 0; fi
+            sleep 2
+          done
+          cat surfpool.log
+          exit 1
+      - name: Execute keyless pinned-ID deployment and six-stage funded lifecycle
+        run: npm run run:surfpool
+      - name: Fail unless evidence proves six confirmed stages
+        run: |
+          node --input-type=module -e '
+          import {readFileSync} from "node:fs";
+          const d=".surfpool-fixture/";
+          const run=JSON.parse(readFileSync(d+"run-report.json"));
+          const evidence=JSON.parse(readFileSync(d+"lifecycle-evidence.json"));
+          const receipts=JSON.parse(readFileSync(d+"verified-receipts.json"));
+          if(!run.deployed||!run.provisioned||!run.lifecycleCompleted||!run.receiptsVerified||
+            !evidence.completed||!evidence.finalAudit?.verified||
+            !evidence.tradeSettlement?.verified||
+            !evidence.tradeSettlement?.partialBookFillVerified||
+            evidence.stages?.length!==6||receipts.report?.length!==6||
+            receipts.orderReceiptLink?.receiptSequenceLinked!==true||
+            new Set(evidence.stages.map(x=>x.signature)).size!==6)
+            throw Error("Funded Surfpool receipt verification incomplete");
+          console.log(JSON.stringify({market:evidence.market,stages:run.signatures,
+            tradeSettlement:evidence.tradeSettlement},null,2));
+          '
+      - name: Upload non-secret evidence on success or failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surfpool-funded-evidence-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            devnet-demo/.surfpool-fixture/run-report.json
+            devnet-demo/.surfpool-fixture/provision-evidence.json
+            devnet-demo/.surfpool-fixture/lifecycle-evidence.json
+            devnet-demo/.surfpool-fixture/verified-receipts.json
+            devnet-demo/surfpool.log
+          # Never upload .surfpool-fixture/*.json glob: it contains secret keypairs.
+      - name: Stop local runtime
+        if: always()
+        run: |
+          if [ -f surfpool.pid ]; then kill "$(cat surfpool.pid)" 2>/dev/null || true; fi

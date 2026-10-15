@@ -1,0 +1,30 @@
+{
+  "name": "hybrid-devnet-wallet-smoke",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "test": "node --test src/*.test.js",
+    "verify:receipts": "node src/verify-receipts.js",
+    "check:transition": "node src/check-transition.js",
+    "snapshot:maker": "node src/snapshot-maker.js",
+    "check:runtime": "node src/check-runtime.js",
+    "check:readiness": "node src/check-readiness.js",
+    "print:manifest": "node src/print-manifest.js",
+    "check:fixture": "node src/fixture-preflight.js",
+    "run:funded-lifecycle": "node src/funded-lifecycle.js",
+    "provision:surfpool": "node src/provision-surfpool.js",
+    "run:surfpool": "node src/run-surfpool.js",
+    "deploy:surfpool": "node src/deploy-surfpool.js"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.4",
+    "buffer": "^6.0.3",
+    "bs58": "^6.0.0"
+  },
+  "devDependencies": {
+    "vite": "^6.3.0"
+  }
+}
