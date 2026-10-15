@@ -27,6 +27,9 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/hybrid-mintlify"
           cp -a docs/. "$RUNNER_TEMP/hybrid-mintlify/"
+          # Mintlify locates the Git root when collecting MDX; create a fresh
+          # content-only repository to prevent scanning unrelated milestones.
+          git -C "$RUNNER_TEMP/hybrid-mintlify" init --quiet
       - name: Mintlify schema, pages and MDX validation
         working-directory: ${{ runner.temp }}/hybrid-mintlify
         env:
