@@ -32,3 +32,15 @@ Input example:
 The RPC network, program deployment and market account must refer to the same environment. The `commit` field identifies the reviewed **source**, but the tool cannot authenticate that the deployed bytecode corresponds to that commit. Operators must separately pin the SDK package/integrity hash and verify deployment authority and program artifact.
 
 Snapshot outputs are **observations** and must not be passed to the workload runner as executed signatures. The actual Manifest execution adapter must use the official wrapper/core transaction ABI, create equivalent funded local-market and global-order setups, and independently validate finalized Solana receipts.
+
+## Manifest SDK maker-side transaction construction
+
+The initial maker-side instruction builder calls **real upstream Manifest SDK** methods: `ManifestClient.depositIx`, `placeOrderIx` with `OrderType.Limit`, and `cancelOrderIx`. It returns unsigned instructions for a separately controlled test harness and never marks them as executed. See `manifest-maker-instructions.mjs`.
+
+Manifest's wrapper-facing SDK uses floating-point token quantities. The builder accepts integer atoms and **rejects** amounts outside its conservative precision guard. A genuine benchmark must use identical atom-accurate amounts and price tick semantics in both protocols; where wrapper float conversion is insufficient, use Manifest's integer core ABI instead.
+
+It currently prepares only a single maker ask. No taker swap, receipt confirmation, market provisioning or independent token-audit logic is provided by this module. It must not be treated as the Manifest `run-workload` adapter yet.
+
+```bash
+node --test research/capital-efficiency/manifest-maker-instructions.test.mjs
+```
