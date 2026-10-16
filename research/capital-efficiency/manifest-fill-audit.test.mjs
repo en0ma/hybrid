@@ -1,0 +1,8 @@
+import test from "node:test";import assert from "node:assert/strict";import {auditManifestFill} from "./manifest-fill-audit.mjs";
+const bal=(accountIndex,mint,owner,amount)=>({accountIndex,mint,owner,uiTokenAmount:{amount:String(amount)}});
+const example=()=>({baseMint:"base",quoteMint:"quote",makerOwner:"maker",takerOwner:"taker",before:{market:"market",slot:5,asks:[{trader:"maker",baseAtoms:"100"}]},after:{market:"market",slot:7,asks:[{trader:"maker",baseAtoms:"60"}]},receipt:{slot:6,meta:{err:null,preTokenBalances:[bal(0,"base","maker",100),bal(1,"base","taker",0),bal(2,"quote","maker",0),bal(3,"quote","taker",100)],postTokenBalances:[bal(0,"base","maker",60),bal(1,"base","taker",40),bal(2,"quote","maker",20),bal(3,"quote","taker",80)]}}});
+test("requires actual maker ask reduction and balanced SPL transfers",()=>{const x=auditManifestFill(example());assert.equal(x.verified,true);assert.equal(x.filledBaseAtoms,"40")});
+test("rejects pure transfers with no maker fill",()=>{const x=example();x.after.asks=x.before.asks;assert.throws(()=>auditManifestFill(x),/no fill/)});
+test("rejects missing token counterpart in receipt",()=>{const x=example();x.receipt.meta.postTokenBalances[1].uiTokenAmount.amount="30";assert.throws(()=>auditManifestFill(x),/conservation failed/)});
+test("rejects token account creation without audited state proof",()=>{const x=example();x.receipt.meta.preTokenBalances.pop();assert.throws(()=>auditManifestFill(x),/created\/closed/)});
+test("rejects snapshots of different markets",()=>{const x=example();x.after.market="other";assert.throws(()=>auditManifestFill(x),/snapshots/)});

@@ -52,3 +52,13 @@ node --test research/capital-efficiency/manifest-maker-instructions.test.mjs
 ## Finality and receipt gate
 
 The local-only signed sender now waits for **finalized** confirmation after the initial confirmed inclusion, then queries an independently returned `getTransaction` receipt with `commitment: finalized`. It retries transient receipt indexing gaps and rejects finalized transaction errors, signature mismatches, unexpected program/market instructions or absent compute usage. This still does not authenticate token-account conservation or prove execution semantics; completed benchmark reports require separate before/after state audits.
+
+## Receipt-to-orderbook fill audit
+
+`manifest-fill-audit.mjs` provides a **read-only, fail-closed** cross-check between an executed Manifest transaction and two market snapshots. It demands an ask reduction for the maker and exactly conserved pre/post base and quote SPL balances on stable token-account indices. It rejects missing balances, changed owners, impossible token creation and unchanged maker orders.
+
+This is **partial audit evidence only**: an ask reduction may also come from cancellation, and transfers may be unrelated. A production-quality comparison must also authenticate the exact trade instruction, taker identity, fee-adjusted settlement, custody vault transitions, seat/global balances, and before/after state observations from the same transaction boundary. Never treat this helper alone as a verified Manifest fill.
+
+```sh
+node --test research/capital-efficiency/manifest-fill-audit.test.mjs
+```
