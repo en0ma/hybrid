@@ -120,3 +120,7 @@ Before/after SDK snapshots must retain the same source commit and deployed progr
 ### Fail-closed execution data sources
 
 Local fill orchestration refuses mismatched sender RPC endpoints, unpinned before-state provenance, and independent receipts lacking integer compute or fee figures. The snapshot callback is operator-supplied and **not** automatically proven to use the same RPC; operators must bind its connection to the sender and retain the raw snapshot evidence.
+
+## Local operator CLI (actual fill only with a funded fixture)
+
+Run `node research/capital-efficiency/manifest-local-fill-cli.mjs config.json ./private-fixture.mjs evidence.json`. `config.json` must specify `rpcUrl` (loopback HTTP), `programId`, `market`, `baseMint`, `quoteMint`, `taker`, and `makerOwner`. The gitignored operator-owned module exports async `buildFixture({config,connection,Transaction})`, returning `{payer,instruction,snapshotMarket,vaultAccounts}`. It must initialize an actual funded Manifest market and produce a valid core Swap instruction. The CLI requires an output evidence filename that does not exist, creates it mode `0600`, and reports `verified:false`. Never commit a signer, actual local private fixture, or claim CI mocks are funded execution data. This CLI does not provision a market and does not mean the benchmark was run.
