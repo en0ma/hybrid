@@ -72,3 +72,7 @@ The audit now explicitly rejects disappearances of entire resting orders, order 
 The initial attribution helper `manifest-swap-attribution.mjs` examines raw compiled Solana instruction indices and a finalized receipt signature, matching the Manifest program ID and the market account position from upstream's generated `Swap.ts` layout. **It explicitly returns `verified: false`**, as verifying the actual swap discriminator requires decoding the full base58 instruction payload, followed by validating taker signature and decoded swap parameters.
 
 Upstream source: `Bonasa-Tech/manifest/client/ts/src/manifest/instructions/Swap.ts`, whose generated instruction discriminator is 4, market account is second, payer/signer account is first. Do not use a matching program+market alone as proof that the trade executed.
+
+## Correlated Swap and settlement consistency
+
+Run `manifest-trade-correlation.mjs` on the **same finalized receipt** and before/after market snapshots to enforce both opcode attribution and conservative partial-fill/token conservation checks. The result intentionally retains `verified: false`: snapshots can include intervening transactions, and signer authorization, swap parameters, vault/seat accounting and trade price remain unaudited. The combined checker is **not** a real benchmark result.
