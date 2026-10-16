@@ -80,3 +80,7 @@ Run `manifest-trade-correlation.mjs` on the **same finalized receipt** and befor
 ### Swap payer signature authorization
 
 The opcode attribution path now interprets the Solana raw-message `header.numRequiredSignatures`, checks that it matches the receipt signature count, and requires the taker/payer account to be one of the transaction's signed static message keys. This establishes signer **membership as reported by finalized RPC**, not independent Ed25519 cryptographic validation or proof of fill causation.
+
+### Taker-side slippage bounds
+
+The correlated receipt checker now also computes taker-side integer SPL base gain and quote debit and compares them to the exact-out/exact-in Swap constraints: base gain must agree with the persistent maker ask reduction, quote spent cannot exceed the declared input amount, and exact-in minimum-base / exact-out base quantity checks continue to apply. These checks apply to the benchmark's isolated single-taker single-maker case only; complex multi-instruction/multi-vault or fee-bearing scenarios need an independent custody and token-flow reconstruction. No independent on-chain benchmark has been completed.

@@ -12,8 +12,17 @@ export function correlateManifestTrade({receipt,signature,programId,market,taker
  const params=instruction.swapParams;
  if(params.isBaseIn)throw Error("base-in Swap cannot be attributed to a maker ask base-out fill");
  const filled=BigInt(accounting.filledBaseAtoms),requestedOut=BigInt(params.outAtoms);
+ // Only count the taker's own existing SPL accounts, not protocol vaults.
+ // Every pair has already been checked for stable index, mint and owner.
+ const total=(rows,mint)=>rows.filter(r=>r.owner===taker&&r.mint===mint).reduce((n,r)=>n+BigInt(r.uiTokenAmount.amount),0n);
+ const pre=receipt.meta.preTokenBalances,post=receipt.meta.postTokenBalances;
+ const takerBaseGain=total(post,baseMint)-total(pre,baseMint);
+ const takerQuoteSpent=total(pre,quoteMint)-total(post,quoteMint);
+ if(takerBaseGain<=0n||takerQuoteSpent<=0n)throw Error("taker did not receive base and spend quote");
+ if(takerBaseGain!==filled)throw Error("taker base movement differs from maker resting ask reduction");
+ if(takerQuoteSpent>BigInt(params.inAtoms))throw Error("taker quote spend exceeds Swap maximum input");
  if(params.isExactIn){
   if(filled<requestedOut)throw Error("actual base fill below Swap minimum output");
  }else if(filled!==requestedOut)throw Error("actual base fill differs from exact-output Swap request");
- return {kind:"manifest-swap-and-partial-fill-correlated",verified:false,opcodeAuthenticated:true,tokenAndBookConsistencyChecked:true,slot:receipt.slot,signature,market,filledBaseAtoms:accounting.filledBaseAtoms,swapParams:params,quantityConstraintChecked:true,limitations:["Signer membership is RPC-reported, not independently cryptographically verified","No token-vault/seat conservation or realized-price proof","Snapshots may span intervening transactions; not causal proof of fill","Do not publish as completed benchmark evidence"]};
+ return {kind:"manifest-swap-and-partial-fill-correlated",verified:false,opcodeAuthenticated:true,tokenAndBookConsistencyChecked:true,slot:receipt.slot,signature,market,filledBaseAtoms:accounting.filledBaseAtoms,takerQuoteSpentAtoms:takerQuoteSpent.toString(),takerBaseReceivedAtoms:takerBaseGain.toString(),swapParams:params,quantityConstraintChecked:true,limitations:["Signer membership is RPC-reported, not independently cryptographically verified","No custody vault/seat verification, protocol fee accounting or comprehensive realized-price proof","Snapshots may span intervening transactions; not causal proof of fill","Do not publish as completed benchmark evidence"]};
 }

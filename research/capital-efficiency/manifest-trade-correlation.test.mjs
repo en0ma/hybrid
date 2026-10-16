@@ -7,3 +7,6 @@ test("rejects corrupted balance movement even with proper swap opcode",()=>{cons
 test("rejects unbracketed receipt",()=>{const x=make();x.after.slot=5;assert.throws(()=>correlateManifestTrade(x),/not bracketed/)});
 
 test("rejects exact-input Swap with too little maker base fill",()=>{const x=make();x.after.asks[0].baseAtoms="90";assert.throws(()=>correlateManifestTrade(x),/below Swap minimum output/)});
+
+test("rejects taker quote debit exceeding the requested Swap input cap",()=>{const x=make();x.receipt.meta.preTokenBalances[3].uiTokenAmount.amount="200";x.receipt.meta.postTokenBalances[3].uiTokenAmount.amount="100";x.receipt.meta.postTokenBalances[2].uiTokenAmount.amount="100";assert.throws(()=>correlateManifestTrade(x),/exceeds Swap maximum input/) });
+test("rejects fill quantity that does not match the taker's base gain",()=>{const x=make();x.receipt.meta.postTokenBalances[0].uiTokenAmount.amount="50";x.receipt.meta.postTokenBalances[1].uiTokenAmount.amount="50";assert.throws(()=>correlateManifestTrade(x),/taker base movement differs/) });
