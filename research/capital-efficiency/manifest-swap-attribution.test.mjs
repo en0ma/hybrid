@@ -1,5 +1,5 @@
 import test from "node:test";import assert from "node:assert/strict";import {inspectManifestSwapReceipt} from "./manifest-swap-attribution.mjs";
-const receipt=()=>({slot:9,meta:{err:null},transaction:{signatures:["sig"],message:{header:{numRequiredSignatures:1},accountKeys:["taker","program","market","base","quote","vaultA","vaultB","token"],instructions:[{programIdIndex:1,accounts:[0,2,3,4,5,6,7,7],data:"Jf"}]}}});
+const receipt=()=>({slot:9,meta:{err:null},transaction:{signatures:["sig"],message:{header:{numRequiredSignatures:1},accountKeys:["taker","program","market","base","quote","vaultA","vaultB","token"],instructions:[{programIdIndex:1,accounts:[0,2,3,4,5,6,7,7],data:"8X7A3KWMhXuw8gzQiizVPXRXER"}]}}});
 test("authenticates exact core Swap opcode while withholding settlement verification",()=>{const x=inspectManifestSwapReceipt({receipt:receipt(),signature:"sig",programId:"program",market:"market",taker:"taker"});assert.equal(x.verified,false);assert.equal(x.matchingSwaps,1);assert.equal(x.opcodeAuthenticated,true)});
 test("rejects fake signature",()=>assert.throws(()=>inspectManifestSwapReceipt({receipt:receipt(),signature:"wrong",programId:"program",market:"market"}),/signature mismatch/));
 

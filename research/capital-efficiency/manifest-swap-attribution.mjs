@@ -16,7 +16,7 @@ export function inspectManifestSwapReceipt({receipt,signature,programId,market,t
  const signedKeys=new Set(keys.slice(0,required));
  if(!signedKeys.has(taker))throw Error("Manifest Swap payer is not an authenticated transaction signer");
  const loaded=receipt.meta?.loadedAddresses;const accounts=[...keys,...(loaded?.writable??[]),...(loaded?.readonly??[])];
- let count=0;
+ let count=0,params=null;
  for(const ix of message.instructions){
   if(!Number.isSafeInteger(ix.programIdIndex)||ix.programIdIndex<0||ix.programIdIndex>=accounts.length)throw Error("malformed program index");
   if(accounts[ix.programIdIndex]!==programId)continue;
@@ -24,10 +24,14 @@ export function inspectManifestSwapReceipt({receipt,signature,programId,market,t
   const data=decodeBase58(ix.data);
   if(data[0]!==4)continue;
   if(ix.accounts.length<8||accounts[ix.accounts[1]]!==market||accounts[ix.accounts[0]]!==taker)throw Error("Manifest Swap market/payer mismatch");
-  // SwapParams must be nonempty; parsing full params is a separate required gate.
-  if(data.length<2)throw Error("empty Swap params");
+  // Generated SwapParams.ts: u64 inAtoms, u64 outAtoms, bool isBaseIn, bool isExactIn.
+  if(data.length!==19)throw Error("Manifest Swap payload must contain exactly 18 parameter bytes");
+  const view=new DataView(data.buffer,data.byteOffset,data.byteLength);
+  const inAtoms=view.getBigUint64(1,true),outAtoms=view.getBigUint64(9,true);
+  if(inAtoms===0n||outAtoms===0n||data[17]>1||data[18]>1)throw Error("invalid Manifest Swap quantities or bool flags");
+  params={inAtoms:inAtoms.toString(),outAtoms:outAtoms.toString(),isBaseIn:data[17]===1,isExactIn:data[18]===1};
   count++;
  }
  if(count!==1)throw Error("require exactly one authenticated direct Manifest core Swap instruction");
- return {verified:false,opcodeAuthenticated:true,signerHeaderAuthenticated:true,matchingSwaps:count,slot:receipt.slot,warning:"Instruction attributed, but SwapParams, cryptographic signature verification by RPC, custody transitions and fill causation are not yet verified"};
+ return {verified:false,opcodeAuthenticated:true,signerHeaderAuthenticated:true,matchingSwaps:count,swapParams:params,slot:receipt.slot,warning:"Instruction attributed, but cryptographic signature verification by RPC, custody transitions and fill causation are not yet verified"};
 }
