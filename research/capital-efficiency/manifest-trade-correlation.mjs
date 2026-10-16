@@ -1,8 +1,9 @@
 import {inspectManifestSwapReceipt} from "./manifest-swap-attribution.mjs";
 import {auditManifestFill} from "./manifest-fill-audit.mjs";
+import {auditManifestVaultFlows} from "./manifest-vault-flow-audit.mjs";
 // Correlates the same finalized receipt, program opcode and book/account deltas.
 // Not an execution-price proof: explicitly never returns verified:true.
-export function correlateManifestTrade({receipt,signature,programId,market,taker,baseMint,quoteMint,makerOwner,before,after}){
+export function correlateManifestTrade({receipt,signature,programId,market,taker,baseMint,quoteMint,makerOwner,before,after,vaultAccounts}){
  if(before?.market!==market||after?.market!==market)throw Error("market snapshot identity mismatch");
  if(!Number.isSafeInteger(before.slot)||!Number.isSafeInteger(after.slot)||!(before.slot<receipt?.slot&&receipt.slot<=after.slot))throw Error("receipt slot not bracketed by market snapshots");
  // An unrelated instruction in the same transaction can move tokens or mutate the
@@ -16,6 +17,9 @@ export function correlateManifestTrade({receipt,signature,programId,market,taker
  if(instruction.opcodeAuthenticated!==true||instruction.matchingSwaps!==1)throw Error("Manifest swap opcode not authenticated");
  const accounting=auditManifestFill({before,after,baseMint,quoteMint,makerOwner,takerOwner:taker,receipt});
  if(accounting.consistencyChecked!==true||accounting.verified!==false)throw Error("unexpected accounting proof state");
+ if(!vaultAccounts)throw Error("explicit Manifest vault and taker account indices required");
+ const vault=auditManifestVaultFlows({receipt,baseMint,quoteMint,...vaultAccounts});
+ if(vault.vaultFlowChecked!==true||vault.verified!==false)throw Error("unexpected vault proof state");
  const params=instruction.swapParams;
  if(params.isBaseIn)throw Error("base-in Swap cannot be attributed to a maker ask base-out fill");
  const filled=BigInt(accounting.filledBaseAtoms),requestedOut=BigInt(params.outAtoms);
@@ -27,9 +31,10 @@ export function correlateManifestTrade({receipt,signature,programId,market,taker
  const takerQuoteSpent=total(pre,quoteMint)-total(post,quoteMint);
  if(takerBaseGain<=0n||takerQuoteSpent<=0n)throw Error("taker did not receive base and spend quote");
  if(takerBaseGain!==filled)throw Error("taker base movement differs from maker resting ask reduction");
+ if(takerBaseGain!==BigInt(vault.baseAtomsReceived)||takerQuoteSpent!==BigInt(vault.quoteAtomsSpent))throw Error("vault flows disagree with taker account totals");
  if(takerQuoteSpent>BigInt(params.inAtoms))throw Error("taker quote spend exceeds Swap maximum input");
  if(params.isExactIn){
   if(filled<requestedOut)throw Error("actual base fill below Swap minimum output");
  }else if(filled!==requestedOut)throw Error("actual base fill differs from exact-output Swap request");
- return {kind:"manifest-swap-and-partial-fill-correlated",verified:false,opcodeAuthenticated:true,tokenAndBookConsistencyChecked:true,slot:receipt.slot,signature,market,filledBaseAtoms:accounting.filledBaseAtoms,takerQuoteSpentAtoms:takerQuoteSpent.toString(),takerBaseReceivedAtoms:takerBaseGain.toString(),swapParams:params,quantityConstraintChecked:true,isolatedTransactionChecked:true,limitations:["Signer membership is RPC-reported, not independently cryptographically verified","No custody vault/seat verification, protocol fee accounting or comprehensive realized-price proof","Snapshots may span intervening transactions; not causal proof of fill","Do not publish as completed benchmark evidence"]};
+ return {kind:"manifest-swap-and-partial-fill-correlated",verified:false,opcodeAuthenticated:true,tokenAndBookConsistencyChecked:true,slot:receipt.slot,signature,market,filledBaseAtoms:accounting.filledBaseAtoms,takerQuoteSpentAtoms:takerQuoteSpent.toString(),takerBaseReceivedAtoms:takerBaseGain.toString(),swapParams:params,quantityConstraintChecked:true,isolatedTransactionChecked:true,vaultFlowChecked:true,limitations:["Signer membership is RPC-reported, not independently cryptographically verified","No custody vault/seat verification, protocol fee accounting or comprehensive realized-price proof","Snapshots may span intervening transactions; not causal proof of fill","Do not publish as completed benchmark evidence"]};
 }

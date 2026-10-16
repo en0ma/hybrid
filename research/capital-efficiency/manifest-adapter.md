@@ -92,3 +92,7 @@ The combined Manifest correlation requires one non-ComputeBudget top-level instr
 ### Isolated Manifest vault/token flow gate
 
 `manifest-vault-flow-audit.mjs` checks four **explicit token-account indices** (taker base/quote and market base/quote vaults) against the same transaction's pre/post SPL balances. It requires stable identities, expected token direction, and exact atom conservation between each vault and taker. This strict model is limited to isolated, fee-free four-account swaps and intentionally rejects fee/extra-account flows pending a richer auditor; it does **not** verify market seats, order causality or executable provenance. Its result remains `verified: false`.
+
+### Correlated vault evidence required
+
+The correlated Swap audit now requires explicit four-account indices (`vaultAccounts`) and checks both base and quote vault movements against the taker's debit/credit. A mismatched or missing vault fails the combined audit. Market-seat balances, trade causality, fees, and binary/program deployment attestation are still outstanding. The result remains `verified: false`.
