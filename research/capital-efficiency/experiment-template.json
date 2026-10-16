@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "experiment": "two-market-maker-inventory",
+  "baseline": "per-market-locked",
+  "candidate": "shared-liquidity-proposal",
+  "manifestBaselineCommit": null,
+  "network": "surfpool",
+  "cases": [
+    {
+      "name": "one-maker-one-level",
+      "makers": 1,
+      "markets": 1,
+      "levels": 1
+    },
+    {
+      "name": "eight-maker-fanout",
+      "makers": 8,
+      "markets": 1,
+      "levels": 1
+    },
+    {
+      "name": "two-market-inventory",
+      "makers": 1,
+      "markets": 2,
+      "levels": 2
+    }
+  ],
+  "metrics": [
+    "computeUnits",
+    "transactionCount",
+    "accountMetas",
+    "rentBytes",
+    "inventoryUtilizationBps",
+    "fillPriceAtoms",
+    "vaultConservationVerified"
+  ],
+  "results": []
+}
