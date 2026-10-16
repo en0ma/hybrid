@@ -23,6 +23,12 @@ export async function runLocalManifestFill({rpcUrl,connection,payer,instruction,
      bytes[17]>1||bytes[18]>1||new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getBigUint64(1,true)===0n||
      new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getBigUint64(9,true)===0n)
   throw Error("local Manifest fill requires valid atom-safe core SwapParams");
+ // Bind the instruction's own account positions to the operator's declared
+ // custody accounts before signing, rather than trusting arbitrary indices.
+ if(!vaultAccounts||typeof vaultAccounts!=="object")throw Error("four explicit vault indices required before signing");
+ const bindingNames=["takerBaseIndex","takerQuoteIndex","baseVaultIndex","quoteVaultIndex"];
+ if(bindingNames.some((name,i)=>!Number.isSafeInteger(vaultAccounts[name])||vaultAccounts[name]<0))
+  throw Error("invalid custody account indices");
  const before=await snapshotMarket();
  if(before?.market!==market||before?.baseMint!==baseMint||before?.quoteMint!==quoteMint)throw Error("pre-trade market identity mismatch");
  if(!Number.isSafeInteger(before.slot)||before.slot<=0)throw Error("pre-trade market slot required");
