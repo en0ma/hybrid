@@ -33,6 +33,15 @@ export async function runLocalManifestFill({rpcUrl,connection,payer,instruction,
  if(before?.market!==market||before?.baseMint!==baseMint||before?.quoteMint!==quoteMint)throw Error("pre-trade market identity mismatch");
  if(!Number.isSafeInteger(before.slot)||before.slot<=0)throw Error("pre-trade market slot required");
  if(before.programId!==programId||!/^([a-f0-9]{40})$/i.test(before.commit??""))throw Error("pre-trade program identity and pinned source commit required");
+ const params=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+ const requestedBaseOut=params.getBigUint64(9,true);
+ if(bytes[17]!==0)throw Error("isolated maker ask benchmark requires quote-in/base-out Swap");
+ if(!Array.isArray(before.asks)||!Array.isArray(before.seats))throw Error("live Manifest order book and maker seat required");
+ const asks=before.asks.filter(o=>o.trader===makerOwner);
+ if(asks.length!==1||!asks[0]?.sequence||!asks[0]?.priceRaw||!/^[1-9][0-9]*$/.test(String(asks[0].baseAtoms)))
+  throw Error("exactly one live funded maker ask required");
+ if(BigInt(asks[0].baseAtoms)<=requestedBaseOut)throw Error("maker ask must exceed requested output for partial-fill audit");
+ if(before.seats.filter(x=>x.trader===makerOwner).length!==1)throw Error("maker's claimed Manifest seat required");
  const executed=await sendLocalManifestInstruction({rpcUrl,connection,payer,instruction,Transaction,expectedProgramId:programId,expectedMarket:market});
  const after=await snapshotMarket();
  if(after?.market!==market||after?.baseMint!==baseMint||after?.quoteMint!==quoteMint)throw Error("post-trade market identity mismatch");

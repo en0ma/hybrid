@@ -128,3 +128,7 @@ Run `node research/capital-efficiency/manifest-local-fill-cli.mjs config.json ./
 ### Pre-signing core Swap gate
 
 Before market snapshotting or signing, the local fill orchestrator now rejects non-Swap instructions, wrong signer/market/program account positions, repeated taker/vault token keys, and invalid 19-byte atom-safe SwapParams. This gate prevents accidental submission of an unrelated SDK instruction via the fill CLI. It does not establish a live funded fixture or independent execution proof.
+
+### Pre-signing maker liquidity
+
+The local fill orchestrator requires a live pinned SDK snapshot containing exactly one resting ask for the expected maker, an existing maker seat, and more maker ask base atoms than the Swap's requested base output. This enforces a partial-fill setup and rejects missing orders before submitting. It does not itself fund the market or authenticate price tick economics.
