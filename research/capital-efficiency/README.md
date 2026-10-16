@@ -46,3 +46,4 @@ node research/capital-efficiency/validate-results.mjs ./completed-experiment.jso
 ```
 
 The result validator requires five paired workloads, pinned 40-character commits, matching environment identity, receipt evidence, conservation checks, and measured metrics for each implementation. The empty template is intentionally rejected. **Schema validation does not independently authenticate signatures or prove measurement truthfulness**; collectors must perform RPC receipt and token-account verification.
+\n## Collect on-chain receipt metrics\n\nUse [receipt collection](./receipts.md) to query real finalized transaction compute units, slots, account-meta usage and fees. This supplies only partial benchmark evidence and cannot replace independent settlement/accounting audits.\n
