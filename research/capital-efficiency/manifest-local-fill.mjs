@@ -9,6 +9,20 @@ export async function runLocalManifestFill({rpcUrl,connection,payer,instruction,
  // The loader must use the same loopback RPC as the sender; never accept
  // a second unverified data source for snapshots.
  if(connection?.rpcEndpoint!==rpcUrl&&connection?.rpcEndpoint!==new URL(rpcUrl).href)throw Error("snapshot and sender RPC endpoint mismatch");
+ // Fail before a signer is used unless this is exactly a core Swap with the
+ // generated account layout and fixed-length atom-safe SwapParams payload.
+ const key=x=>typeof x==="string"?x:x?.toBase58?.();
+ if(key(instruction?.programId)!==programId||!Array.isArray(instruction?.keys)||instruction.keys.length<8||
+     key(instruction.keys[0]?.pubkey)!==taker||instruction.keys[0]?.isSigner!==true||
+     key(instruction.keys[1]?.pubkey)!==market)
+  throw Error("local Manifest fill requires an authenticated core Swap instruction");
+ const tokenKeys=instruction.keys.slice(3,7).map(k=>key(k.pubkey));
+ if(tokenKeys.some(k=>!k)||new Set(tokenKeys).size!==4)throw Error("local Manifest fill requires distinct taker/vault token keys");
+ const bytes=instruction.data;
+ if(!(bytes instanceof Uint8Array)||bytes.length!==19||bytes[0]!==4||
+     bytes[17]>1||bytes[18]>1||new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getBigUint64(1,true)===0n||
+     new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getBigUint64(9,true)===0n)
+  throw Error("local Manifest fill requires valid atom-safe core SwapParams");
  const before=await snapshotMarket();
  if(before?.market!==market||before?.baseMint!==baseMint||before?.quoteMint!==quoteMint)throw Error("pre-trade market identity mismatch");
  if(!Number.isSafeInteger(before.slot)||before.slot<=0)throw Error("pre-trade market slot required");
