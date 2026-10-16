@@ -100,3 +100,7 @@ The correlated Swap audit now requires explicit four-account indices (`vaultAcco
 ### Claimed-seat isolation
 
 The fee-free single-maker audit also compares every claimed seat across before/after snapshots, rejects new/deleted/duplicate seats and rejects balance mutations for unrelated traders. This restricts the benchmark to an otherwise quiescent market; it does not prove that the snapshots are immediately adjacent to the transaction, and does not support global orders or fee-bearing settlement.
+
+### Swap account-index binding
+
+The `manifest-account-binding.mjs` helper requires explicit SPL balance indices to match the **actual core Swap instruction accounts** at generated Manifest positions traderBase(3), traderQuote(4), baseVault(5), and quoteVault(6). This prevents substitution of unrelated accounts into the vault-flow audit. Integrating the checker into live execution still requires real raw finalized receipt fixtures; independent account identity and market-derived vault pubkeys remain outstanding.
