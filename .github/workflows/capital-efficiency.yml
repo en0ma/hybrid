@@ -47,7 +47,7 @@ jobs:
         run: node --test research/capital-efficiency/manifest-maker-instructions.test.mjs
       - name: Test local-only Manifest signed submission
         run: node --test research/capital-efficiency/manifest-local-send.test.mjs
-      - name: Test Manifest token conservation and partial orderbook fill audit\n        run: node --test research/capital-efficiency/manifest-fill-audit.test.mjs\n      - name: Generate reproducible model artifact
+      - name: Test Manifest token conservation and partial orderbook fill audit\n        run: node --test research/capital-efficiency/manifest-fill-audit.test.mjs\n      - name: Test Manifest core instruction attribution\n        run: node --test research/capital-efficiency/manifest-swap-attribution.test.mjs\n      - name: Generate reproducible model artifact
         run: node research/capital-efficiency/run.mjs research/capital-efficiency/two-market-scenario.json "$RUNNER_TEMP/p2-capital-model.json"
       - name: Upload model results
         uses: actions/upload-artifact@v4

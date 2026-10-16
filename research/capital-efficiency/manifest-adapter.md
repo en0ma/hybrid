@@ -66,3 +66,9 @@ node --test research/capital-efficiency/manifest-fill-audit.test.mjs
 ### Strict partial-fill identity gate
 
 The audit now explicitly rejects disappearances of entire resting orders, order sequence/price replacements, other-maker order mutations, and snapshots that do not bracket the receipt's slot. A completely consumed order still requires stronger opcode/event proof; until then, the helper only checks a **single persistent partially filled order**. Its output is `consistencyChecked: true, verified: false`, preventing reports from interpreting token conservation and book movement as conclusive trade authentication.
+
+## Manifest core instruction attribution
+
+The initial attribution helper `manifest-swap-attribution.mjs` examines raw compiled Solana instruction indices and a finalized receipt signature, matching the Manifest program ID and the market account position from upstream's generated `Swap.ts` layout. **It explicitly returns `verified: false`**, as verifying the actual swap discriminator requires decoding the full base58 instruction payload, followed by validating taker signature and decoded swap parameters.
+
+Upstream source: `Bonasa-Tech/manifest/client/ts/src/manifest/instructions/Swap.ts`, whose generated instruction discriminator is 4, market account is second, payer/signer account is first. Do not use a matching program+market alone as proof that the trade executed.

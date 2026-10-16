@@ -1,0 +1,4 @@
+import test from "node:test";import assert from "node:assert/strict";import {inspectManifestSwapReceipt} from "./manifest-swap-attribution.mjs";
+const receipt=()=>({slot:9,meta:{err:null},transaction:{signatures:["sig"],message:{accountKeys:["program","taker","market","base","quote","vaultA","vaultB","token"],instructions:[{programIdIndex:0,accounts:[1,2,3,4,5,6,7,7],data:"other"}]}}});
+test("identifies relevant program and market without falsely claiming Swap authentication",()=>{const x=inspectManifestSwapReceipt({receipt:receipt(),signature:"sig",programId:"program",market:"market",taker:"taker"});assert.equal(x.verified,false);assert.equal(x.matchedProgramMarketInstructions,1)});
+test("rejects fake signature",()=>assert.throws(()=>inspectManifestSwapReceipt({receipt:receipt(),signature:"wrong",programId:"program",market:"market"}),/signature mismatch/));
