@@ -16,11 +16,14 @@ export async function collectReceipts({rpc,signatures,expectedProgramId,expected
   const json=await res.json();if(json.error)throw Error("RPC error: "+JSON.stringify(json.error));
   const tx=json.result;
   if(!tx||tx.meta?.err!==null||!Number.isInteger(tx.slot)||!Number.isInteger(tx.meta?.computeUnitsConsumed))throw Error("unavailable, failed or unmetered finalized transaction: "+sig);
+  const signed=tx.transaction?.signatures;
+  if(!Array.isArray(signed)||signed[0]!==sig)throw Error("returned transaction signature does not match requested signature: "+sig);
   const accountKeys=tx.transaction?.message?.accountKeys;
   if(!Array.isArray(accountKeys))throw Error("unsupported receipt account layout: "+sig);
   const loaded=tx.meta.loadedAddresses;
   const keys=[...accountKeys,...(loaded?.writable??[]),...(loaded?.readonly??[])];
   const referenced=new Set();
+  const ixRecords=[];
   let marketReferenced=false;
   const instructions=tx.transaction.message.instructions;
   if(!Array.isArray(instructions)||instructions.length===0)throw Error("missing top-level instructions: "+sig);
@@ -28,6 +31,7 @@ export async function collectReceipts({rpc,signatures,expectedProgramId,expected
    if(!Number.isInteger(ix.programIdIndex)||ix.programIdIndex<0||ix.programIdIndex>=keys.length)throw Error("malformed program index: "+sig);
    const program=keys[ix.programIdIndex];
    referenced.add(program);
+   if(program===expectedProgramId)ixRecords.push({programIdIndex:ix.programIdIndex,accountIndexes:Array.isArray(ix.accounts)?ix.accounts:[]});
    if(program===expectedProgramId&&expectedMarket!==undefined){
     if(!Array.isArray(ix.accounts)||ix.accounts.some(n=>!Number.isInteger(n)||n<0||n>=keys.length))throw Error("malformed instruction accounts: "+sig);
     if(ix.accounts.some(n=>keys[n]===expectedMarket))marketReferenced=true;
@@ -36,7 +40,7 @@ export async function collectReceipts({rpc,signatures,expectedProgramId,expected
   if(!referenced.has(expectedProgramId))throw Error("transaction did not directly invoke expected program: "+sig);
   if(expectedMarket!==undefined&&!marketReferenced)throw Error("expected market was not referenced by the target program instruction: "+sig);
   const extra=(loaded?.writable?.length??0)+(loaded?.readonly?.length??0);
-  records.push({signature:sig,expectedProgramId,expectedMarket:expectedMarket??null,slot:tx.slot,blockTime:tx.blockTime??null,computeUnits:tx.meta.computeUnitsConsumed,accountMetas:accountKeys.length+extra,feeLamports:tx.meta.fee??null});
+  records.push({signature:sig,expectedProgramId,expectedMarket:expectedMarket??null,matchingInstructionCount:ixRecords.length,slot:tx.slot,blockTime:tx.blockTime??null,computeUnits:tx.meta.computeUnitsConsumed,accountMetas:accountKeys.length+extra,feeLamports:tx.meta.fee??null});
  }
  return {kind:"executed-solana-receipts",rpc,expectedProgramId,expectedMarket:expectedMarket??null,transactions:records.length,receiptSignatures:signatures,computeUnitsTotal:records.reduce((a,x)=>a+x.computeUnits,0),accountMetasMaximum:Math.max(...records.map(x=>x.accountMetas)),records,limitations:["No signature ownership proof beyond on-chain transaction data","A referenced market account does not establish market state validity or trade semantics","No independent token conservation or inventory audit","No signing latency or rent measurement inferred from receipts"]};
 }

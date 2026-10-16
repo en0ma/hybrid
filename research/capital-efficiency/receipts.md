@@ -28,3 +28,7 @@ The receipt collector now requires `expectedProgramId` and verifies that a final
 ## Optional market binding
 
 Provide `expectedMarket` to require that at least one **top-level instruction targeting the expected program** also directly references that market as an instruction account. Mere inclusion of the market in unrelated transaction instructions does not pass this check. This is still not a validation of program-specific account positions, trading opcode, custody mints, pre/post token conservation, or successful order matching; perform those checks in a separate protocol-specific auditor.
+
+## Requested-signature binding
+
+A valid receipt must also return the **same first transaction signature** that was requested. This prevents a dishonest or misconfigured RPC response from associating a different transaction's compute/fee data with the supplied signature. It is a consistency check against RPC data—not independent consensus verification, and it does not establish fee attribution or correct market-level settlement.
