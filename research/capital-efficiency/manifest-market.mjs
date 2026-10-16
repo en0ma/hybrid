@@ -17,8 +17,8 @@ export async function snapshotManifestMarket({connection,address,Market,PublicKe
   warning:"Read-only account snapshot, not an executed benchmark, transaction confirmation or global balance audit"};
 }
 export async function readManifestMarket(config,{sdkLoader=()=>import("@bonasa-tech/manifest-sdk"),web3Loader=()=>import("@solana/web3.js")}={}){
- const [{Market}, {Connection,PublicKey}]=await Promise.all([sdkLoader(),web3Loader()]);
  const url=new URL(config.rpc);if(url.protocol!=="https:"&&!(url.protocol==="http:"&&["127.0.0.1","localhost"].includes(url.hostname)))throw Error("Require HTTPS remote or explicit loopback local RPC");
+ const [{Market}, {Connection,PublicKey}]=await Promise.all([sdkLoader(),web3Loader()]);
  const connection=new Connection(config.rpc,"confirmed");
  return snapshotManifestMarket({...config,connection,Market,PublicKey});
 }
