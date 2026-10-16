@@ -1,33 +1,37 @@
 # P2 — Capital efficiency and advanced orders
 
-Research workstream, **not a deployed protocol feature**. Before changing custody or ABI semantics, measure equivalently funded maker scenarios versus Manifest's capital efficiency and reverse-order mechanics.
+**Research, with executable safety models; not deployed protocol functionality.**
+
+## Working baseline
+
+Hybrid currently has market-scoped collateral buckets in the 64-byte maker-balance account. Limit placement locks inventory and cancellation releases it; fills debit locked amounts. No program-verified cross-market shared collateral exists. See [security invariants](./threat-model.md).
+
+Manifest's [public docs](https://github.com/Bonasa-Tech/manifest/blob/main/README.md) describe global orders (just-in-time shared inventory) and reverse orders (opposite-side replenishment using fill proceeds). These are comparison targets, not implemented Hybrid capabilities. See [baseline protocol](./manifest-baseline.md).
+
+## Run the model
+
+```bash
+node --test research/capital-efficiency/model.test.mjs
+node research/capital-efficiency/run.mjs research/capital-efficiency/two-market-scenario.json
+```
+
+The simulation intentionally demonstrates that advertising two fully funded markets against the same single pool can **overcommit**, and that a serialized conservative fill model must reject the second incompatible fill. It does not measure compute units or model Solana's actual account locks.
 
 ## Candidate designs
 
-| Mechanism | Potential value | Principal concern |
+| Mechanism | Benefit to evaluate | Principal concern |
 | --- | --- | --- |
-| Per-market locked collateral (baseline) | Explicit solvency by market | Fragmentation of inventory |
-| Shared collateral across markets | Less idle inventory | Cross-market insolvency / race conditions |
-| Automated reverse orders | Faster maker replenishment | Inventory drift, authorization, event ordering |
-| Atomic cancel-and-replace | Lower market-maker quote downtime | Account locks, compute, ordering |
-| Passive liquidity settlement expansion | Broader taker fill paths | Pricing, fee and redemption accounting |
+| Per-market locked (current) | Explicit solvency | Fragmented inventory |
+| Shared global reserve | Reuse deposited assets | Contention, order reliability, cross-market insolvency |
+| Reverse order | Reduce requote traffic | Authorization, price/balance rounding, adverse inventory |
+| Atomic cancel/replace | Less maker downtime | Account fan-out and compute |
+| Passive settlement extension | More executed liquidity | Fees, redeemability, pricing, supply invariant |
 
-## Required benchmark scenarios
+## Measurement stages
 
-1. A market with one maker and one price level.
-2. Eight distinct makers per trade to test account fan-out.
-3. Two markets with the same maker inventory to measure shared versus fragmented capital.
-4. Partial fill, cancel, replace, and network retry sequence.
-5. Adverse price moves to test collateral reserves and quote skew.
+1. **Model:** prove reserve and concurrency invariants under adversarial scenarios (this PR).
+2. **Prototype:** implement a separate disposable SBF experiment with no production ABI change.
+3. **Benchmark:** identical workload across pinned Hybrid/Manifest revisions; compare compute, transaction count, rent, metas and settlement correctness.
+4. **Decision:** select a narrowly scoped order type only when it improves usable liquidity per unit of *actually protected* capital.
 
-Measure *compute units, transaction count, account metas, rent bytes, signing latency, actual fill price, token conservation, inventory utilization*. Reproduce on identical hardware/toolchain and an equivalent workload using a pinned Manifest commit. Do not infer superiority from unrelated pinned unit benchmarks.
-
-## Design gates
-
-- Formalized authorization and mint/vault ownership invariants
-- Conservation proofs and multi-market adversarial simulations
-- Race/replay and stale-book tests
-- Account layout and ABI migration plan
-- Fuzz/SBF/CU regressions and devnet transactions
-
-Outcome is a decision record with measured trade-offs and a follow-up implementation PR for whichever mechanism wins.
+See [experiment template](./experiment-template.json), [decision record](./decision-record.md), and [threat model](./threat-model.md). **Do not insert estimated compute or throughput into the experiment result fields.**
