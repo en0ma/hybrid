@@ -37,3 +37,7 @@ The runner records adapter-returned signatures as **unverified claims**. Use `co
 ## Separate transaction and audit steps
 
 The runner now records `{kind:"transaction",signature,slot}` for actual submitted instructions and `{kind:"audit",proof,slot}` for state observations, confirmations, refreshes, simulated timeouts and checks. An audit must return `{status:"audited",verified:true,proof:"...",slot:...}`; a recycled transaction signature **cannot** substitute for independent proof. These are adapter claims and still require independent verification before publication. Operational steps may need richer outcome typing as protocol adapters evolve.
+
+## Focused single-scenario execution
+
+The runner accepts an optional fifth command-line argument after output path: a scenario name (for example, `one-maker-one-level`). The **full workload contract is still validated**, but only the selected scenario is executed. This lets operators complete a one-maker comparison without trying to execute unsupported two-market stress workloads. Adapters must produce unique signatures per protocol run; duplicated signatures are rejected. This does not make the existing Manifest adapter executable or verify RPC receipt authenticity.
