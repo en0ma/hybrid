@@ -35,3 +35,14 @@ The simulation intentionally demonstrates that advertising two fully funded mark
 4. **Decision:** select a narrowly scoped order type only when it improves usable liquidity per unit of *actually protected* capital.
 
 See [experiment template](./experiment-template.json), [decision record](./decision-record.md), and [threat model](./threat-model.md). **Do not insert estimated compute or throughput into the experiment result fields.**
+
+## Paired benchmark result validation
+
+When **actual executed** Hybrid and Manifest measurement records exist, populate the template and run:
+
+```bash
+node --test research/capital-efficiency/validate-results.test.mjs
+node research/capital-efficiency/validate-results.mjs ./completed-experiment.json
+```
+
+The result validator requires five paired workloads, pinned 40-character commits, matching environment identity, receipt evidence, conservation checks, and measured metrics for each implementation. The empty template is intentionally rejected. **Schema validation does not independently authenticate signatures or prove measurement truthfulness**; collectors must perform RPC receipt and token-account verification.
