@@ -1,0 +1,12 @@
+{
+  "name": "hybrid-maker-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "hybrid-maker": "./cli.mjs"
+  },
+  "scripts": {
+    "test": "node --test cli.test.mjs"
+  }
+}
