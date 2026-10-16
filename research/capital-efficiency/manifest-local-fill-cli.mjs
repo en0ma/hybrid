@@ -11,12 +11,22 @@ export async function runConfiguredManifestFill({config,fixtureLoader}){
  for(const name of ["programId","market","baseMint","quoteMint","taker","makerOwner"])
   if(typeof config[name]!=="string"||!config[name])throw Error("missing Manifest benchmark "+name);
  if(config.secretKey||config.privateKey||config.keypair)throw Error("do not include signing secrets in benchmark config");
- const {Connection,Transaction}=await import("@solana/web3.js");
+ const {Connection,Transaction,PublicKey}=await import("@solana/web3.js");
  const connection=new Connection(config.rpcUrl,"confirmed");
  const fixture=await fixtureLoader({config,connection,Transaction});
  if(!fixture?.payer||!fixture?.instruction||typeof fixture.snapshotMarket!=="function"||!fixture.vaultAccounts)throw Error("operator fixture incomplete");
  // The operator's snapshot callback must use the exact shared connection.
  const snapshotMarket=()=>fixture.snapshotMarket({connection,config});
+ const pk=x=>new PublicKey(x);
+ const [programInfo,marketInfo,lamports]=await Promise.all([connection.getAccountInfo(pk(config.programId),"confirmed"),connection.getAccountInfo(pk(config.market),"confirmed"),connection.getBalance(pk(config.taker),"confirmed")]);
+ if(!programInfo?.executable||marketInfo?.owner?.toBase58?.()!==config.programId||!Number.isSafeInteger(lamports)||lamports<=0)throw Error("unfunded taker or missing local Manifest deployment/market");
+ for(const [i,mint] of [[3,config.baseMint],[4,config.quoteMint],[5,config.baseMint],[6,config.quoteMint]]){
+  const pubkey=fixture.instruction.keys?.[i]?.pubkey;
+  if(!pubkey)throw Error("missing Manifest Swap token account");
+  const response=await connection.getParsedAccountInfo(pubkey,"confirmed");
+  const parsed=response?.value?.data?.parsed;
+  if(parsed?.type!=="account"||parsed.info?.mint!==mint||!/^[0-9]+$/.test(parsed.info?.tokenAmount?.amount??""))throw Error("missing or incorrectly minted Manifest Swap token account");
+ }
  const result=await runLocalManifestFill({...config,connection,Transaction,payer:fixture.payer,instruction:fixture.instruction,snapshotMarket,vaultAccounts:fixture.vaultAccounts});
  return {...result,operatorFixtureProvided:true};
 }
