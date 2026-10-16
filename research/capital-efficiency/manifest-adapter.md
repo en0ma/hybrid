@@ -76,3 +76,7 @@ Upstream source: `Bonasa-Tech/manifest/client/ts/src/manifest/instructions/Swap.
 ## Correlated Swap and settlement consistency
 
 Run `manifest-trade-correlation.mjs` on the **same finalized receipt** and before/after market snapshots to enforce both opcode attribution and conservative partial-fill/token conservation checks. The result intentionally retains `verified: false`: snapshots can include intervening transactions, and signer authorization, swap parameters, vault/seat accounting and trade price remain unaudited. The combined checker is **not** a real benchmark result.
+
+### Swap payer signature authorization
+
+The opcode attribution path now interprets the Solana raw-message `header.numRequiredSignatures`, checks that it matches the receipt signature count, and requires the taker/payer account to be one of the transaction's signed static message keys. This establishes signer **membership as reported by finalized RPC**, not independent Ed25519 cryptographic validation or proof of fill causation.

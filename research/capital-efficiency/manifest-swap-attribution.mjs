@@ -11,6 +11,10 @@ export function inspectManifestSwapReceipt({receipt,signature,programId,market,t
  if(receipt.transaction?.signatures?.[0]!==signature)throw Error("transaction signature mismatch");
  const message=receipt.transaction?.message,keys=message?.accountKeys;
  if(!Array.isArray(keys)||!Array.isArray(message.instructions))throw Error("raw JSON instruction layout required");
+ const required=message.header?.numRequiredSignatures;
+ if(!Number.isSafeInteger(required)||required<1||required>keys.length||receipt.transaction.signatures.length!==required)throw Error("invalid Solana message signer header");
+ const signedKeys=new Set(keys.slice(0,required));
+ if(!signedKeys.has(taker))throw Error("Manifest Swap payer is not an authenticated transaction signer");
  const loaded=receipt.meta?.loadedAddresses;const accounts=[...keys,...(loaded?.writable??[]),...(loaded?.readonly??[])];
  let count=0;
  for(const ix of message.instructions){
@@ -25,5 +29,5 @@ export function inspectManifestSwapReceipt({receipt,signature,programId,market,t
   count++;
  }
  if(count!==1)throw Error("require exactly one authenticated direct Manifest core Swap instruction");
- return {verified:false,opcodeAuthenticated:true,matchingSwaps:count,slot:receipt.slot,warning:"Instruction attributed, but SwapParams, signer authorization, custody transitions and fill causation are not yet verified"};
+ return {verified:false,opcodeAuthenticated:true,signerHeaderAuthenticated:true,matchingSwaps:count,slot:receipt.slot,warning:"Instruction attributed, but SwapParams, cryptographic signature verification by RPC, custody transitions and fill causation are not yet verified"};
 }
