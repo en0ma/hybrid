@@ -1,6 +1,7 @@
 import {inspectManifestSwapReceipt} from "./manifest-swap-attribution.mjs";
 import {auditManifestFill} from "./manifest-fill-audit.mjs";
 import {auditManifestVaultFlows} from "./manifest-vault-flow-audit.mjs";
+import {auditManifestMakerSeat} from "./manifest-maker-seat-audit.mjs";
 // Correlates the same finalized receipt, program opcode and book/account deltas.
 // Not an execution-price proof: explicitly never returns verified:true.
 export function correlateManifestTrade({receipt,signature,programId,market,taker,baseMint,quoteMint,makerOwner,before,after,vaultAccounts}){
@@ -32,9 +33,11 @@ export function correlateManifestTrade({receipt,signature,programId,market,taker
  if(takerBaseGain<=0n||takerQuoteSpent<=0n)throw Error("taker did not receive base and spend quote");
  if(takerBaseGain!==filled)throw Error("taker base movement differs from maker resting ask reduction");
  if(takerBaseGain!==BigInt(vault.baseAtomsReceived)||takerQuoteSpent!==BigInt(vault.quoteAtomsSpent))throw Error("vault flows disagree with taker account totals");
+ const makerSeat=auditManifestMakerSeat({before,after,makerOwner,filledBaseAtoms:accounting.filledBaseAtoms,quoteSpentAtoms:takerQuoteSpent.toString()});
+ if(makerSeat.makerSeatChecked!==true)throw Error("maker seat accounting missing");
  if(takerQuoteSpent>BigInt(params.inAtoms))throw Error("taker quote spend exceeds Swap maximum input");
  if(params.isExactIn){
   if(filled<requestedOut)throw Error("actual base fill below Swap minimum output");
  }else if(filled!==requestedOut)throw Error("actual base fill differs from exact-output Swap request");
- return {kind:"manifest-swap-and-partial-fill-correlated",verified:false,opcodeAuthenticated:true,tokenAndBookConsistencyChecked:true,slot:receipt.slot,signature,market,filledBaseAtoms:accounting.filledBaseAtoms,takerQuoteSpentAtoms:takerQuoteSpent.toString(),takerBaseReceivedAtoms:takerBaseGain.toString(),swapParams:params,quantityConstraintChecked:true,isolatedTransactionChecked:true,vaultFlowChecked:true,limitations:["Signer membership is RPC-reported, not independently cryptographically verified","No custody vault/seat verification, protocol fee accounting or comprehensive realized-price proof","Snapshots may span intervening transactions; not causal proof of fill","Do not publish as completed benchmark evidence"]};
+ return {kind:"manifest-swap-and-partial-fill-correlated",verified:false,opcodeAuthenticated:true,tokenAndBookConsistencyChecked:true,slot:receipt.slot,signature,market,filledBaseAtoms:accounting.filledBaseAtoms,takerQuoteSpentAtoms:takerQuoteSpent.toString(),takerBaseReceivedAtoms:takerBaseGain.toString(),swapParams:params,quantityConstraintChecked:true,isolatedTransactionChecked:true,vaultFlowChecked:true,makerSeatChecked:true,limitations:["Signer membership is RPC-reported, not independently cryptographically verified","No protocol fee accounting, global balance verification or comprehensive realized-price proof","Snapshots may span intervening transactions; not causal proof of fill","Do not publish as completed benchmark evidence"]};
 }

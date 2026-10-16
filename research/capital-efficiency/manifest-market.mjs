@@ -14,6 +14,7 @@ export async function snapshotManifestMarket({connection,address,Market,PublicKe
   baseMint:market.baseMint().toBase58(),quoteMint:market.quoteMint().toBase58(),
   baseDecimals:market.baseDecimals(),quoteDecimals:market.quoteDecimals(),
   asks:market.asks().map(normalize),bids:market.bids().map(normalize),
+  seats:market.claimedSeats().map(seat=>({trader:seat.publicKey.toBase58(),baseFreeAtoms:String(seat.baseBalance),quoteFreeAtoms:String(seat.quoteBalance)})),
   warning:"Read-only account snapshot, not an executed benchmark, transaction confirmation or global balance audit"};
 }
 export async function readManifestMarket(config,{sdkLoader=()=>import("@bonasa-tech/manifest-sdk"),web3Loader=()=>import("@solana/web3.js")}={}){
