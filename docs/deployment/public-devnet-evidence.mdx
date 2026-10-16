@@ -1,0 +1,23 @@
+---
+title: "Public devnet evidence gate"
+description: "Evidence contract for a real two-wallet, six-stage devnet lifecycle."
+icon: "badge-check"
+---
+
+## Required public-network proof
+
+Provision and fund an actual devnet Hybrid market with **independent maker and taker wallets**. Run initialize, deposit, place, trade, cancel, and withdraw. Record all six independent confirmed signatures, audit token and maker balances, and verify receipts against the public devnet RPC.
+
+```bash
+cd devnet-demo
+node --test src/public-devnet-evidence.test.mjs
+node src/public-devnet-evidence.mjs ./public-devnet-evidence.json
+```
+
+The JSON bundle must contain `network: "devnet"`, HTTPS `rpc`, `programId`, `market`, distinct `maker` and `taker`, six ordered `stages` (`name`, `signature`, `confirmed: true`), `receipts.verifiedOnPublicRpc: true`, and an `audit` with `tradeSettlementVerified`, `bookStateVerified`, and `finalBalancesReconciled` set true.
+
+<Warning>This initial checker validates the evidence **contract**, not the network data itself. A separate independent RPC auditor must produce the fields before the milestone can be considered verified. Never upload signing keys.</Warning>
+
+## Acceptance to complete P0
+
+Deploy a compatible SBF program on public devnet with an authenticated authority; provision custody and SPL assets; fund two wallets; collect six real signatures and independently re-verify their slot, status, market identity, token transfers and final accounting. Integrate the public RPC auditor and attach non-secret evidence to CI. Do not use Surfpool-only account/program injection operations.
