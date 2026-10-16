@@ -21,13 +21,20 @@ export async function sendLocalManifestInstruction({rpcUrl,connection,payer,inst
  const signature=await connection.sendRawTransaction(tx.serialize(),{skipPreflight:false,maxRetries:0});
  const confirmation=await connection.confirmTransaction({signature,blockhash,lastValidBlockHeight},"confirmed");
  if(confirmation.value?.err)throw Error("Manifest transaction failed: "+signature);
- const receipt=await connection.getTransaction(signature,{commitment:"confirmed",maxSupportedTransactionVersion:0});
+ const finalized=await connection.confirmTransaction({signature,blockhash,lastValidBlockHeight},"finalized");
+ if(finalized.value?.err)throw Error("Finalized Manifest transaction failed: "+signature);
+ let receipt=null;
+ for(let attempt=0;attempt<6;attempt++){
+  receipt=await connection.getTransaction(signature,{commitment:"finalized",maxSupportedTransactionVersion:0});
+  if(receipt)break;
+  if(attempt<5)await new Promise(r=>setTimeout(r,300));
+ }
  if(!receipt||receipt.meta?.err!==null||!Number.isSafeInteger(receipt.slot)||!Number.isSafeInteger(receipt.meta?.computeUnitsConsumed))
-  throw Error("Confirmed Manifest receipt missing, failed or unmetered");
+  throw Error("Finalized Manifest receipt missing, failed or unmetered");
  if(receipt.transaction?.signatures?.[0]!==signature)throw Error("Manifest receipt signature mismatch");
  const keys=receipt.transaction?.message?.accountKeys;
  const ixs=receipt.transaction?.message?.instructions;
  if(!Array.isArray(keys)||!Array.isArray(ixs)||!ixs.some(ix=>key(keys[ix.programIdIndex])===key(expectedProgramId)&&Array.isArray(ix.accounts)&&ix.accounts.some(n=>key(keys[n])===key(expectedMarket))))throw Error("Manifest receipt missing expected program-market instruction");
  return {status:"executed",signature,slot:receipt.slot,computeUnits:receipt.meta.computeUnitsConsumed,feeLamports:receipt.meta.fee??null,
-  verification:"confirmed receipt only; independent finalized program/market and token conservation audit required"};
+  verification:"finalized receipt matched signature, direct program and market; independent token conservation audit required"};
 }
