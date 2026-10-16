@@ -44,3 +44,7 @@ It currently prepares only a single maker ask. No taker swap, receipt confirmati
 ```bash
 node --test research/capital-efficiency/manifest-maker-instructions.test.mjs
 ```
+
+## Controlled local signature submission
+
+`manifest-local-send.mjs` can now sign, simulate, submit and confirm a real SDK-built instruction on a **loopback-only** RPC. It rejects remote endpoints, simulation failures, failed/missing receipts, unmetered transactions and mismatched receipt signatures. It requires a caller-provided Solana `Transaction` constructor, funded `Keypair` and `Connection`. It **does not** provision a Manifest market, run taker fills, or authenticate finalized settlement. Its confirmed receipt is not yet publishable benchmark evidence; pair it with the finalized receipt collector and independent custody-state checks.
