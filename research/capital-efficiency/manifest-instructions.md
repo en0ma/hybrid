@@ -1,21 +1,24 @@
-# Manifest single-maker transaction construction
+## Single-maker Manifest instruction construction
 
-`manifest-instructions.mjs` constructs **actual Manifest SDK** instructions for a maker base-token deposit, limit ask placement and taker swap. It uses `ManifestClient.depositAtomsIx`, `ManifestClient.placeOrderIx`, `ManifestClient.swapIx` and `OrderType.Limit` as defined in the upstream Manifest TypeScript SDK.
+`manifest-instructions.mjs` now calls the **actual official Manifest SDK methods** `depositAtomsIx` (exact integer-atom funding) and `placeOrderIx` (wrapper limit ask). This deliberately returns **unsigned instructions only**, not fabricated transaction results or a completed execution adapter.
 
-The function accepts a pre-initialized ManifestClient whose wrapper/seat setup has completed. No program deployment or wallet setup is hidden in the bridge. **It does not sign, broadcast, confirm, or generate receipt evidence.**
+The SDK's order wrapper accepts `numBaseTokens` and `tokenPrice` as JS numbers. Until an atom-exact order builder is reviewed, this helper accepts only **whole base-token quantities** and positive integer token prices, rejecting fractional amounts that could introduce silent number rounding. These restrictions are suitable for an initial controlled benchmark but are not production quote sizing.
+
+Example after loading a real, pre-provisioned ManifestClient:
 
 ```js
-import { ManifestClient, OrderType } from "@bonasa-tech/manifest-sdk";
-import { buildManifestMakerInstructions } from "./manifest-instructions.mjs";
-const client = await ManifestClient.getClientForMarket(connection, marketAddress, makerKeypair);
-const plan = buildManifestMakerInstructions({
-  client, sdk:{OrderType}, maker:makerKeypair.publicKey,
-  baseAtoms:"1000000", priceTokens:100, clientOrderId:1
+import {OrderType} from "@bonasa-tech/manifest-sdk";
+import {makeManifestSingleMakerAsk} from "./manifest-instructions.mjs";
+const planned=makeManifestSingleMakerAsk({
+ client, maker: trader.publicKey,
+ baseAtoms:"1000000", // for a 6-decimal base mint: one base token
+ priceTokens:100, clientOrderId:1, OrderType
 });
-// plan.instructions.deposit and plan.instructions.place are genuine unsigned SDK instructions.
-// Send and independently confirm each with actual funded test-network wallets; verify final market state.
+// Independently verify funding/mints, then sign and send each instruction
+// using the correct wrapper and owner signing accounts. Do not treat this
+// object as an executed measurement.
 ```
 
-**SDK precision constraint:** `depositAtomsIx` is integer-based, but `placeOrderIx` takes a JavaScript-number amount and price. We reject base atom sizes outside its safe integer range or quantities that fail a round-trip check; price conversion and final quantization must also be audited against the resulting on-chain price. Restrict benchmark prices to exactly matching post-placement price levels. This bridge is **not** a claim of parity at arbitrary large order sizes.
+**Manifest's wrapper is a separate program from Manifest core.** Successful wrapper order transactions can invoke core through CPI; the existing direct-core-invocation receipt gate intentionally will not recognize CPI-only execution. To benchmark accurately, require verification of the expected *wrapper* top-level instruction as well as decoded inner core invocation and market state transitions. The contract should separately record the core and wrapper program IDs and pinned deployed binaries.
 
-The remaining steps are to fund a pinned, isolated Manifest environment, run signed instructions with market-level state assertions, independently verify finalized receipts, and map a full single-maker scenario into `run-workload.mjs`. No actual Manifest trade has been run by these tests.
+No signing, account provisioning, swap or finality receipt collection is implemented in this module.
