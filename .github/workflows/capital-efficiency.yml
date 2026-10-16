@@ -1,0 +1,60 @@
+name: Capital efficiency research
+on:
+  pull_request:
+    paths:
+      - "research/capital-efficiency/**"
+      - ".github/workflows/capital-efficiency.yml"
+  push:
+    branches: [main]
+    paths:
+      - "research/capital-efficiency/**"
+      - ".github/workflows/capital-efficiency.yml"
+permissions:
+  contents: read
+jobs:
+  model-invariants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test capital reservation and cross-market execution invariants
+        run: node --test research/capital-efficiency/model.test.mjs
+      - name: Validate benchmark protocol and required provenance
+        run: |
+          node --test research/capital-efficiency/validate-experiment.test.mjs
+          node research/capital-efficiency/validate-experiment.mjs
+      - name: Test empirical result completeness gate
+        run: node --test research/capital-efficiency/validate-results.test.mjs
+      - name: Test finalized Solana receipt collection
+        run: node --test research/capital-efficiency/collect-receipts.test.mjs
+      - name: Validate paired workload experiment contract
+        run: |
+          node --test research/capital-efficiency/validate-workload.test.mjs
+          node research/capital-efficiency/validate-workload.mjs
+      - name: Validate two-protocol adapter execution contract
+        run: node --test research/capital-efficiency/run-workload.test.mjs
+      - name: Test authenticated Hybrid lifecycle adapter
+        run: node --test research/capital-efficiency/hybrid-evidence-adapter.test.mjs
+      - name: Test official Manifest SDK market preflight interface
+        run: node --test research/capital-efficiency/manifest-market.test.mjs
+      - name: Test Manifest SDK maker and taker instruction builders
+        run: node --test research/capital-efficiency/manifest-instructions.test.mjs
+      - name: Test Manifest SDK unsigned trade instruction construction
+        run: node --test research/capital-efficiency/manifest-instructions.test.mjs
+      - name: Test Manifest SDK maker instruction builder
+        run: node --test research/capital-efficiency/manifest-maker-instructions.test.mjs
+      - name: Test local-only Manifest signed submission
+        run: node --test research/capital-efficiency/manifest-local-send.test.mjs
+      - name: Test Manifest token conservation and partial orderbook fill audit\n        run: node --test research/capital-efficiency/manifest-fill-audit.test.mjs\n      - name: Test Manifest core instruction attribution\n        run: node --test research/capital-efficiency/manifest-swap-attribution.test.mjs\n      - name: Test Manifest swap and settlement correlation\n        run: node --test research/capital-efficiency/manifest-trade-correlation.test.mjs\n      - name: Test isolated Manifest vault and taker token flows\n        run: node --test research/capital-efficiency/manifest-vault-flow-audit.test.mjs\n      - name: Test exact Manifest maker-seat settlement accounting
+        run: node --test research/capital-efficiency/manifest-maker-seat-audit.test.mjs
+      - name: Test Manifest Swap account-index bindings\n        run: node --test research/capital-efficiency/manifest-account-binding.test.mjs\n      - name: Test local Manifest fill orchestration safety gates\n        run: node --test research/capital-efficiency/manifest-local-fill.test.mjs\n      - name: Test operator-provided local Manifest fixture CLI\n        run: node --test research/capital-efficiency/manifest-local-fill-cli.test.mjs\n      - name: Test local Manifest funded-account preflight
+        run: node --test research/capital-efficiency/manifest-local-preflight.test.mjs
+      - name: Generate reproducible model artifact
+        run: node research/capital-efficiency/run.mjs research/capital-efficiency/two-market-scenario.json "$RUNNER_TEMP/p2-capital-model.json"
+      - name: Upload model results
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-capital-model
+          path: ${{ runner.temp }}/p2-capital-model.json

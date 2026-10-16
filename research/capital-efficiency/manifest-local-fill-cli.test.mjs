@@ -1,0 +1,4 @@
+import test from "node:test";import assert from "node:assert/strict";import {runConfiguredManifestFill} from "./manifest-local-fill-cli.mjs";
+test("requires local fixture, not placeholders",async()=>await assert.rejects(()=>runConfiguredManifestFill({config:{rpcUrl:"http://127.0.0.1:8899/"}}),/operator fixture loader/));
+test("rejects remote RPC before dynamically loading Solana SDK",async()=>await assert.rejects(()=>runConfiguredManifestFill({config:{rpcUrl:"https://api.devnet.solana.com"},fixtureLoader:async()=>({})}),/loopback/));
+test("rejects embedded signer secrets before loading any signer",async()=>await assert.rejects(()=>runConfiguredManifestFill({config:{rpcUrl:"http://127.0.0.1:8899/",programId:"p",market:"m",baseMint:"b",quoteMint:"q",taker:"t",makerOwner:"a",secretKey:[1,2,3]},fixtureLoader:async()=>({})}),/signing secrets/));
