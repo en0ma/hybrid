@@ -24,13 +24,13 @@ export async function identity(){
 export async function execute({scenario,step,contract}){
  if(contract.network!=="surfpool")throw Error("Hybrid evidence adapter supports only isolated Surfpool");
  if(scenario.name!=="one-maker-one-level")throw Error("unsupported Hybrid benchmark scenario: "+scenario.name);
+ const stageMap={initialize:"init",deposit:"deposit",place:"place",trade:"trade"};
+ if(!stageMap[step])throw Error("unsupported benchmark step: "+step+"; audit is a state proof, not a transaction");
  const evidencePath=process.env.HYBRID_LIFECYCLE_EVIDENCE;
  const verifiedPath=process.env.HYBRID_VERIFIED_RECEIPTS;
  if(!evidencePath||!verifiedPath)throw Error("require real lifecycle and independent receipt evidence files");
  const evidence=load(evidencePath),verified=load(verifiedPath);
  inspectEvidence(evidence,verified);
- const stageMap={initialize:"init",deposit:"deposit",place:"place",trade:"trade"};
- if(!stageMap[step])throw Error("unsupported benchmark step: "+step+"; audit is a state proof, not a transaction");
  const record=evidence.stages.find(x=>x.stage===stageMap[step]);
  return {status:"executed",signature:record.signature,slot:record.slot};
 }
