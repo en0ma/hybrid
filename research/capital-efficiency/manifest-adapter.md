@@ -112,3 +112,7 @@ The combined correlated-trade audit now invokes `bindManifestSwapTokenAccounts` 
 ## Funded local fill execution orchestration
 
 `manifest-local-fill.mjs` now composes the controlled local signer/sender, real before/after Manifest SDK market snapshots, a second independently retrieved **raw JSON finalized receipt**, and the full isolated Swap/order/vault/maker-seat correlation. It fails closed on wrong payer, network, market/mint identity, finality/receipt mismatch or accounting discrepancy, while preserving `verified: false`. The operator must supply a funded local Manifest market, taker keypair, executable SDK Swap instruction, real RPC connection and a market snapshot callback. CI tests safety gates only; they do not run Surfpool or represent real Manifest fills.
+
+### Strict local execution evidence boundaries
+
+Before/after SDK snapshots must retain the same source commit and deployed program ID and strictly bracket the finalized transaction slot. The independently fetched finalized raw receipt must agree with the sender's compute usage and fee. These checks reduce accidental evidence misattribution but are not bytecode provenance or complete benchmark proof.
