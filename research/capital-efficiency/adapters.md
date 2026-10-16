@@ -33,3 +33,7 @@ The runner records adapter-returned signatures as **unverified claims**. Use `co
 - Build actual Hybrid/Manifest instruction adapters and run under equal conditions.
 - Collect confirmations and independent account-state audit evidence for each stage.
 - Produce a reproducible pair of run manifests with any unsupported semantics explicitly recorded.
+
+## Separate transaction and audit steps
+
+The runner now records `{kind:"transaction",signature,slot}` for actual submitted instructions and `{kind:"audit",proof,slot}` for state observations, confirmations, refreshes, simulated timeouts and checks. An audit must return `{status:"audited",verified:true,proof:"...",slot:...}`; a recycled transaction signature **cannot** substitute for independent proof. These are adapter claims and still require independent verification before publication. Operational steps may need richer outcome typing as protocol adapters evolve.

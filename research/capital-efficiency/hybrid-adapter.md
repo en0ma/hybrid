@@ -18,6 +18,6 @@ export HYBRID_LIFECYCLE_EVIDENCE=<path-to-fixture/lifecycle-evidence.json>
 export HYBRID_VERIFIED_RECEIPTS=<path-to-fixture/verified-receipts.json>
 ```
 
-The adapter exports `identity()` and `execute()` for use by `run-workload.mjs`. Existing six-stage receipts comprise maker initialization, deposit, place, trade, cancel and withdrawal. Not every benchmark step is a chain transaction: specifically **audit** is a state validation, not a new transaction. The generic runner presently requires a signature for every step, so it **cannot yet execute the complete paired benchmark** using this adapter. This limitation is deliberate and visible; do not emit synthetic signatures or treat six lifecycle stages as the five comparison scenarios.
+The adapter exports `identity()` and `execute()` for use by `run-workload.mjs`. Existing six-stage receipts comprise maker initialization, deposit, place, trade, cancel and withdrawal. Not every benchmark step is a chain transaction: specifically **audit** is a state validation, not a new transaction. The runner now supports read-only audit steps with explicit proof records. The adapter still supports only the single-maker lifecycle, not the complete five-scenario benchmark; do not emit synthetic signatures or treat six lifecycle stages as the five comparison scenarios.
 
 Next changes: revise runner to model non-transaction state audits explicitly, complete legitimate workload step mapping, then implement a real Manifest execution adapter on a pinned release.
