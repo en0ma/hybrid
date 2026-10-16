@@ -1,0 +1,30 @@
+name: Capital efficiency research
+on:
+  pull_request:
+    paths:
+      - "research/capital-efficiency/**"
+      - ".github/workflows/capital-efficiency.yml"
+  push:
+    branches: [main]
+    paths:
+      - "research/capital-efficiency/**"
+      - ".github/workflows/capital-efficiency.yml"
+permissions:
+  contents: read
+jobs:
+  model-invariants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test capital reservation and cross-market execution invariants
+        run: node --test research/capital-efficiency/model.test.mjs
+      - name: Generate reproducible model artifact
+        run: node research/capital-efficiency/run.mjs research/capital-efficiency/two-market-scenario.json "$RUNNER_TEMP/p2-capital-model.json"
+      - name: Upload model results
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2-capital-model
+          path: ${{ runner.temp }}/p2-capital-model.json
