@@ -1,0 +1,131 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "Hybrid",
+  "theme": "palm",
+  "colors": {
+    "primary": "#0D9488",
+    "light": "#14B8A6",
+    "dark": "#5EEAD4"
+  },
+  "background": {
+    "color": {
+      "light": "#FFFFFF",
+      "dark": "#0B1220"
+    }
+  },
+  "favicon": "/assets/favicon.svg",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Learn",
+        "icon": "book-open",
+        "groups": [
+          {
+            "group": "Introduction",
+            "icon": "compass",
+            "pages": [
+              "index",
+              "start/why-hybrid",
+              "start/glossary",
+              "start/quickstart",
+              "start/status"
+            ]
+          },
+          {
+            "group": "Core concepts",
+            "icon": "layers",
+            "pages": [
+              "concepts/hybrid-liquidity",
+              "concepts/orders-and-matching",
+              "concepts/collateral"
+            ]
+          },
+          {
+            "group": "Use Hybrid",
+            "icon": "users",
+            "pages": [
+              "audiences/traders",
+              "audiences/market-makers",
+              "audiences/protocol-designers",
+              "audiences/dex-teams"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Build",
+        "icon": "code-2",
+        "groups": [
+          {
+            "group": "Architecture",
+            "icon": "network",
+            "pages": [
+              "architecture/overview",
+              "architecture/accounts",
+              "architecture/instructions",
+              "architecture/account-reference"
+            ]
+          },
+          {
+            "group": "Developer guides",
+            "icon": "terminal",
+            "pages": [
+              "guides/first-trade",
+              "guides/wallet-smoke",
+              "guides/receipts"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Operate",
+        "icon": "rocket",
+        "groups": [
+          {
+            "group": "Deployment",
+            "icon": "server",
+            "pages": [
+              "deployment/local-surfpool",
+              "deployment/public-devnet",
+              "deployment/launch-market",
+              "deployment/operator-runbook"
+            ]
+          },
+          {
+            "group": "Engineering",
+            "icon": "shield-check",
+            "pages": [
+              "operations/testing-and-security",
+              "contributing"
+            ]
+          },
+          {
+            "group": "Protocol assurance",
+            "icon": "shield",
+            "pages": [
+              "protocol/invariants",
+              "protocol/trust-boundaries"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/en0ma/hybrid"
+      }
+    ],
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/en0ma/hybrid"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/en0ma/hybrid"
+    }
+  }
+}

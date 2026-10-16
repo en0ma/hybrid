@@ -1,0 +1,26 @@
+---
+title: "Deploy to Solana devnet"
+description: "Configure and deploy a compatible Hybrid program and test market on Solana devnet."
+icon: "cloud"
+---
+
+## Deploy and configure a devnet market
+
+The wallet harness supports Solana **devnet** and expects a deployed compatible program, a provisioned market, and funded SPL token accounts.
+
+## Operator checklist
+
+- Build the Solana SBF artifact using the repository toolchain.
+- Deploy with standard Solana CLI and the authorized program upgrade/deployment key material.
+- Verify that the actual deployed program ID matches `US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx` or explicitly recompile clients and the program for a different ID.
+- Initialize the market, custody PDA, correct SPL token mints and vaults.
+- Create/bind page-0 owner sidecars and initialize linked page-1 accounts as needed.
+- Fund SPL balances for independent maker and taker wallets.
+- Run the read-only readiness preflight and wallet lifecycle with actual devnet signatures.
+- Independently verify receipts, order state, token balances and final settlement.
+
+<Warning>
+Do not attempt to deploy under the pinned program ID unless you **control its authorized deployment/upgrade key**. Use the appropriate deployment and upgrade authority for the target network.
+</Warning>
+
+For the supported browser-side workflow, follow the [Wallet smoke guide](/guides/wallet-smoke). Deployment orchestration and funding remain operator responsibilities.

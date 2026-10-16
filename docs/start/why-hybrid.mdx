@@ -1,0 +1,39 @@
+---
+title: "Why Hybrid"
+description: "Design trade-offs and practical advantages of Hybrid's order-book-first architecture."
+icon: "sparkles"
+---
+
+# One execution architecture, more ways to provide liquidity
+
+Hybrid combines **explicit price-time-prioritized maker orders** with a **compressed passive-liquidity pricing model**. It keeps executable maker state and token custody on Solana while exposing a deterministic engine for quoting and fill planning.
+
+![Hybrid liquidity architecture](/assets/diagrams/liquidity.svg)
+
+## What teams gain
+
+<Columns cols={2}>
+<Card title="Explicit price discovery" icon="chart-no-axes-combined">Resting orders have observable price, quantity, and sequence; the matcher applies price-time rules.</Card>
+<Card title="Capital discipline" icon="lock-keyhole">Collateral is reserved when orders rest and released or consumed when they are canceled or filled.</Card>
+<Card title="Deterministic execution" icon="workflow">A canonical fill plan connects pricing decisions with settlement validation.</Card>
+<Card title="Modular implementation" icon="blocks">Engine, persistent state, settlement, and the SBF entrypoint have separate responsibilities.</Card>
+</Columns>
+
+## Choosing a market model
+
+| Design | Strength | Important cost |
+| --- | --- | --- |
+| Pure CLOB | Discrete maker quotes, priority and visible depth | Book maintenance, maker inventory and account fan-out |
+| Pure AMM | Continuous passive pricing and simpler maker quoting | Curve-based execution and pool inventory / price impact |
+| Hybrid | Explicit book with passive pricing primitives in a shared architecture | More complex boundaries, collateral accounting and instruction-specific support |
+
+Hybrid is useful when a DEX needs **expressive active liquidity and a modular foundation** for market design. The passive quote model should not be confused with a guarantee that every passive execution path supports the same on-chain settlement. See [liquidity concepts](/concepts/hybrid-liquidity).
+
+## Who benefits
+
+- **Traders:** bounded exact-in/out operations and transparent order-book behavior.
+- **Market makers:** controlled locked inventory, order sequencing and deterministic partial fills.
+- **Protocol designers:** reusable engine, state and settlement components with testable invariants.
+- **DEX teams:** a concrete Solana program, integration harness and operational verification workflow.
+
+Start with [your first trade](/guides/first-trade) or [deployment architecture](/architecture/overview).

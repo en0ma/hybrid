@@ -1,0 +1,57 @@
+---
+title: "Your first trade"
+description: "End-to-end maker and taker workflow, from funded collateral to verified settlement."
+icon: "arrow-left-right"
+---
+
+# Your first Hybrid trade
+
+This guide connects market configuration, maker collateral, order entry, taker execution, cancellation and withdrawal. It uses the wallet smoke harness and its real Solana instruction builders.
+
+<Info>For an automatically provisioned market and six-signature end-to-end run, use the [Surfpool lifecycle guide](/deployment/local-surfpool). The browser guide below operates against an existing configured market.</Info>
+
+## 1. Start the harness
+
+```bash
+cd devnet-demo
+npm install
+npm test
+npm run dev
+```
+
+Connect a compatible Solana browser wallet and select the intended RPC and market. Use a disposable test wallet and test assets.
+
+## 2. Discover the account graph
+
+Derive market-bound accounts before sending signed instructions:
+
+```bash
+npm run print:manifest -- <MARKET_PUBKEY> <MAKER_PUBKEY>
+npm run check:readiness -- <MARKET> <ASK_OWNER> <BID_OWNER> <BASE_VAULT> <QUOTE_VAULT>
+```
+
+**Supply the existing owner sidecar addresses and actual SPL vaults from the market operator.** The readiness probe checks account existence and ownership, not tradeable balances.
+
+## 3. Initialize and fund the maker
+
+In the browser, initialize the maker balance PDA (opcode **12**) if needed. Deposit base atoms from the maker's SPL Token account into the market base vault (opcode **13**, asset selector `0`). Observe the resulting `free_base` increase.
+
+## 4. Place a resting ask
+
+Enter a positive **raw base quantity**, Q64 price and square-root price. The linked maker place instruction (opcode **30**) locks base collateral and inserts an order by price-time priority. Record its **sequence** from the confirmed market / owner-sidecar state.
+
+## 5. Execute from a taker wallet
+
+Use a separate funded taker wallet holding quote tokens. Preview an exact-in or exact-out buy, confirm its slippage bound and maker-balance accounts, simulate, and sign. Active ask matching transfers quote into custody and base to the taker; it can partially consume the maker's ask.
+
+## 6. Cancel and withdraw
+
+From the original maker wallet, cancel the residual ask quantity (linked maker opcode **31**) using the verified sequence. Once the remaining locked reserve is released, withdraw free base or quote through opcode **14**.
+
+<Warning>Only **free** collateral is withdrawable. A cancel and a withdrawal are distinct signed operations. Verify the market's actual order status before building a cancellation.</Warning>
+
+## 7. Verify transaction evidence
+
+Capture the confirmed stage signatures and review before/after SPL balances, collateral buckets, remaining page quantity, and order sequence. The funded runner automatically collects all six stages and audits these conditions.
+
+[Receipt verification](/guides/receipts) · [Accounts and PDAs](/architecture/accounts) · [Instruction reference](/architecture/instructions)

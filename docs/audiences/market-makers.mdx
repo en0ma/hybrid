@@ -1,0 +1,34 @@
+---
+title: "For market makers"
+description: "Inventory management, orders, partial fills, cancellation and withdrawals."
+icon: "chart-no-axes-combined"
+---
+
+# Provide liquidity with collateralized orders
+
+Maker balances track **free base, locked base, free quote and locked quote**. Placing an ask reserves base; placing a bid reserves its quote obligation. A partial fill adjusts the book and the maker's reserved inventory.
+
+![Maker collateral lifecycle](/assets/diagrams/custody.svg)
+
+## Operational workflow
+
+1. Initialize a maker balance for the intended market.
+2. Deposit base or quote through the custody vault.
+3. Submit a limit order with a validated price and sufficient free collateral.
+4. Monitor the order sequence, page index, available liquidity and inventory usage.
+5. Read actual fills from confirmed state rather than expecting orders to remain unchanged.
+6. Cancel residual quantity to unlock collateral; withdraw only free balances.
+
+## Quoting discipline
+
+Price and raw quantity should be computed using integer arithmetic. Preserve base/quote mint decimal conventions when converting display amounts; bound slippage and account fan-out. High-frequency makers should account for blockhash expiry, RPC variance, transaction ordering and stale snapshots.
+
+## Risk checklist
+
+- A resting order commits inventory even if the wallet token balance remains unchanged.
+- Cancel is not proof of withdrawal; re-read the maker balance.
+- Use correct page links and owner sidecars when operating across pages.
+- Keep keys and signing authority separate from read-only monitoring services.
+- Track inventory and failed transactions independently of UI display state.
+
+[Collateral](/concepts/collateral) · [Maker instructions](/architecture/account-reference) · [First trade](/guides/first-trade)

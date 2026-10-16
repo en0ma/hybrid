@@ -1,0 +1,36 @@
+---
+title: "Operator runbook"
+description: "Day-2 checks and incident handling for a Hybrid-powered market."
+icon: "clipboard-check"
+---
+
+# Operating a Hybrid market
+
+An operator should preserve a **signed deployment manifest**, a repeatable reconciliation procedure and a documented ownership/upgrade policy.
+
+## Daily checks
+
+| Signal | Interpretation | Response |
+| --- | --- | --- |
+| RPC errors or timeouts | Unreliable execution / monitoring | Check endpoint health, retries and confirmation strategy |
+| Program failures by instruction | Invalid accounts, funds or bounds | Examine logs and reproduce with simulation |
+| Maker free/locked balances | Reserved inventory per maker | Reconcile against resting orders |
+| SPL vault balances vs custody totals | Solvency/accounting discrepancy | Investigate immediately; restrict operator activity through available controls |
+| Page and sidecar consistency | Canonical book ownership | Validate links, counts and maker mapping |
+| Unconfirmed transaction receipts | Possible failed or stale submissions | Read final transaction status and avoid assuming success |
+
+## Authority and security
+
+Use least-privilege signer storage. Separate upgrade, provisioning and maker trading keys. Do not log or upload generated private keypairs. Document the rotation process and who can deploy/upgrade.
+
+## Incident response
+
+<Steps>
+<Step title="Detect">Identify affected market, slot range, transaction signatures and vaults.</Step>
+<Step title="Contain">Stop external transaction submission through team-controlled services; do not claim an on-chain pause instruction exists unless verified in the deployed program.</Step>
+<Step title="Reconcile">Snapshot market books, sidecars, custody, maker balances and SPL token accounts.</Step>
+<Step title="Remediate">Use only authorized and tested program instructions, or an explicitly reviewed program upgrade process.</Step>
+<Step title="Review">Write an incident timeline and regression tests before resuming normal activity.</Step>
+</Steps>
+
+[Testing & security](/operations/testing-and-security) · [Trust boundaries](/protocol/trust-boundaries)

@@ -1,0 +1,32 @@
+---
+title: "Custody & collateral"
+description: "How free and locked balances back resting orders and settle trades."
+icon: "vault"
+---
+
+![Hybrid collateral, vault custody and trade settlement](/assets/diagrams/custody.svg)
+
+## Maker balance model
+
+| Balance | Meaning |
+| --- | --- |
+| `free_base` | Base atoms available to withdraw or lock |
+| `locked_base` | Base atoms reserved by resting asks |
+| `free_quote` | Quote atoms available to withdraw or lock |
+| `locked_quote` | Quote atoms reserved by resting bids |
+
+When placing an ask, Hybrid locks base quantity. Placing a bid reserves quote notional. Cancellation returns unused collateral to the maker's **free** balance; fills consume reserved collateral and credit received assets.
+
+## Vault accounting
+
+A market has base and quote SPL Token vaults owned by a **vault-authority PDA**. A custody record tracks token mint addresses, vault addresses, decimals and accounted totals.
+
+<Warning>
+Only **free** maker collateral can be withdrawn. Unlock the unfilled portion of a resting order before attempting to withdraw those atoms.
+</Warning>
+
+## Conservation principle
+
+Maker balances and custody totals are updated alongside SPL token movements in a single Solana transaction. The funded workflow independently audits observable before/after balances and partial order fill state rather than trusting a transaction signature alone.
+
+[Inspect custody account relationships](/architecture/accounts).

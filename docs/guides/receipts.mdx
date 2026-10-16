@@ -1,0 +1,40 @@
+---
+title: "Verify transactions & settlement"
+description: "Audit six signed receipts and validate market accounting evidence."
+icon: "badge-check"
+---
+
+## What counts as proof?
+
+A confirmed signature is necessary but not enough. The local funded run additionally requires:
+- Six **distinct** ordered, confirmed stage signatures.
+- Correct Hybrid program / account linkage.
+- Receipt-to-order-sequence correspondence.
+- Actual token and maker-balance changes during trade.
+- A partial ask-book fill and a verified final audit.
+
+## Run the receipt audit
+
+```bash
+cd devnet-demo
+npm run run:surfpool
+# The runner writes evidence into .surfpool-fixture/
+cat .surfpool-fixture/verified-receipts.json
+```
+
+`run:surfpool` executes the receipt verifier as part of the lifecycle. To verify arbitrary existing transactions separately, invoke `npm run verify:receipts -- <PLACE_SIGNATURE> <TRADE_SIGNATURE> <CANCEL_SIGNATURE>` with exactly three chronological transaction signatures (or the script's supported six-signature variant).
+
+## Safe CI artifacts
+
+The funded workflow uploads only:
+- `run-report.json`
+- `provision-evidence.json`
+- `lifecycle-evidence.json`
+- `verified-receipts.json`
+- `surfpool.log`
+
+<Warning>
+Do **not** upload the entire `.surfpool-fixture/` directory. It can contain generated wallet keypair JSON files.
+</Warning>
+
+[Inspect successful funded workflow runs](https://github.com/en0ma/hybrid/actions/workflows/surfpool-funded.yml).

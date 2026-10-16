@@ -1,0 +1,23 @@
+---
+title: "Capabilities & scope"
+description: "Explore available protocol capabilities and development surfaces."
+icon: "gauge"
+---
+
+## Protocol capabilities
+
+| Component | Developer surface |
+| --- | --- |
+| Deterministic price/quantity planning | `crates/engine` |
+| Canonical order pages and owner sidecars | `crates/state` |
+| Maker collateral balances and atomic settlement | `crates/settlement` |
+| On-chain instruction dispatch and SPL vault transfers | `program` |
+| Wallet smoke interface | `devnet-demo` |
+| Automated integration and receipt auditing | `.github/workflows/surfpool-funded.yml` |
+
+## Next steps
+
+<Columns cols={2}>
+<Card title="Explore architecture" icon="network" href="/architecture/overview">Understand the components and account flow.</Card>
+<Card title="Run the developer harness" icon="terminal" href="/guides/wallet-smoke">Connect a wallet to a configured market.</Card>
+</Columns>

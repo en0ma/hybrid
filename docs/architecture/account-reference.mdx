@@ -1,0 +1,57 @@
+---
+title: "Account and instruction reference"
+description: "Developer-oriented account order, amount encoding and common error cases."
+icon: "table-properties"
+---
+
+# Account and instruction reference
+
+## Common encoding rules
+
+Instruction data begins with a one-byte opcode. Fixed-size amounts are **unsigned 64-bit little-endian atoms**; Q64 values are **unsigned 128-bit little-endian**. Do not use JavaScript floating-point numbers to construct raw on-chain amounts.
+
+## Maker custody operations
+
+| Instruction | Data | Required account sequence |
+| --- | --- | --- |
+| Initialize maker (12) | `[12]` | Market, custody, maker balance, maker signer, payer signer, system program |
+| Deposit (13) | `[13, asset:u8, amount:u64_le]` | Market, custody, maker balance, maker signer, maker source token account, market vault, mint, SPL Token program |
+| Withdraw (14) | `[14, asset:u8, amount:u64_le]` | Market, custody, maker balance, maker signer, market vault, maker destination token account, mint, vault authority, SPL Token program |
+
+The custody initializer **11** additionally requires market signer, payer, both mints, both vaults and system/SPL token programs. The program validates mint decimals and authority before activation.
+
+## Active swap instructions
+
+| Opcode | Side | Meaning |
+| --- | --- | --- |
+| 15 | Buy | Quote **exact-in**, minimum base output |
+| 16 | Buy | Base **exact-out**, maximum quote input |
+| 17 | Sell | Base **exact-in**, minimum quote output |
+| 18 | Sell | Quote **exact-out**, maximum base input |
+| 23 / 24 | Buy | Multipage active ask exact-in / exact-out |
+| 25 / 26 | Sell | Multipage active bid exact-in / exact-out |
+
+A head-only active buy requires market, custody, page-0 ask page, ask owner sidecar, taker signer, taker quote and base accounts, quote and base vaults, vault authority, SPL Token program, then up to eight touched writable maker-balance PDAs.
+
+<Warning>**Do not reuse buy-account ordering for sells or linked multipage instructions.** Account lists are instruction-specific. Consult the on-chain handler and client builder for the current ABI.</Warning>
+
+## Troubleshooting
+
+<AccordionGroup>
+<Accordion title="InvalidAccountData or InvalidSeeds" icon="shield-alert">
+Recheck market ownership, canonical page PDA seeds, the bound owner sidecar, page links, custody program ownership, and account order. Never invent a page-0 sidecar PDA.
+</Accordion>
+<Accordion title="Insufficient funds or collateral" icon="wallet">
+Verify maker `free_base` / `free_quote`, vault balances, SPL mint decimals and taker token account balances. Resting asks and bids lock their full required collateral.
+</Accordion>
+<Accordion title="Slippage or liquidity rejection" icon="scale">
+Exact-in/out bounds must hold and the active plan must be completely satisfiable by eligible explicit orders. Reduce size, adjust permitted slippage, or inspect the book.
+</Accordion>
+<Accordion title="No successful receipt" icon="receipt">
+Check transaction simulation, wallet approval, recent blockhash, RPC endpoint and confirmation before analyzing settlement. A signature alone does not prove fill amounts.
+</Accordion>
+</AccordionGroup>
+
+## Source of truth
+
+The byte layouts and account metas are specified in `program/src/lib.rs`, `program/src/linked_maker.rs`, `program/src/multipage_buy.rs`, `program/src/multipage_sell.rs`, and the Rust client builders. Run program tests after any ABI modification.

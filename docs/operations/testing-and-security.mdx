@@ -1,0 +1,44 @@
+---
+title: "Testing & security"
+description: "Understand the quality gates, invariants and pre-mainnet security boundaries."
+icon: "shield-check"
+---
+
+## Quality gates
+
+The repository's CI includes:
+- Rust formatting and Clippy.
+- Native workspace tests and state-byte budgets.
+- SBF compilation and program tests.
+- Bytecode budget checks, fuzz targets and compute-unit guardrails.
+- Independent benchmark provenance / Manifest baseline comparisons.
+- Funded Surfpool lifecycle with signed receipt and final audit checks.
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+# Full SBF/fuzz/CU pipeline requires the configured toolchain:
+bash ci/run.sh
+```
+
+## Security principles
+
+<AccordionGroup>
+<Accordion title="Authenticate accounts and signer authority" icon="key-round">
+Validate PDAs, ownership, program IDs, market binding, owner sidecars and maker signers on-chain. Do not trust browser-provided account addresses.
+</Accordion>
+<Accordion title="Enforce collateral conservation" icon="vault">
+Orders cannot consume more than locked maker collateral. Free/locked bookkeeping must reconcile with SPL token vault balances.
+</Accordion>
+<Accordion title="Fail closed at unsupported liquidity boundaries" icon="shield-alert">
+Active-only fills must reject attempts to consume passive liquidity without a supported settlement and vault-accounting path.
+</Accordion>
+<Accordion title="Keep test secrets out of CI artifacts" icon="file-lock">
+Only upload the allowlisted evidence files from the funded lifecycle; generated fixture keypairs are private test material.
+</Accordion>
+</AccordionGroup>
+
+<Warning>
+Passing CI is **not** an independent security audit or authorization to deploy real-value assets to Solana mainnet. External review, upgrades/authority operations and incident response need separate sign-off.
+</Warning>

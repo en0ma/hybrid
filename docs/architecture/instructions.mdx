@@ -1,0 +1,43 @@
+---
+title: "Instruction reference"
+description: "Important protocol opcodes and byte-level transaction conventions."
+icon: "binary"
+---
+
+## ABI conventions
+
+The program dispatches instructions by **the first byte** of instruction data. Unless noted otherwise, integer fields are little-endian, and token quantities are integer atoms.
+
+| Opcode | Operation | Notes |
+| --- | --- | --- |
+| 11 | Initialize custody | Market signer; mint and vault validation |
+| 12 | Initialize maker balance | Maker signer and payer |
+| 13 / 14 | Deposit / withdraw | Asset selector: 0 base, 1 quote |
+| 15 / 16 | Active ask buy | Exact-in / exact-out |
+| 17 / 18 | Active bid sell | Exact-in / exact-out |
+| 22 | Linked-book validation | Read-only preflight |
+| 23 / 24 | Multipage ask buy | Exact-in / exact-out |
+| 25 / 26 | Multipage bid sell | Exact-in / exact-out |
+| 27 / 28 | Page lifecycle | Close / recreate paths |
+| 29 / 30 / 31 / 32 | Linked maker operations | Link / place / cancel / unlink |
+| 33–37 | Passive-related execution | Consult implementation and tests for supported scope |
+
+## Deposit and withdrawal encoding
+
+```text
+[13 or 14, asset_selector:u8, amount:u64_le]
+```
+
+The amount must be positive and expressed in the mint's native token atoms.
+
+## Multipage active buy encoding
+
+```text
+[23 or 24, page_count:u8, amount:u64_le, limit:u64_le]
+```
+
+Instructions have **different account order requirements**. Never interchange an active buy, active sell and linked maker account list merely because their amounts share an encoding pattern.
+
+<Info>
+The authoritative source for complete account order, validation and evolving ABI is `program/src/lib.rs`, `program/src/multipage_buy.rs`, `program/src/multipage_sell.rs`, and `program/src/linked_maker.rs`.
+</Info>

@@ -1,0 +1,53 @@
+---
+title: "Hybrid Developer Documentation"
+description: "Build and understand Hybrid, a Solana hybrid order-book protocol."
+icon: "house"
+---
+
+# Hybrid
+
+A Solana-native trading protocol combining **explicit central-limit-order-book orders** with a **compressed passive-liquidity architecture**.
+
+<Columns cols={2}>
+  <Card title="Get started" icon="rocket" href="/start/quickstart">
+    Explore the workspace and run the local developer harness.
+  </Card>
+  <Card title="How liquidity works" icon="layers" href="/concepts/hybrid-liquidity">
+    Learn the distinction between explicit orders and passive liquidity.
+  </Card>
+  <Card title="Architecture" icon="network" href="/architecture/overview">
+    Understand the Rust crates, on-chain program, state and wallet harness.
+  </Card>
+  <Card title="Run Surfpool" icon="flask-conical" href="/deployment/local-surfpool">
+    Reproduce the signed six-stage integration proof locally.
+  </Card>
+</Columns>
+
+## Why Hybrid
+
+Price-time-prioritized orders, program-enforced maker collateral, and deterministic execution planning give traders and protocol teams a disciplined foundation for custom Solana markets.
+
+<Card title="Explore the design rationale" icon="sparkles" href="/start/why-hybrid">Why Hybrid, when to choose a CLOB, and how passive price modeling fits the architecture.</Card>
+
+## How Hybrid works
+
+![Hybrid liquidity model](/assets/diagrams/liquidity.svg)
+
+See [liquidity concepts](/concepts/hybrid-liquidity) and [architecture](/architecture/overview). These diagrams are editable in Excalidraw via the source files in the repository.
+
+## The lifecycle
+
+<Steps>
+  <Step title="Initialize">Create or activate collateralized maker state.</Step>
+  <Step title="Deposit">Transfer SPL assets into market vaults and credit free maker collateral.</Step>
+  <Step title="Place">Reserve collateral in a price-time ordered resting ask.</Step>
+  <Step title="Trade">Execute a taker buy against backed active orders.</Step>
+  <Step title="Cancel">Release remaining locked collateral on unfilled quantity.</Step>
+  <Step title="Withdraw">Transfer eligible free collateral back to the maker.</Step>
+</Steps>
+
+## Where to go next
+
+- **Developers:** [Quickstart](/start/quickstart) → [Accounts](/architecture/accounts) → [Wallet smoke guide](/guides/wallet-smoke).
+- **Protocol researchers:** [Hybrid liquidity](/concepts/hybrid-liquidity) → [Matching](/concepts/orders-and-matching) → [Instructions](/architecture/instructions).
+- **Operators:** [Local deployment](/deployment/local-surfpool) → [Devnet prerequisites](/deployment/public-devnet) → [Testing and security](/operations/testing-and-security).

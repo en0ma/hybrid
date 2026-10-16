@@ -1,0 +1,33 @@
+---
+title: "Local Surfpool deployment"
+description: "Build and run the actual Hybrid SBF executable against disposable local accounts."
+icon: "flask-conical"
+---
+
+## Reproducible deployment
+
+The repository's `run:surfpool` script builds the program, uploads the executable to local Surfpool under the pinned ID, provisions disposable accounts, runs six signed lifecycle stages and audits the results.
+
+<Steps>
+<Step title="Install tooling">Install Node.js 22, Rust/Cargo, Anza Solana CLI with `cargo build-sbf`, and Surfpool CLI.</Step>
+<Step title="Start an isolated runtime">
+```bash
+NO_DNA=1 surfpool start --offline --ci --no-deploy
+```
+</Step>
+<Step title="Execute the funded proof">
+```bash
+cd devnet-demo
+npm install
+HYBRID_CLUSTER=surfpool SOLANA_RPC_URL=http://127.0.0.1:8899 \
+  HYBRID_FIXTURE_DIR=./.surfpool-fixture npm run run:surfpool
+```
+</Step>
+<Step title="Inspect evidence">Review `run-report.json`, `lifecycle-evidence.json` and `verified-receipts.json` under `.surfpool-fixture/`.</Step>
+</Steps>
+
+## Success criteria
+
+The GitHub workflow requires `deployed`, `provisioned`, `lifecycleCompleted`, `receiptsVerified`, `finalAudit.verified`, `tradeSettlement.verified` and `partialBookFillVerified`, with six unique signatures.
+
+See [Public devnet prerequisites](/deployment/public-devnet) for what differs.

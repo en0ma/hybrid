@@ -1,0 +1,30 @@
+---
+title: "For DEX teams"
+description: "Integration and operational roadmap for teams building a market on Hybrid."
+icon: "building-2"
+---
+
+# Launch a market on Hybrid
+
+Hybrid provides a Solana program and reference wallet/test infrastructure. Your DEX team still owns deployment authority, market configuration, frontend, token support, customer experience, operational monitoring and incident response.
+
+## Team responsibilities
+
+<Columns cols={2}>
+<Card title="Protocol integration" icon="circuit-board">Pin program ID and ABI, provision accounts and keep a verified market manifest.</Card>
+<Card title="Trading experience" icon="monitor-smartphone">Wallet connection, quoting, order entry, transaction simulation and receipt inspection.</Card>
+<Card title="Custody operations" icon="vault">Manage market authorities, token mints, vaults and maker inventory safely.</Card>
+<Card title="Operations" icon="activity">Monitor RPC performance, failed transactions, vault totals and unexpected book state.</Card>
+</Columns>
+
+## Launch phases
+
+<Steps>
+<Step title="Design">Select token pair, decimals, initialization authority, maker and taker experience.</Step>
+<Step title="Provision">Deploy a compatible program; create and validate market, custody, vaults and books.</Step>
+<Step title="Integrate">Connect the wallet interface and index/verify the state needed for order UX.</Step>
+<Step title="Exercise">Run funded maker/taker lifecycle and independent token/receipt audits.</Step>
+<Step title="Operate">Track errors, update authority access, fee balances, reconciliation and recovery processes.</Step>
+</Steps>
+
+[Market launch checklist](/deployment/launch-market) · [Operator runbook](/deployment/operator-runbook)

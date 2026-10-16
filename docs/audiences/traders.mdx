@@ -1,0 +1,30 @@
+---
+title: "For traders"
+description: "Execution behavior, slippage, transaction confirmation and settlement."
+icon: "candlestick-chart"
+---
+
+# Understand your execution
+
+Hybrid's active book contains limit orders in price-time priority. A buy consumes qualifying asks; a sell consumes qualifying bids. The taker signs a Solana transaction and supplies the appropriate SPL Token accounts.
+
+## Choose an execution constraint
+
+| Trade | Input constraint | Output constraint |
+| --- | --- | --- |
+| Buy exact-in | Spend a specified quote amount | Receive at least `min_base_out` |
+| Buy exact-out | Receive specified base amount | Spend at most `max_quote_in` |
+| Sell exact-in | Sell specified base amount | Receive at least `min_quote_out` |
+| Sell exact-out | Receive target quote amount | Spend at most `max_base_in` |
+
+<Steps>
+<Step title="Inspect the book">Confirm the market, available orders, token mints and likely quote.</Step>
+<Step title="Set bounds">Choose the exact-in or exact-out trade and slippage protection.</Step>
+<Step title="Simulate">Check likely program and account errors before wallet authorization.</Step>
+<Step title="Sign and confirm">Submit only to the intended network with the expected Hybrid program ID.</Step>
+<Step title="Verify settlement">Compare actual token transfers, book changes and confirmed receipts.</Step>
+</Steps>
+
+<Warning>Simulation is not a price guarantee. Book state and current RPC conditions can change before inclusion; enforce program-side slippage bounds.</Warning>
+
+[First trade](/guides/first-trade) · [Orders and matching](/concepts/orders-and-matching) · [Receipt verification](/guides/receipts)
