@@ -2,6 +2,7 @@ import {inspectManifestSwapReceipt} from "./manifest-swap-attribution.mjs";
 import {auditManifestFill} from "./manifest-fill-audit.mjs";
 import {auditManifestVaultFlows} from "./manifest-vault-flow-audit.mjs";
 import {auditManifestMakerSeat} from "./manifest-maker-seat-audit.mjs";
+import {bindManifestSwapTokenAccounts} from "./manifest-account-binding.mjs";
 // Correlates the same finalized receipt, program opcode and book/account deltas.
 // Not an execution-price proof: explicitly never returns verified:true.
 export function correlateManifestTrade({receipt,signature,programId,market,taker,baseMint,quoteMint,makerOwner,before,after,vaultAccounts}){
@@ -19,6 +20,8 @@ export function correlateManifestTrade({receipt,signature,programId,market,taker
  const accounting=auditManifestFill({before,after,baseMint,quoteMint,makerOwner,takerOwner:taker,receipt});
  if(accounting.consistencyChecked!==true||accounting.verified!==false)throw Error("unexpected accounting proof state");
  if(!vaultAccounts)throw Error("explicit Manifest vault and taker account indices required");
+ const bound=bindManifestSwapTokenAccounts({receipt,programId,market,taker,vaultAccounts});
+ if(bound.instructionAccountsMatched!==true)throw Error("Manifest Swap account binding missing");
  const vault=auditManifestVaultFlows({receipt,baseMint,quoteMint,...vaultAccounts});
  if(vault.vaultFlowChecked!==true||vault.verified!==false)throw Error("unexpected vault proof state");
  const params=instruction.swapParams;
@@ -39,5 +42,5 @@ export function correlateManifestTrade({receipt,signature,programId,market,taker
  }else if(filled!==requestedOut)throw Error("actual base fill differs from exact-output Swap request");
  const makerSeat=auditManifestMakerSeat({before,after,makerOwner,filledBaseAtoms:accounting.filledBaseAtoms,quoteSpentAtoms:takerQuoteSpent.toString()});
  if(makerSeat.makerSeatChecked!==true)throw Error("maker seat accounting missing");
- return {kind:"manifest-swap-and-partial-fill-correlated",verified:false,opcodeAuthenticated:true,tokenAndBookConsistencyChecked:true,slot:receipt.slot,signature,market,filledBaseAtoms:accounting.filledBaseAtoms,takerQuoteSpentAtoms:takerQuoteSpent.toString(),takerBaseReceivedAtoms:takerBaseGain.toString(),swapParams:params,quantityConstraintChecked:true,isolatedTransactionChecked:true,vaultFlowChecked:true,makerSeatChecked:true,limitations:["Signer membership is RPC-reported, not independently cryptographically verified","No protocol fee accounting, global balance verification or comprehensive realized-price proof","Snapshots may span intervening transactions; not causal proof of fill","Do not publish as completed benchmark evidence"]};
+ return {kind:"manifest-swap-and-partial-fill-correlated",verified:false,opcodeAuthenticated:true,tokenAndBookConsistencyChecked:true,slot:receipt.slot,signature,market,filledBaseAtoms:accounting.filledBaseAtoms,takerQuoteSpentAtoms:takerQuoteSpent.toString(),takerBaseReceivedAtoms:takerBaseGain.toString(),swapParams:params,quantityConstraintChecked:true,isolatedTransactionChecked:true,vaultFlowChecked:true,swapAccountsBound:true,makerSeatChecked:true,limitations:["Signer membership is RPC-reported, not independently cryptographically verified","No protocol fee accounting, global balance verification or comprehensive realized-price proof","Snapshots may span intervening transactions; not causal proof of fill","Do not publish as completed benchmark evidence"]};
 }

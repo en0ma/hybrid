@@ -104,3 +104,7 @@ The fee-free single-maker audit also compares every claimed seat across before/a
 ### Swap account-index binding
 
 The `manifest-account-binding.mjs` helper requires explicit SPL balance indices to match the **actual core Swap instruction accounts** at generated Manifest positions traderBase(3), traderQuote(4), baseVault(5), and quoteVault(6). This prevents substitution of unrelated accounts into the vault-flow audit. Integrating the checker into live execution still requires real raw finalized receipt fixtures; independent account identity and market-derived vault pubkeys remain outstanding.
+
+### Mandatory Swap-to-vault account binding
+
+The combined correlated-trade audit now invokes `bindManifestSwapTokenAccounts` before checking vault flows. Its four supplied token-account indices must correspond to the accounts at the generated Swap instruction positions. A substituted index fails the entire audit, even when fabricated SPL balances happen to conserve. This protects the read-only audit path; it does not substitute for a real funded Manifest execution or independent market-vault authority verification.
