@@ -96,3 +96,7 @@ The combined Manifest correlation requires one non-ComputeBudget top-level instr
 ### Correlated vault evidence required
 
 The correlated Swap audit now requires explicit four-account indices (`vaultAccounts`) and checks both base and quote vault movements against the taker's debit/credit. A mismatched or missing vault fails the combined audit. Market-seat balances, trade causality, fees, and binary/program deployment attestation are still outstanding. The result remains `verified: false`.
+
+### Claimed-seat isolation
+
+The fee-free single-maker audit also compares every claimed seat across before/after snapshots, rejects new/deleted/duplicate seats and rejects balance mutations for unrelated traders. This restricts the benchmark to an otherwise quiescent market; it does not prove that the snapshots are immediately adjacent to the transaction, and does not support global orders or fee-bearing settlement.
