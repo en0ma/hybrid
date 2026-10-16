@@ -88,3 +88,7 @@ The correlated receipt checker now also computes taker-side integer SPL base gai
 ### Transaction isolation for token-flow attribution
 
 The combined Manifest correlation requires one non-ComputeBudget top-level instruction. Bundled token transfers and other state-changing instructions are rejected because whole-transaction SPL before/after deltas cannot be attributed to a specific Swap within a mixed transaction. ComputeBudget instructions may precede the Swap. This is a conservative condition for the single-maker benchmark, not a general decoding or proof of custody conservation.
+
+### Isolated Manifest vault/token flow gate
+
+`manifest-vault-flow-audit.mjs` checks four **explicit token-account indices** (taker base/quote and market base/quote vaults) against the same transaction's pre/post SPL balances. It requires stable identities, expected token direction, and exact atom conservation between each vault and taker. This strict model is limited to isolated, fee-free four-account swaps and intentionally rejects fee/extra-account flows pending a richer auditor; it does **not** verify market seats, order causality or executable provenance. Its result remains `verified: false`.

@@ -1,0 +1,7 @@
+import test from "node:test";import assert from "node:assert/strict";import {auditManifestVaultFlows} from "./manifest-vault-flow-audit.mjs";
+const b=(accountIndex,mint,amount,owner)=>({accountIndex,mint,owner,programId:"token",uiTokenAmount:{amount:String(amount)}});
+const fixture=()=>({baseMint:"base",quoteMint:"quote",takerBaseIndex:0,takerQuoteIndex:1,baseVaultIndex:2,quoteVaultIndex:3,receipt:{meta:{err:null,preTokenBalances:[b(0,"base",0,"taker"),b(1,"quote",100,"taker"),b(2,"base",1000,"vault"),b(3,"quote",200,"vault")],postTokenBalances:[b(0,"base",40,"taker"),b(1,"quote",80,"taker"),b(2,"base",960,"vault"),b(3,"quote",220,"vault")]}}});
+test("checks isolated four-account vault conservation",()=>{const a=auditManifestVaultFlows(fixture());assert.equal(a.vaultFlowChecked,true);assert.equal(a.verified,false);assert.equal(a.baseAtomsReceived,"40")});
+test("rejects missing account and duplicate index",()=>{const a=fixture();a.receipt.meta.postTokenBalances.pop();assert.throws(()=>auditManifestVaultFlows(a),/missing/);const b=fixture();b.quoteVaultIndex=2;assert.throws(()=>auditManifestVaultFlows(b),/distinct/)});
+test("rejects out-of-balance vault flow",()=>{const a=fixture();a.receipt.meta.postTokenBalances[2].uiTokenAmount.amount="961";assert.throws(()=>auditManifestVaultFlows(a),/conservation mismatch/)});
+test("rejects changed account owner",()=>{const a=fixture();a.receipt.meta.postTokenBalances[3].owner="different";assert.throws(()=>auditManifestVaultFlows(a),/identity changed/)});
