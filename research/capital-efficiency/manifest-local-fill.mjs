@@ -6,9 +6,13 @@ export async function runLocalManifestFill({rpcUrl,connection,payer,instruction,
  requireLocalRpc(rpcUrl);
  if(typeof snapshotMarket!=="function")throw Error("real Manifest market snapshot loader required");
  if(payer?.publicKey?.toBase58?.()!==taker)throw Error("transaction signer must equal expected taker");
+ // The loader must use the same loopback RPC as the sender; never accept
+ // a second unverified data source for snapshots.
+ if(connection?.rpcEndpoint!==rpcUrl&&connection?.rpcEndpoint!==new URL(rpcUrl).href)throw Error("snapshot and sender RPC endpoint mismatch");
  const before=await snapshotMarket();
  if(before?.market!==market||before?.baseMint!==baseMint||before?.quoteMint!==quoteMint)throw Error("pre-trade market identity mismatch");
  if(!Number.isSafeInteger(before.slot)||before.slot<=0)throw Error("pre-trade market slot required");
+ if(before.programId!==programId||!/^([a-f0-9]{40})$/i.test(before.commit??""))throw Error("pre-trade program identity and pinned source commit required");
  const executed=await sendLocalManifestInstruction({rpcUrl,connection,payer,instruction,Transaction,expectedProgramId:programId,expectedMarket:market});
  const after=await snapshotMarket();
  if(after?.market!==market||after?.baseMint!==baseMint||after?.quoteMint!==quoteMint)throw Error("post-trade market identity mismatch");
@@ -19,6 +23,7 @@ export async function runLocalManifestFill({rpcUrl,connection,payer,instruction,
  const receipt=await connection.getTransaction(executed.signature,{commitment:"finalized",maxSupportedTransactionVersion:0,encoding:"json"});
  if(!receipt||receipt.slot!==executed.slot||receipt.transaction?.signatures?.[0]!==executed.signature||receipt.meta?.err!==null)
   throw Error("raw finalized Manifest receipt disagrees with signed submission");
+ if(!Number.isSafeInteger(receipt.meta?.computeUnitsConsumed)||receipt.meta.computeUnitsConsumed<0||!Number.isSafeInteger(receipt.meta?.fee)||receipt.meta.fee<0)throw Error("independent receipt missing valid compute or fee accounting");
  if(receipt.meta?.computeUnitsConsumed!==executed.computeUnits||receipt.meta?.fee!==executed.feeLamports)
   throw Error("independent finalized receipt metrics disagree with submitted transaction");
  const audit=correlateManifestTrade({receipt,signature:executed.signature,programId,market,taker,baseMint,quoteMint,makerOwner,before,after,vaultAccounts});

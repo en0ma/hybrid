@@ -116,3 +116,7 @@ The combined correlated-trade audit now invokes `bindManifestSwapTokenAccounts` 
 ### Strict local execution evidence boundaries
 
 Before/after SDK snapshots must retain the same source commit and deployed program ID and strictly bracket the finalized transaction slot. The independently fetched finalized raw receipt must agree with the sender's compute usage and fee. These checks reduce accidental evidence misattribution but are not bytecode provenance or complete benchmark proof.
+
+### Fail-closed execution data sources
+
+Local fill orchestration refuses mismatched sender RPC endpoints, unpinned before-state provenance, and independent receipts lacking integer compute or fee figures. The snapshot callback is operator-supplied and **not** automatically proven to use the same RPC; operators must bind its connection to the sender and retain the raw snapshot evidence.
