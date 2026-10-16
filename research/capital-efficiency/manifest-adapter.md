@@ -62,3 +62,7 @@ This is **partial audit evidence only**: an ask reduction may also come from can
 ```sh
 node --test research/capital-efficiency/manifest-fill-audit.test.mjs
 ```
+
+### Strict partial-fill identity gate
+
+The audit now explicitly rejects disappearances of entire resting orders, order sequence/price replacements, other-maker order mutations, and snapshots that do not bracket the receipt's slot. A completely consumed order still requires stronger opcode/event proof; until then, the helper only checks a **single persistent partially filled order**. Its output is `consistencyChecked: true, verified: false`, preventing reports from interpreting token conservation and book movement as conclusive trade authentication.
