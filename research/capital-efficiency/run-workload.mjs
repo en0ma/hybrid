@@ -1,7 +1,8 @@
 // Executes operator-supplied, protocol-specific adapters, never a mock result.
 // Adapters may submit only to an explicitly configured test network.
 import {readFileSync,writeFileSync} from "node:fs";
-import {resolve,pathToFileURL} from "node:url";
+import {resolve} from "node:path";
+import {pathToFileURL} from "node:url";
 import {validateWorkload} from "./validate-workload.mjs";
 const operations=new Set(["initialize","deposit","place","trade","audit","partial-fill","cancel","confirm","refresh","replace","simulate-timeout","reconcile-signature","adverse-price-update","attempt-withdraw"]);
 export async function executeWorkload(contract,adapters){
