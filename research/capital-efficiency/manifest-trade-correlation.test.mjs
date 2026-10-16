@@ -10,3 +10,6 @@ test("rejects exact-input Swap with too little maker base fill",()=>{const x=mak
 
 test("rejects taker quote debit exceeding the requested Swap input cap",()=>{const x=make();x.receipt.meta.preTokenBalances[3].uiTokenAmount.amount="200";x.receipt.meta.postTokenBalances[3].uiTokenAmount.amount="100";x.receipt.meta.postTokenBalances[2].uiTokenAmount.amount="100";assert.throws(()=>correlateManifestTrade(x),/exceeds Swap maximum input/) });
 test("rejects fill quantity that does not match the taker's base gain",()=>{const x=make();x.receipt.meta.postTokenBalances[0].uiTokenAmount.amount="50";x.receipt.meta.postTokenBalances[1].uiTokenAmount.amount="50";assert.throws(()=>correlateManifestTrade(x),/taker base movement differs/) });
+
+test("rejects a swap bundled with unrelated token transfers",()=>{const x=make();x.receipt.transaction.message.instructions.push({programIdIndex:3,accounts:[0,4],data:"3"});assert.throws(()=>correlateManifestTrade(x),/isolated Manifest Swap/) });
+test("allows only non-state-changing ComputeBudget alongside a swap",()=>{const x=make();x.receipt.transaction.message.accountKeys.push("ComputeBudget111111111111111111111111111111");x.receipt.transaction.message.instructions.unshift({programIdIndex:8,accounts:[],data:"3"});assert.equal(correlateManifestTrade(x).isolatedTransactionChecked,true)});
