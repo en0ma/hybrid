@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 2,
+  "experiment": "two-market-maker-inventory",
+  "baseline": "per-market-locked",
+  "candidate": "shared-liquidity-proposal",
+  "manifestBaselineCommit": null,
+  "network": "surfpool",
+  "cases": [
+    {
+      "name": "one-maker-one-level",
+      "makers": 1,
+      "markets": 1,
+      "levels": 1
+    },
+    {
+      "name": "eight-maker-fanout",
+      "makers": 8,
+      "markets": 1,
+      "levels": 1
+    },
+    {
+      "name": "two-market-inventory",
+      "makers": 1,
+      "markets": 2,
+      "levels": 2
+    },
+    {
+      "name": "partial-fill-cancel-replace-retry",
+      "makers": 2,
+      "markets": 1,
+      "levels": 2,
+      "events": [
+        "place",
+        "partialFill",
+        "cancel",
+        "confirm",
+        "refresh",
+        "replace",
+        "submissionTimeout",
+        "reconcileSignatureBeforeRetry"
+      ]
+    },
+    {
+      "name": "adverse-price-collateral-stress",
+      "makers": 2,
+      "markets": 2,
+      "levels": 2,
+      "events": [
+        "deposit",
+        "place",
+        "priceMoveAgainstMaker",
+        "partialFill",
+        "withdrawAttempt",
+        "reconcileReserves"
+      ]
+    }
+  ],
+  "metrics": [
+    "computeUnits",
+    "transactionCount",
+    "accountMetas",
+    "rentBytes",
+    "inventoryUtilizationBps",
+    "fillPriceAtoms",
+    "vaultConservationVerified",
+    "signingLatencyMs",
+    "settlementFailureRateBps"
+  ],
+  "results": [],
+  "hybridCommit": null,
+  "environment": {
+    "solanaVersion": null,
+    "rustVersion": null,
+    "nodeVersion": null,
+    "hostCPU": null,
+    "hostRAMGiB": null,
+    "operatingSystem": null,
+    "runnerId": null,
+    "rpcUrlOrLocalMode": null,
+    "mintDecimals": {
+      "base": null,
+      "quote": null
+    },
+    "measurementMethod": null
+  },
+  "resultRequirements": {
+    "eachResultMustInclude": [
+      "caseName",
+      "implementation",
+      "implementationCommit",
+      "environmentId",
+      "metrics",
+      "receiptSignatures",
+      "accountingVerified"
+    ],
+    "implementations": [
+      "hybrid",
+      "manifest"
+    ],
+    "notes": "Do not populate synthetic or unmeasured figures as empirical measurements."
+  }
+}

@@ -1,0 +1,7 @@
+import test from "node:test";import assert from "node:assert/strict";import {buildManifestMakerInstructions} from "./manifest-maker-instructions.mjs";
+const captured=[];const client={market:{baseMint:()=>"mint"},depositIx:(...args)=>{captured.push(["deposit",args]);return {ix:1}},placeOrderIx:p=>{captured.push(["place",p]);return {ix:2}},cancelOrderIx:id=>{captured.push(["cancel",id]);return {ix:3}}};
+const input={client,maker:"maker",baseAtoms:"1000000",baseDecimals:6,priceQuotePerBase:2,orderId:5,OrderType:{Limit:1}};
+test("uses actual SDK deposit, place and cancel methods",()=>{const x=buildManifestMakerInstructions(input);assert.equal(x.kind,"manifest-sdk-instructions-unsubmitted");assert.equal(captured[1][1].numBaseTokens,1);assert.equal(captured[1][1].isBid,false);assert.equal(captured[2][1],5)});
+test("rejects inexact huge integer quantities",()=>assert.throws(()=>buildManifestMakerInstructions({...input,baseAtoms:"9007199254740993"}),/integer core/));
+test("rejects invalid price or zero amount",()=>{assert.throws(()=>buildManifestMakerInstructions({...input,priceQuotePerBase:0}),/positive price/);assert.throws(()=>buildManifestMakerInstructions({...input,baseAtoms:"0"}),/positive exact integer/)});
+test("does not make a transaction or invent a signature",()=>{const x=buildManifestMakerInstructions(input);assert.equal(x.signature,undefined);assert.equal(x.slot,undefined)});
