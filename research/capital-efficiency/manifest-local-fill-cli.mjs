@@ -21,6 +21,16 @@ export async function preflightLocalManifestAccounts({connection,PublicKey,confi
  }
  if(balances[1]===0n)throw Error("unfunded taker quote token account");
  if(balances[2]===0n)throw Error("unfunded Manifest base vault inventory");
+ const bytes=instruction.data;
+ if(!(bytes instanceof Uint8Array)||bytes.length!==19||bytes[0]!==4||bytes[17]!==0||bytes[18]>1)
+  throw Error("funding preflight requires a valid quote-in Manifest Swap");
+ const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+ const inAtoms=view.getBigUint64(1,true),outAtoms=view.getBigUint64(9,true);
+ if(inAtoms===0n||outAtoms===0n)throw Error("funding preflight requires positive Swap atom quantities");
+ // Exact-in commits the full quote input; exact-out instead caps the quote debit.
+ if(balances[1]<inAtoms)throw Error("taker quote funding below declared Swap input");
+ // For exact-in, outAtoms is a minimum; for exact-out, an exact fill.
+ if(balances[2]<outAtoms)throw Error("Manifest base vault inventory below declared Swap output");
  return {checked:true,verified:false};
 }
 export async function runConfiguredManifestFill({config,fixtureLoader}){
