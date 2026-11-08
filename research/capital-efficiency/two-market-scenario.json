@@ -1,0 +1,21 @@
+{
+  "inventoryAtoms": "1000000",
+  "marketObligationsAtoms": [
+    "1000000",
+    "1000000"
+  ],
+  "fillSequence": [
+    {
+      "market": 0,
+      "amountAtoms": "400000"
+    },
+    {
+      "market": 1,
+      "amountAtoms": "600000"
+    },
+    {
+      "market": 0,
+      "amountAtoms": "600000"
+    }
+  ]
+}

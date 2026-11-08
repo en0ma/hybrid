@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "kind": "paired-hybrid-manifest-workload-contract",
+  "network": "surfpool",
+  "tokenPair": {
+    "baseMint": null,
+    "quoteMint": null,
+    "baseDecimals": 6,
+    "quoteDecimals": 6
+  },
+  "funding": {
+    "makerBaseAtoms": "1000000000",
+    "makerQuoteAtoms": "1000000000",
+    "takerBaseAtoms": "1000000000",
+    "takerQuoteAtoms": "1000000000"
+  },
+  "operations": [
+    {
+      "name": "one-maker-one-level",
+      "markets": 1,
+      "makers": 1,
+      "levels": 1,
+      "sequence": [
+        "initialize",
+        "deposit",
+        "place",
+        "trade",
+        "audit"
+      ]
+    },
+    {
+      "name": "eight-maker-fanout",
+      "markets": 1,
+      "makers": 8,
+      "levels": 1,
+      "sequence": [
+        "initialize",
+        "deposit",
+        "place",
+        "trade",
+        "audit"
+      ]
+    },
+    {
+      "name": "two-market-inventory",
+      "markets": 2,
+      "makers": 1,
+      "levels": 2,
+      "sequence": [
+        "initialize",
+        "deposit",
+        "place",
+        "trade",
+        "audit"
+      ]
+    },
+    {
+      "name": "partial-fill-cancel-replace-retry",
+      "markets": 1,
+      "makers": 2,
+      "levels": 2,
+      "sequence": [
+        "initialize",
+        "deposit",
+        "place",
+        "partial-fill",
+        "cancel",
+        "confirm",
+        "refresh",
+        "replace",
+        "simulate-timeout",
+        "reconcile-signature",
+        "audit"
+      ]
+    },
+    {
+      "name": "adverse-price-collateral-stress",
+      "markets": 2,
+      "makers": 2,
+      "levels": 2,
+      "sequence": [
+        "initialize",
+        "deposit",
+        "place",
+        "adverse-price-update",
+        "partial-fill",
+        "attempt-withdraw",
+        "audit"
+      ]
+    }
+  ],
+  "fairness": {
+    "identicalMints": true,
+    "identicalFunding": true,
+    "identicalOrderNotional": true,
+    "identicalMakerDistribution": true,
+    "identicalFillQuantities": true,
+    "recordProtocolSpecificFees": true,
+    "benchmarkProgramVersionsByCommit": true
+  },
+  "runEvidence": {
+    "hybridCommit": null,
+    "manifestCommit": null,
+    "solanaVersion": null,
+    "sbfToolchain": null,
+    "runnerId": null,
+    "transactionSignatures": [],
+    "accountSnapshotHashes": []
+  },
+  "disclaimer": "A workload contract only. This file contains no real performance measurements and does not imply Manifest and Hybrid instructions have identical ABI semantics."
+}
