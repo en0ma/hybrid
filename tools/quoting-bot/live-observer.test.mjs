@@ -50,3 +50,77 @@ test("live observer fails closed on missing or unauthenticated RPC accounts",asy
   );
   assert.equal(sends,0);
 });
+
+function put128(b,i,v){b.writeBigUInt64LE(v&((1n<<64n)-1n),i);b.writeBigUInt64LE(v>>64n,i+8);}
+const key=v=>({toBytes:()=>Buffer.alloc(32,v),equals(o){return Buffer.from(o?.toBytes?.()??[]).equals(this.toBytes());}});
+function sqrt(n) {
+  let x=n,y=(x+1n)/2n;
+  while(y<x){x=y;y=(x+n/x)/2n;}
+  return x;
+}
+function rpcFixture({inventorySlot=100,freeBase=2n,freeQuote=3n}={}) {
+  const program=key(1),market=key(3),askPage=key(4),bidPage=key(5);
+  const askOwnerPage=key(9),bidOwnerPage=key(9),maker=key(7),makerBalance=key(8);
+  const m=Buffer.alloc(128);
+  m.write("HYBRID01",0,"ascii");m[8]=1;m.writeUInt16LE(1,10);
+  m.writeUInt32LE(1,12);m.writeUInt32LE(1,20);
+  m.fill(9,96,128);m.fill(9,24,32);m.fill(9,40,48);
+  m.writeBigUInt64LE(5n,32);put128(m,48,Q64);put128(m,64,1n);
+  m.writeBigUInt64LE(1n,80);m.writeBigUInt64LE(1n,88);
+  function page(price,root){
+    const p=Buffer.alloc(1552);p.writeUInt16LE(1,0);
+    put128(p,16,price);put128(p,32,root);
+    p.writeBigUInt64LE(10n,48);p.writeBigUInt64LE(1n,56);return p;
+  }
+  const owner=Buffer.alloc(1040);owner.writeUInt16LE(1,0);owner.fill(7,16,48);
+  const balance=Buffer.alloc(112);balance.write("HYBBAL01",0,"ascii");balance[8]=1;
+  Buffer.alloc(32,3).copy(balance,16);Buffer.alloc(32,7).copy(balance,48);
+  balance.writeBigUInt64LE(freeBase,80);balance.writeBigUInt64LE(freeQuote,96);
+  let count=0,submissions=0;
+  const connection={
+    async getMultipleAccountsInfoAndContext(){
+      const ask=count++===0;
+      const p=ask?page(2n*Q64,sqrt(2n*Q64*Q64)):page(Q64,Q64);
+      return {context:{slot:100},value:[m,p,owner].map(data=>({owner:program,data}))};
+    },
+    async getAccountInfoAndContext(){
+      return {context:{slot:inventorySlot},value:{owner:program,data:balance}};
+    },
+    async getSlot(){return 100;},
+    async sendTransaction(){submissions++;throw Error("Unexpected submission");}
+  };
+  return {connection,program,market,askPage,bidPage,askOwnerPage,bidOwnerPage,maker,makerBalance,
+    submissions:()=>submissions};
+}
+function config(f) {
+  return {
+    programId:f.program,market:f.market,askPage:f.askPage,bidPage:f.bidPage,
+    askOwnerPage:f.askOwnerPage,bidOwnerPage:f.bidOwnerPage,
+    maker:f.maker,makerBalance:f.makerBalance,
+    strategy:{spreadBps:50,levels:1,sizeAtoms:"2",maxBaseAtoms:"100",maxQuoteAtoms:"100"},
+  };
+}
+test("authenticated same-slot maker inventory clamps live quote plan",async()=>{
+  const f=rpcFixture();
+  const output=await observeLiveQuotes(f.connection,config(f));
+  assert.equal(output.mode,"observation-only");
+  assert.equal(output.midPriceAtoms,"1.5");
+  assert.equal(output.availableBaseAtoms,"2");
+  assert.equal(output.availableQuoteAtoms,"3");
+  assert.equal(output.plan.orders.length,2);
+  assert.equal(output.plan.reservedBaseAtoms,"2");
+  assert.equal(output.plan.reservedQuoteAtoms,"3");
+  assert.equal(output.transactionsSubmitted,0);
+  assert.equal(f.submissions(),0);
+});
+test("maker collateral cannot be reused across slots or insufficient funds",async()=>{
+  const skewed=rpcFixture({inventorySlot:101});
+  await assert.rejects(
+    observeLiveQuotes(skewed.connection,config(skewed)),/Mixed RPC market and maker collateral slots/
+  );
+  assert.equal(skewed.submissions(),0);
+  const empty=rpcFixture({freeBase:1n,freeQuote:1n});
+  const output=await observeLiveQuotes(empty.connection,config(empty));
+  assert.equal(output.plan.orders.length,0);
+  assert.equal(empty.submissions(),0);
+});
