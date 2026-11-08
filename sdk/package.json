@@ -10,7 +10,8 @@
     "./state": "./src/state.mjs",
     "./rpc": "./src/rpc.mjs",
     "./market-maker": "./src/market-maker.mjs",
-    "./multipage": "./src/multipage.mjs"
+    "./multipage": "./src/multipage.mjs",
+    "./maker-balance": "./src/maker-balance.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
