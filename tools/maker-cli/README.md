@@ -4,7 +4,7 @@ Initial commands are **read-only** wrappers around the existing reference manife
 
 ```bash
 cd devnet-demo && npm install
-cd ../tools/maker-cli
+cd ../tools/maker-cli && npm install
 npm test
 node cli.mjs manifest <MARKET> [MAKER]
 node cli.mjs readiness <MARKET> <ASK_OWNER> <BID_OWNER> <BASE_VAULT> <QUOTE_VAULT>
