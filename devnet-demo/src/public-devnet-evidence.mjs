@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Read-only verification of a publicly collected, operator-supplied devnet evidence bundle.
 // Does not provision wallets, accept secrets, or claim RPC confirmation independently.
+// Solana identifiers are decoded and checked for their canonical byte lengths.
 import { readFileSync } from "node:fs";
 import bs58 from "bs58";
 
