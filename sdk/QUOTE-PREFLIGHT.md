@@ -74,3 +74,33 @@ recovery paths require a fresh verified snapshot before a new mutation.
 The recovery API accepts a **trusted observation from an external RPC
 adapter**; it does not implement that adapter or prove the authority of its
 finality/history assertion. No funded automatic submission is enabled.
+
+## Read-only transaction-status RPC observer (SDK)
+
+`sdk/src/signature-status.mjs` verifies the configured cluster genesis
+hash before asking `getSignatureStatuses` for the exact recorded signature
+with `searchTransactionHistory: true`. It also retrieves the finalized
+block height and classifies the result as `finalized-success`,
+`finalized-failure`, `pending`, or `unknown`. Only a structurally valid
+`finalized` status with `err: null` is marked `canConfirm: true`.
+A **null history result always returns `canExpire: false`**, even when the
+blockhash is past its last valid height. A confirmed but not finalized
+transaction cannot be treated as success. Unexpected RPC schemas or
+incorrect cluster hashes throw and must leave the journal blocked.
+
+```js
+import {observeSignatureStatus} from "./src/signature-status.mjs";
+const observation=await observeSignatureStatus(connection,{
+  signature:recordedSignature,
+  expectedGenesisHash:configuredGenesisHash,
+  lastValidBlockHeight:journaledLastValidHeight,
+});
+// Only a finalized-success result is suitable for authenticated
+// confirmation. The owner-side Rust journal must still verify signature
+// bytes and persist the terminal state; never unlock on a null result.
+```
+
+This is **read-only** and provides no proof of complete historical absence,
+no journal storage, no signed-transaction identity binding beyond the caller's
+recorded signature, and no submission capability. A trusted RPC endpoint and
+an independently validated cluster configuration remain requirements.
