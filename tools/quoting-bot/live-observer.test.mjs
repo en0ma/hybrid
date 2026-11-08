@@ -39,7 +39,7 @@ test("live observer fails closed on missing or unauthenticated RPC accounts",asy
   };
   await assert.rejects(
     ()=>observeLiveQuotes(connection,{
-      programId:"program",market:"market",
+      programId:"program",market:"market",maker:Buffer.alloc(32,7),makerBalance:Buffer.alloc(32,8),
       askPage:"ask",askOwnerPage:"askOwner",
       bidPage:"bid",bidOwnerPage:"bidOwner",
       strategy:{
@@ -80,7 +80,7 @@ function rpcFixture({inventorySlot=100,freeBase=2n,freeQuote=3n}={}) {
   const connection={
     async getMultipleAccountsInfoAndContext(){
       const ask=count++===0;
-      const p=ask?page(2n*Q64,sqrt(2n*Q64*Q64)):page(Q64,Q64);
+      const p=ask?page(2n*Q64,sqrt((2n*Q64+1n)*Q64-1n)):page(Q64,Q64);
       return {context:{slot:100},value:[m,p,owner].map(data=>({owner:program,data}))};
     },
     async getAccountInfoAndContext(){
