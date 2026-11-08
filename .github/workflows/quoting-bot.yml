@@ -20,4 +20,4 @@ jobs:
         with:
           node-version: "22"
       - name: Test exact quote planning and collateral budgets
-        run: node --test tools/quoting-bot/plan.test.mjs
+        run: node --test tools/quoting-bot/plan.test.mjs tools/quoting-bot/live-observer.test.mjs
