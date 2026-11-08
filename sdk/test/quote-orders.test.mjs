@@ -21,13 +21,14 @@ test("exact quote prices are rounded in the conservative direction",()=>{
   }
 });
 test("cached sqrt exactly meets program's canonical floor inequalities",()=>{
-  for(const price of [1n,Q64/10n,Q64,Q64+1n,Q64*2n,MAX128]){
+  for(const price of [1n,Q64/10n,Q64,Q64+1n,Q64*2n,MAX128/2n]){
     const sqrt=canonicalSqrtPriceX64(price);
     assert.ok(spot(sqrt)<=price);
     assert.ok(spot(sqrt+1n)>price);
   }
   assert.throws(()=>canonicalSqrtPriceX64(0n),/Invalid/);
   assert.throws(()=>canonicalSqrtPriceX64(MAX128+1n),/Invalid/);
+  assert.throws(()=>canonicalSqrtPriceX64(MAX128),/Invalid/);
 });
 test("bid collateral is rounded up and cannot reuse locked maker inventory",()=>{
   const result=convertQuoteTargets({
