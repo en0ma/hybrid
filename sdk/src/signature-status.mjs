@@ -1,14 +1,15 @@
 // Read-only, fail-closed Solana signature status observer.
 // It NEVER authorizes expiry from an RPC null result, signs or broadcasts.
 // The caller must independently verify the journalled signature and cluster.
-const BASE58=/^[1-9A-HJ-NP-Za-km-z]{80,90}$/;
+const SIGNATURE=/^[1-9A-HJ-NP-Za-km-z]{80,90}$/;
+const GENESIS=/^[1-9A-HJ-NP-Za-km-z]{32,50}$/;
 const validHeight=n=>Number.isSafeInteger(n)&&n>=0;
 export async function observeSignatureStatus(connection,{
   signature,expectedGenesisHash,lastValidBlockHeight,
 }){
-  if(typeof signature!=="string"||!BASE58.test(signature))
+  if(typeof signature!=="string"||!SIGNATURE.test(signature))
     throw new TypeError("Invalid transaction signature");
-  if(typeof expectedGenesisHash!=="string"||!BASE58.test(expectedGenesisHash))
+  if(typeof expectedGenesisHash!=="string"||!GENESIS.test(expectedGenesisHash))
     throw new TypeError("Expected cluster genesis hash required");
   if(!validHeight(lastValidBlockHeight))
     throw new RangeError("Invalid lastValidBlockHeight");
@@ -49,7 +50,7 @@ export async function observeSignatureStatus(connection,{
   };
   if(status.slot>contextSlot)
     throw new Error("Finalized signature slot exceeds RPC context");
-  if(status.err!==null&&status.err===undefined)
+  if(status.err===undefined)
     throw new Error("Missing transaction error field");
   if(status.err!==null)return {
     state:"finalized-failure",slot:status.slot,contextSlot,currentBlockHeight,
