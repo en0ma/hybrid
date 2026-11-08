@@ -13,7 +13,7 @@ export function decodeMakerBalance(data, {market, maker}) {
     throw new TypeError("Expected decoded maker-balance account bytes");
   }
   const b = Buffer.from(data);
-  if (b.length !== 112 || b.subarray(0, 8).toString("ascii") !== "HYBBAL01"
+  if (b.length !== 112 || !b.subarray(0, 8).equals(Buffer.from("HYBBAL01", "ascii"))
       || b[8] !== 1 || b.subarray(10,16).some(x => x !== 0)) {
     throw new Error("Invalid maker-balance magic, version, reserved bytes or length");
   }
