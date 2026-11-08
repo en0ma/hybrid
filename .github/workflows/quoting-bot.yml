@@ -1,0 +1,23 @@
+name: Quote planner tests
+on:
+  pull_request:
+    paths:
+      - "tools/quoting-bot/**"
+      - ".github/workflows/quoting-bot.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tools/quoting-bot/**"
+      - ".github/workflows/quoting-bot.yml"
+permissions:
+  contents: read
+jobs:
+  quote-planner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test exact quote planning and collateral budgets
+        run: node --test tools/quoting-bot/plan.test.mjs
