@@ -13,7 +13,8 @@
     "./multipage": "./src/multipage.mjs",
     "./maker-balance": "./src/maker-balance.mjs",
     "./quote-orders": "./src/quote-orders.mjs",
-    "./execution-policy": "./src/execution-policy.mjs"
+    "./execution-policy": "./src/execution-policy.mjs",
+    "./signature-status": "./src/signature-status.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
