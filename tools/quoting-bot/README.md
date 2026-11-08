@@ -29,8 +29,13 @@ page and sidecar PDA addresses, and a trusted RPC connection. This API does not
 derive those addresses, authenticate maker balances, or prove RPC honesty.
 
 It returns `mode: "observation-only"` and **never signs or submits a trade**.
-The provided `maxBaseAtoms` and `maxQuoteAtoms` are operator-configured risk
-budgets, not proof of funds. Live execution must remain disabled until the
+The caller must supply the maker identity and canonical maker-balance PDA. The
+read-only observer verifies program ownership, market and maker identity,
+account encoding, and **exact context-slot equality** with the book. The
+operator-configured risk budgets are capped by the authenticated **free**
+collateral balances; locked inventory cannot be promised to new quotes.
+Read-only observation fails closed if RPC cannot provide coherent snapshots.
+The caller is still responsible for independently validating all PDA derivations. Live execution must remain disabled until the
 maker inventory account is authenticated, prices converted to valid Q64 and
 lots, transaction simulation and confirmation are integrated, transaction
 retries journaled, and operator-controlled kill switches are tested.
@@ -39,4 +44,5 @@ Run unit tests:
 
 ```bash
 node --test tools/quoting-bot/plan.test.mjs tools/quoting-bot/live-observer.test.mjs
+node --test sdk/test/maker-balance.test.mjs
 ```
