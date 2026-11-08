@@ -36,7 +36,8 @@ export function canonicalSqrtPriceX64(priceX64){
   // Canonical cache: floor(s*s/Q64) <= price
   // and floor((s+1)*(s+1)/Q64) > price.
   const root=isqrt((priceX64+1n)*Q64-1n);
-  if(root===0n||root>MAX128)throw new RangeError("Invalid cached sqrt");
+  if(root===0n||root>MAX128 || ((root+1n)*(root+1n))/Q64>MAX128)
+    throw new RangeError("Invalid cached sqrt");
   return root;
 }
 function nonnegativeAtoms(value,name){
