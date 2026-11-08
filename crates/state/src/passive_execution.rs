@@ -6,8 +6,8 @@
 use crate::passive::PassiveAccountingError;
 use crate::passive_segments::{SegmentTrade, SegmentedPool};
 use hybrid_engine::{
-    quote_base_in_for_quote_out, quote_quote_in_for_base_out,
-    range_position::active_liquidity, PassiveState,
+    quote_base_in_for_quote_out, quote_quote_in_for_base_out, range_position::active_liquidity,
+    PassiveState,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
