@@ -87,6 +87,7 @@
             "pages": [
               "deployment/local-surfpool",
               "deployment/public-devnet",
+              "deployment/public-devnet-evidence",
               "deployment/launch-market",
               "deployment/operator-runbook"
             ]
