@@ -194,25 +194,12 @@ mod tests {
         book.verify().unwrap();
         let mut price = Q64;
         let before = book.clone();
-        let buy = apply_priced_segment(
-            &mut book,
-            &mut price,
-            Direction::BuyBase,
-            101,
-            100,
-            1,
-        )
-        .unwrap();
+        let buy =
+            apply_priced_segment(&mut book, &mut price, Direction::BuyBase, 101, 100, 1).unwrap();
         assert_eq!(buy.fee, 2);
         assert_eq!(book.pool.accrued_quote_fees, 2);
-        assert_eq!(
-            book.positions.iter().map(|p| p.base_fees).sum::<u64>(),
-            0
-        );
-        assert_eq!(
-            book.positions.iter().map(|p| p.quote_fees).sum::<u64>(),
-            2
-        );
+        assert_eq!(book.positions.iter().map(|p| p.base_fees).sum::<u64>(), 0);
+        assert_eq!(book.positions.iter().map(|p| p.quote_fees).sum::<u64>(), 2);
         assert_ne!(book.positions[0].base, before.positions[0].base);
         assert_ne!(book.positions[1].base, before.positions[1].base);
         book.verify().unwrap();
@@ -231,15 +218,7 @@ mod tests {
         let original = book.clone();
         let mut price = Q64;
         assert!(
-            apply_priced_segment(
-                &mut book,
-                &mut price,
-                Direction::SellBase,
-                1_500,
-                0,
-                1,
-            )
-            .is_err()
+            apply_priced_segment(&mut book, &mut price, Direction::SellBase, 1_500, 0, 1).is_err()
         );
         assert_eq!(book, original);
         assert_eq!(price, Q64);
