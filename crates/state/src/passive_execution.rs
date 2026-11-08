@@ -35,7 +35,7 @@ fn fee_ceil(gross: u64, fee_bps: u16) -> Result<u64, PassiveAccountingError> {
     let product = u128::from(gross)
         .checked_mul(u128::from(fee_bps))
         .ok_or(PassiveAccountingError::Overflow)?;
-    u64::try_from((product + 9_999) / 10_000).map_err(|_| PassiveAccountingError::Overflow)
+    u64::try_from(product.div_ceil(10_000)).map_err(|_| PassiveAccountingError::Overflow)
 }
 
 /// Price one net-input trade and distribute its assets/fees to the LPs whose
