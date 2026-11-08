@@ -23,6 +23,7 @@ test("reject invalid account encoding and mismatched identities",()=>{
   for(const bad of [
     Buffer.alloc(0),Buffer.alloc(111),Buffer.alloc(113),
     Buffer.from(fixture().map((x,i)=>i===0?0:x)),
+    Buffer.from(fixture().map((x,i)=>i===0?(x|0x80):x)),
     Buffer.from(fixture().map((x,i)=>i===8?2:x)),
     Buffer.from(fixture().map((x,i)=>i===12?5:x)),
   ])assert.throws(()=>decodeMakerBalance(bad,{market,maker}));
