@@ -26,6 +26,8 @@ pub mod client_journal;
 #[cfg(not(target_os = "solana"))]
 pub mod client_maker;
 #[cfg(not(target_os = "solana"))]
+pub mod client_recovery;
+#[cfg(not(target_os = "solana"))]
 pub mod client_rpc;
 #[cfg(not(target_os = "solana"))]
 pub mod client_session;
