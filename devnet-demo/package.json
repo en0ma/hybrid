@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "test": "node --test src/*.test.js",
+    "test": "node --test src/*.test.js src/*.test.mjs",
     "verify:receipts": "node src/verify-receipts.js",
     "check:transition": "node src/check-transition.js",
     "snapshot:maker": "node src/snapshot-maker.js",
