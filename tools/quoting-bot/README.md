@@ -1,6 +1,6 @@
 # Hybrid reference quoting strategy (P1)
 
-This module demonstrates **bounded, deterministic, integer-only target quote planning**. It does not connect to an exchange, sign transactions, manage keys, calculate Q64 order prices, or submit actual orders. Its input price is in quote atoms per base atom and is for strategy testing only.
+This module demonstrates **bounded, deterministic, integer-only target quote planning**. It does not connect to an exchange, sign transactions, manage keys, calculate Q64 order prices, or submit actual orders. Its input price is an **exact decimal string** in quote atoms per base atom (e.g. `"0.15"` when the quote token has 6 decimals and the base token has 9). Output `priceAtoms` may therefore be fractional. Bid quote collateral is conservatively rounded **up** to the next whole quote atom; actual order prices must be converted to protocol-compatible Q64 with audited rounding before submission. This is strategy testing only.
 
 ```bash
 node --test tools/quoting-bot/plan.test.mjs
