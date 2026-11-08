@@ -3,6 +3,7 @@
 pub mod multipage_ask;
 pub mod multipage_bid;
 pub mod passive;
+pub mod passive_execution;
 pub mod passive_lifecycle;
 pub mod passive_segments;
 
