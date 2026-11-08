@@ -175,6 +175,77 @@ mod tests {
     }
 
     #[test]
+    fn overlapping_lps_receive_exact_inventory_and_fee_claims() {
+        let mut book = pool();
+        book.positions[0].range.liquidity = 500;
+        book.positions[0].base = 50_000;
+        book.positions[0].quote = 50_000;
+        book.positions.push(RangeClaim {
+            range: RangePosition {
+                lower_sqrt_price_x64: Q64 / 2,
+                upper_sqrt_price_x64: Q64 * 2,
+                liquidity: 500,
+            },
+            base: 50_000,
+            quote: 50_000,
+            base_fees: 0,
+            quote_fees: 0,
+        });
+        book.verify().unwrap();
+        let mut price = Q64;
+        let before = book.clone();
+        let buy = apply_priced_segment(
+            &mut book,
+            &mut price,
+            Direction::BuyBase,
+            101,
+            100,
+            1,
+        )
+        .unwrap();
+        assert_eq!(buy.fee, 2);
+        assert_eq!(book.pool.accrued_quote_fees, 2);
+        assert_eq!(
+            book.positions.iter().map(|p| p.base_fees).sum::<u64>(),
+            0
+        );
+        assert_eq!(
+            book.positions.iter().map(|p| p.quote_fees).sum::<u64>(),
+            2
+        );
+        assert_ne!(book.positions[0].base, before.positions[0].base);
+        assert_ne!(book.positions[1].base, before.positions[1].base);
+        book.verify().unwrap();
+        let expected_base = book.pool.base_reserve + book.pool.accrued_base_fees;
+        let expected_quote = book.pool.quote_reserve + book.pool.accrued_quote_fees;
+        let first = book.redeem(0).unwrap();
+        let second = book.redeem(0).unwrap();
+        assert_eq!(first.0 + second.0, expected_base);
+        assert_eq!(first.1 + second.1, expected_quote);
+        assert_eq!(book.pool, PassivePool::default());
+    }
+
+    #[test]
+    fn sell_crossing_lower_range_boundary_is_atomic() {
+        let mut book = pool();
+        let original = book.clone();
+        let mut price = Q64;
+        assert!(
+            apply_priced_segment(
+                &mut book,
+                &mut price,
+                Direction::SellBase,
+                1_500,
+                0,
+                1,
+            )
+            .is_err()
+        );
+        assert_eq!(book, original);
+        assert_eq!(price, Q64);
+    }
+
+    #[test]
     fn failed_slippage_and_boundary_check_roll_back_all_state() {
         let mut book = pool();
         let old = book.clone();
