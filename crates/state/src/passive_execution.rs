@@ -265,8 +265,7 @@ mod tests {
         let original = book.clone();
         let mut price = Q64;
         assert!(
-            apply_priced_segment(&mut book, &mut price, Direction::SellBase, 101, 100, 1)
-                .is_err()
+            apply_priced_segment(&mut book, &mut price, Direction::SellBase, 101, 100, 1).is_err()
         );
         assert_eq!(book, original);
         assert_eq!(price, Q64);
