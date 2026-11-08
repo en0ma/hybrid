@@ -35,8 +35,7 @@ fn fee_ceil(gross: u64, fee_bps: u16) -> Result<u64, PassiveAccountingError> {
     let product = u128::from(gross)
         .checked_mul(u128::from(fee_bps))
         .ok_or(PassiveAccountingError::Overflow)?;
-    u64::try_from((product + 9_999) / 10_000)
-        .map_err(|_| PassiveAccountingError::Overflow)
+    u64::try_from((product + 9_999) / 10_000).map_err(|_| PassiveAccountingError::Overflow)
 }
 
 /// Price one net-input trade and distribute its assets/fees to the LPs whose
@@ -71,7 +70,10 @@ pub fn apply_priced_segment(
         return Err(PassiveAccountingError::InsufficientLiquidity);
     }
 
-    let state = PassiveState { sqrt_price_x64: *sqrt_price_x64, liquidity };
+    let state = PassiveState {
+        sqrt_price_x64: *sqrt_price_x64,
+        liquidity,
+    };
     let quote = match direction {
         Direction::BuyBase => quote_quote_in_for_base_out(state, net_input),
         Direction::SellBase => quote_base_in_for_quote_out(state, net_input),
@@ -126,7 +128,7 @@ pub fn apply_priced_segment(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::passive::{PassivePool};
+    use crate::passive::PassivePool;
     use crate::passive_segments::RangeClaim;
     use hybrid_engine::{range_position::RangePosition, Q64};
 
@@ -156,11 +158,13 @@ mod tests {
     fn buy_and_sell_price_and_attribute_fees_before_redemption() {
         let mut book = pool();
         let mut price = Q64;
-        let buy = apply_priced_segment(&mut book, &mut price, Direction::BuyBase, 101, 100, 1).unwrap();
+        let buy =
+            apply_priced_segment(&mut book, &mut price, Direction::BuyBase, 101, 100, 1).unwrap();
         assert_eq!(buy.fee, 2);
         assert_eq!(book.pool.accrued_quote_fees, 2);
         assert!(price > Q64);
-        let sell = apply_priced_segment(&mut book, &mut price, Direction::SellBase, 101, 100, 1).unwrap();
+        let sell =
+            apply_priced_segment(&mut book, &mut price, Direction::SellBase, 101, 100, 1).unwrap();
         assert_eq!(sell.fee, 2);
         assert_eq!(book.pool.accrued_base_fees, 2);
         book.verify().unwrap();
@@ -175,11 +179,16 @@ mod tests {
         let mut book = pool();
         let old = book.clone();
         let mut price = Q64;
-        assert!(apply_priced_segment(&mut book, &mut price, Direction::BuyBase, 100, 0, u64::MAX).is_err());
+        assert!(
+            apply_priced_segment(&mut book, &mut price, Direction::BuyBase, 100, 0, u64::MAX)
+                .is_err()
+        );
         assert_eq!(book, old);
         assert_eq!(price, Q64);
 
-        assert!(apply_priced_segment(&mut book, &mut price, Direction::BuyBase, 1_500, 0, 1).is_err());
+        assert!(
+            apply_priced_segment(&mut book, &mut price, Direction::BuyBase, 1_500, 0, 1).is_err()
+        );
         assert_eq!(book, old);
         assert_eq!(price, Q64);
     }
@@ -189,13 +198,18 @@ mod tests {
         let mut book = pool();
         let initial = book.clone();
         let mut price = Q64;
-        assert!(apply_priced_segment(&mut book, &mut price, Direction::BuyBase, 100, 10_000, 1).is_err());
+        assert!(
+            apply_priced_segment(&mut book, &mut price, Direction::BuyBase, 100, 10_000, 1)
+                .is_err()
+        );
         assert_eq!(book, initial);
         assert_eq!(price, Q64);
         book.pool.base_reserve = 1;
         book.positions[0].base = 1;
         let original = book.clone();
-        assert!(apply_priced_segment(&mut book, &mut price, Direction::BuyBase, 100, 0, 1).is_err());
+        assert!(
+            apply_priced_segment(&mut book, &mut price, Direction::BuyBase, 100, 0, 1).is_err()
+        );
         assert_eq!(book, original);
     }
 }
