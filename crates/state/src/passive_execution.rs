@@ -95,7 +95,7 @@ pub fn apply_priced_segment(
         let crossed = if next > old {
             (lower > old && lower <= next) || (upper > old && upper <= next)
         } else {
-            (lower < old && lower >= next) || (upper < old && upper >= next)
+            (lower <= old && lower >= next) || (upper <= old && upper >= next)
         };
         if crossed {
             return Err(fail());
@@ -240,6 +240,35 @@ mod tests {
             apply_priced_segment(&mut book, &mut price, Direction::BuyBase, 1_500, 0, 1).is_err()
         );
         assert_eq!(book, old);
+        assert_eq!(price, Q64);
+    }
+
+    #[test]
+    fn sell_at_adjacent_lp_boundary_rejects_wrong_active_set() {
+        let mut book = pool();
+        book.positions[0].range.upper_sqrt_price_x64 = Q64;
+        book.positions[0].base = 50_000;
+        book.positions[0].quote = 50_000;
+        book.positions[0].range.liquidity = 500;
+        book.positions.push(RangeClaim {
+            range: RangePosition {
+                lower_sqrt_price_x64: Q64,
+                upper_sqrt_price_x64: Q64 * 2,
+                liquidity: 500,
+            },
+            base: 50_000,
+            quote: 50_000,
+            base_fees: 0,
+            quote_fees: 0,
+        });
+        book.verify().unwrap();
+        let original = book.clone();
+        let mut price = Q64;
+        assert!(
+            apply_priced_segment(&mut book, &mut price, Direction::SellBase, 101, 100, 1)
+                .is_err()
+        );
+        assert_eq!(book, original);
         assert_eq!(price, Q64);
     }
 
