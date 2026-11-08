@@ -54,3 +54,23 @@ collateral, re-check exact on-chain rounding and page/lot constraints before
 building any executable instruction.
 
 Run: `cd sdk && npm test`.
+
+## Durable pending-signature reconciliation (host-only Rust)
+
+`program/src/client_recovery.rs` builds on the existing
+`MakerSession` journal; it does **not** introduce a second file format or
+transmit transactions. A pending journaled signature stays blocked while
+pending, while RPC history is incomplete, on a failed finalized transaction,
+or when a submitted signature does not match the observed one.
+
+A successful finalized signature persists the confirmed slot before quoting
+can resume; a provably absent signature only expires after the last valid
+block height, and the caller must independently establish **complete**
+historical absence on the correct cluster. A bare RPC `null` or timeout
+is not proof of absence. A `Prepared` journal remains blocked until the
+operator separately reconciles the signing/broadcast state. All successful
+recovery paths require a fresh verified snapshot before a new mutation.
+
+The recovery API accepts a **trusted observation from an external RPC
+adapter**; it does not implement that adapter or prove the authority of its
+finality/history assertion. No funded automatic submission is enabled.
