@@ -3,6 +3,7 @@
 // The SDK loader validates program ownership, sidecar binding and page layout.
 import {loadActivePageSnapshot} from "../../sdk/src/rpc.mjs";
 import {planQuotes} from "./plan.mjs";
+import {loadMakerBalanceSnapshot} from "../../sdk/src/maker-balance.mjs";
 
 const Q64 = 1n << 64n;
 const SCALE = 10n ** 18n;
@@ -45,9 +46,9 @@ export function checkSlotFreshness(bookSlot, currentSlot, maxLagSlots) {
  */
 export async function observeLiveQuotes(connection, config) {
   const {programId,market,askPage,askOwnerPage,bidPage,bidOwnerPage,
-    minContextSlot=0,maxLagSlots=10,strategy} = config;
-  if (!connection || typeof connection.getSlot !== "function" || !strategy) {
-    throw Error("Connection and strategy required");
+    minContextSlot=0,maxLagSlots=10,strategy,maker,makerBalance} = config;
+  if (!connection || typeof connection.getSlot !== "function" || !strategy || !maker || !makerBalance) {
+    throw Error("Connection, maker identity, maker balance address and strategy required");
   }
   const ask=await loadActivePageSnapshot(connection,{
     programId,market,page:askPage,ownerPage:askOwnerPage,side:"ask",minContextSlot
@@ -56,12 +57,30 @@ export async function observeLiveQuotes(connection, config) {
     programId,market,page:bidPage,ownerPage:bidOwnerPage,side:"bid",
     minContextSlot:Math.max(minContextSlot,ask.slot)
   });
+  if (ask.slot !== bid.slot) throw Error("Mixed RPC book slots");
+  const balance=await loadMakerBalanceSnapshot(connection,{
+    programId,market,maker,makerBalance,minContextSlot:ask.slot,
+  });
+  if (balance.slot !== ask.slot) throw Error("Mixed RPC market and maker collateral slots");
   const observedSlot=await connection.getSlot("confirmed");
   checkSlotFreshness(ask.slot,observedSlot,maxLagSlots);
   const midPriceAtoms=verifiedMidPrice(ask,bid);
-  const plan=planQuotes({...strategy,midPriceAtoms,stale:false});
+  // Only authenticated free collateral can back NEW bids and asks. Locked
+  // collateral already belongs to existing orders and cannot be reused.
+  const cap=(risk,available,name)=>{
+    if (typeof risk !== "string" || !/^[0-9]+$/.test(risk)) throw Error("Invalid " + name);
+    const limit=BigInt(risk);
+    return (limit < available ? limit : available).toString();
+  };
+  const plan=planQuotes({
+    ...strategy,midPriceAtoms,stale:false,
+    maxBaseAtoms:cap(strategy.maxBaseAtoms,balance.freeBase,"maxBaseAtoms"),
+    maxQuoteAtoms:cap(strategy.maxQuoteAtoms,balance.freeQuote,"maxQuoteAtoms"),
+  });
   return {
     mode:"observation-only",slot:ask.slot,observedSlot,midPriceAtoms,
+    availableBaseAtoms:balance.freeBase.toString(),
+    availableQuoteAtoms:balance.freeQuote.toString(),
     plan,transactionsSubmitted:0,
   };
 }
