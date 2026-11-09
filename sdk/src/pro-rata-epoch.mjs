@@ -106,7 +106,8 @@ export function claimFrozenMaker(epoch,ledger,makerId){
   verify(epoch);
   if(!ledger||ledger.epochCommitment!==epoch.commitment||
       !Array.isArray(ledger.claimed)||ledger.claimed.some(id=>!ID.test(id))||
-      new Set(ledger.claimed).size!==ledger.claimed.length)
+      new Set(ledger.claimed).size!==ledger.claimed.length||
+      ledger.claimed.some(id=>!epoch.makers.some(m=>m.id===id)))
     throw new Error("Invalid or mismatched settlement ledger");
   if(ledger.claimed.includes(makerId))throw new Error("Maker already claimed epoch");
   const claim=frozenMakerClaim(epoch,makerId);
