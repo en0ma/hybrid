@@ -128,3 +128,32 @@ controlled, trustworthy process combining the simulation RPC with atomic
 journal persistence can supply execution authority. The later submission path
 must recalculate the fingerprint and check finality, kill switch, risk budgets,
 and process-level journal locking immediately before any attempted broadcast.
+
+## Exclusive host lock and immutable signed-intent identity
+
+`sdk/src/maker-journal-guard.mjs` adds two non-submitting primitives:
+
+- `withMakerJournalLock(path, operation)` creates a 0600 lock via exclusive
+  file creation, syncs the lock and parent directory, and holds it while the
+  callback runs. A concurrent caller fails. A **thrown callback leaves the
+  lock behind**, requiring manual recovery instead of an automatic steal
+  based on PID, time, or age. Normal completion releases it.
+- `createPreparedIdentity(path, ...)` creates (never overwrites) a
+  fsynced JSON companion record tying the SHA-256 of the exact signed
+  transaction bytes to a caller-provided signature, cluster genesis hash,
+  snapshot slot, and last valid block height. `readPreparedIdentity` rejects
+  missing/corrupt records, mismatched signature/cluster, transaction changes,
+  and unrecognized fields.
+
+**These APIs are not an integrated, atomic transaction journal.** The caller
+must hold the lock across all storage transitions, use the existing Rust
+`MakerSession` journal, reconcile partial storage failures and crash
+windows, independently check the first signature in the wire transaction,
+verify the configured cluster and chain blockhash, and never use a companion
+identity record as proof of authorization. A successful lock callback is
+only exclusive access, **not permission to submit or unlock a pending
+signature**. Do not delete the immutable record or a stale lock unless a
+trusted operator has conclusively reconciled the exact transaction with
+finalized chain history. Account/key provenance, OS directory trust and
+single-host filesystem semantics are mandatory preconditions. No funded
+or unattended execution has been enabled.
