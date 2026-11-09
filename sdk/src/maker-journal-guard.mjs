@@ -11,6 +11,49 @@ function requireBase58(value,name,min,max){
   if(typeof value!=="string"||value.length<min||value.length>max||!BASE58.test(value))
     throw new TypeError("Invalid "+name);
 }
+// Decode the journaled base58 signature without relying on a caller-provided
+// signature field. Check the first wire signature, which is the Solana tx ID.
+const ALPHABET="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+function decodeBase58(value){
+  let n=0n;
+  for(const c of value){
+    const digit=ALPHABET.indexOf(c);
+    if(digit<0)throw new Error("Invalid base58 transaction signature");
+    n=n*58n+BigInt(digit);
+  }
+  const parts=[];
+  while(n>0n){parts.push(Number(n&255n));n>>=8n;}
+  for(const c of value){if(c!=="1")break;parts.push(0);}
+  return Buffer.from(parts.reverse());
+}
+function assertFirstWireSignature(transaction,signature){
+  requireBase58(signature,"signature",80,90);
+  const expected=decodeBase58(signature);
+  if(expected.length!==64||expected.every(byte=>byte===0))
+    throw new Error("Invalid 64-byte signed transaction signature");
+  if(!transaction||typeof transaction.serialize!=="function")
+    throw new TypeError("Pre-signed transaction required");
+  const wire=Buffer.from(transaction.serialize());
+  if(wire.length<65||wire.length>1232)
+    throw new Error("Invalid serialized Solana transaction");
+  // Solana shortvec compact signature count; reject non-canonical encodings.
+  let count=0,shift=0,offset=0;
+  while(true){
+    if(offset>=3||offset>=wire.length)throw new Error("Invalid signature count");
+    const digit=wire[offset++];
+    count|=(digit&127)<<shift;
+    if(!(digit&128)){
+      if(offset>1&&(digit&127)===0)throw new Error("Noncanonical signature count");
+      break;
+    }
+    shift+=7;
+  }
+  if(count<1||offset+count*64>=wire.length)
+    throw new Error("Missing complete signed Solana message");
+  const first=wire.subarray(offset,offset+64);
+  if(!first.equals(expected))
+    throw new Error("Journaled signature differs from first wire signature");
+}
 async function syncDirectory(path){
   const directory=await open(dirname(path),"r");
   try{await directory.sync();}finally{await directory.close();}
@@ -54,7 +97,7 @@ export async function createPreparedIdentity(path,{
 }){
   if(typeof path!=="string"||!path)throw new TypeError("Identity path required");
   assertSimulatedBytes(transaction,simulationEvidence);
-  requireBase58(signature,"signature",80,90);
+  assertFirstWireSignature(transaction,signature);
   requireBase58(genesisHash,"genesisHash",32,50);
   if(!Number.isSafeInteger(lastValidBlockHeight)||lastValidBlockHeight<=0||
       !Number.isSafeInteger(snapshotSlot)||snapshotSlot<=0||
@@ -104,6 +147,7 @@ export async function readPreparedIdentity(path,{
   if(stored.signature!==signature||stored.genesisHash!==genesisHash)
     throw new Error("Prepared transaction signature or cluster mismatch");
   assertSimulatedBytes(transaction,simulationEvidence);
+  assertFirstWireSignature(transaction,signature);
   if(stored.transactionSha256!==simulationEvidence.transactionSha256||
       stored.snapshotSlot!==simulationEvidence.snapshotSlot){
     throw new Error("Prepared identity differs from simulated transaction");
