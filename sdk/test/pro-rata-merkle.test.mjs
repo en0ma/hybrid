@@ -93,3 +93,46 @@ test("the proof is only membership; the root still needs external trust",()=>{
   assert.equal(result.canWithdraw,false);
   assert.equal(result.mode,"membership-only");
 });
+
+
+test("binary ABI rejects oversized token amounts, noncanonical decimal and extra fields",()=>{
+  const e=epoch();
+  const seal=sealFrozenMakerClaims(e);
+  const p=proveFrozenMakerClaim(seal,0);
+  const context={expectedRoot:seal.root,
+    expectedEpochCommitment:e.commitment,expectedMakerId:p.leaf.makerId};
+  const tamper=claim=>verifyFrozenMakerProof({
+    ...p,leaf:{...p.leaf,claim},
+  },context);
+  assert.throws(()=>tamper({...p.leaf.claim,quoteCredit:(1n<<64n).toString()}),
+    /Out-of-range u64/);
+  assert.throws(()=>tamper({...p.leaf.claim,quoteCredit:"01"}),
+    /Invalid canonical integer/);
+  assert.throws(()=>tamper({...p.leaf.claim,quoteCredit:"-1"}),
+    /Invalid canonical integer/);
+  assert.throws(()=>tamper({...p.leaf.claim,extra:"1"}),
+    /Invalid Merkle claim leaf/);
+  assert.throws(()=>verifyFrozenMakerProof({
+    ...p,leaf:{...p.leaf,weight:(1n<<64n).toString()},
+  },context),/Out-of-range u64/);
+  assert.throws(()=>verifyFrozenMakerProof({
+    ...p,leaf:{...p.leaf,unexpected:true},
+  },context),/Invalid Merkle claim leaf/);
+  assert.throws(()=>verifyFrozenMakerProof({
+    ...p,leaf:{...p.leaf,index:4096},
+  },context),/Invalid Merkle claim leaf/);
+});
+test("binary ABI root is invariant to object key insertion ordering",()=>{
+  const e=epoch(5);
+  const seal=sealFrozenMakerClaims(e);
+  const p=proveFrozenMakerClaim(seal,2);
+  const reordered={quoteFee:p.leaf.claim.quoteFee,baseCredit:p.leaf.claim.baseCredit,
+    baseDebit:p.leaf.claim.baseDebit,quoteDebit:p.leaf.claim.quoteDebit,
+    baseFee:p.leaf.claim.baseFee,quoteCredit:p.leaf.claim.quoteCredit};
+  assert.equal(verifyFrozenMakerProof({
+    ...p,leaf:{...p.leaf,claim:reordered},
+  },{expectedRoot:seal.root,expectedEpochCommitment:e.commitment,
+    expectedMakerId:p.leaf.makerId}).mode,"membership-only");
+  const forged={...seal,leaves:seal.leaves.map((l,i)=>i===2?{...l,index:3}:l)};
+  assert.throws(()=>proveFrozenMakerClaim(forged,2),/roster index/);
+});
