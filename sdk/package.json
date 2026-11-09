@@ -19,7 +19,8 @@
     "./maker-journal-guard": "./src/maker-journal-guard.mjs",
     "./journal-audit": "./src/journal-audit.mjs",
     "./maker-atomic-journal": "./src/maker-atomic-journal.mjs",
-    "./maker-finality-reconcile": "./src/maker-finality-reconcile.mjs"
+    "./maker-finality-reconcile": "./src/maker-finality-reconcile.mjs",
+    "./maker-post-finality-audit": "./src/maker-post-finality-audit.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
