@@ -97,4 +97,5 @@ test("synthetic claim ledger rejects replay and foreign claims",()=>{
   const ledger=newFrozenSettlementLedger(e);
   assert.throws(()=>claimFrozenMaker(e,{...ledger,claimed:["A","A"]},"B"),/Invalid/);
   assert.throws(()=>claimFrozenMaker(e,ledger,"not_a_maker"),/not active/);
+  assert.throws(()=>claimFrozenMaker(e,{...ledger,claimed:["foreign"]},"A"),/Invalid/);
 });
