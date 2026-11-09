@@ -8,13 +8,21 @@ import {
   initializeAtomicMakerJournal,advanceAtomicMakerJournal,readAtomicMakerJournal,
 } from "../src/maker-atomic-journal.mjs";
 import {withMakerJournalLock} from "../src/maker-journal-guard.mjs";
-const bytes=Buffer.from([1,2,3,4,5]);
+const signatureBytes=Buffer.alloc(64,3);
+const bytes=Buffer.concat([Buffer.from([1]),signatureBytes,Buffer.from([1,2,3,4,5])]);
+function encode58(bytes){
+  const alphabet="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let n=0n;for(const byte of bytes)n=n*256n+BigInt(byte);
+  let value="";while(n>0n){value=alphabet[Number(n%58n)]+value;n/=58n;}
+  for(const b of bytes){if(b!==0)break;value="1"+value;}
+  return value;
+}
 const transaction={serialize(){return Buffer.from(bytes);}};
 const simulationEvidence={
   mode:"simulation-only",transactionSha256:createHash("sha256").update(bytes).digest("hex"),
   snapshotSlot:100,simulationSlot:102,signaturesVerifiedByRpc:true,
 };
-const identity={transaction,simulationEvidence,signature:"3".repeat(87),
+const identity={transaction,simulationEvidence,signature:encode58(signatureBytes),
   genesisHash:"4".repeat(44)};
 const initial={...identity,lastValidBlockHeight:500,snapshotSlot:100,lastConfirmedSlot:90};
 async function fixture(callback){
