@@ -18,7 +18,9 @@ test("frozen epoch assigns exact base, proceeds and fee dust once",()=>{
   assert.equal(auditFrozenProRataEpoch(e).exactlyAllocated,true);
   const claims=e.makers.map(m=>frozenMakerClaim(e,m.id));
   assert.deepEqual(claims.map(x=>x.baseDebit),["0","1","1"]);
-  assert.deepEqual(claims.map(x=>x.quoteCredit),["2","2","3"]);
+  assert.deepEqual(claims.map(x=>x.quoteCredit),["0","3","4"]);
+  assert.equal(claims[0].baseDebit,"0");
+  assert.equal(claims[0].quoteFee,"0");
   assert.deepEqual(claims.map(x=>x.quoteFee),["0","1","1"]);
   for(const asset of Object.keys(totals())){
     assert.equal(claims.reduce((n,x)=>n+BigInt(x[asset]),0n).toString(),e.totals[asset]);
@@ -90,7 +92,7 @@ test("reject unfinished, malformed, mutated, overfilled and duplicate epochs",()
   assert.throws(()=>freezeProRataEpoch({
     epochId:0,tickId:"tick_42",makers:[{id:"A",weight:"3"}],
     totals:totals({baseDebit:"2",quoteDebit:"1"}),
-  }),/cannot mix/);
+  }),/mix settlement directions/);
 });
 test("synthetic claim ledger rejects replay and foreign claims",()=>{
   const e=three();
