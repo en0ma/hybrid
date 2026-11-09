@@ -27,6 +27,7 @@ pub struct EpochMaker<'a> {
     pub weight: u64,
 }
 
+#[derive(Clone, Copy)]
 pub struct FrozenEpochV2<'a> {
     pub market: [u8; 32],
     pub epoch_id: u64,
