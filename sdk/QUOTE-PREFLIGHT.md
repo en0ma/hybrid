@@ -321,3 +321,27 @@ needs an authenticated epoch commitment, bounded storage/proof costs,
 correct per-price trade pricing, checked reserve accounting, atomic
 claim checkpoint plus transfers and an independent conservation audit.
 Do not activate for funded matching or replace eager maker settlement.
+
+## Research: authenticated frozen-epoch claim membership
+
+`sdk/src/pro-rata-merkle.mjs` produces SHA-256 domain-separated Merkle
+leaves for the exact frozen epoch commitment, maker index, maker ID, weight
+and six per-asset integer claim amounts. The builder audits the frozen
+epoch first; its proof contains only a logarithmic sibling path. The
+verifier checks the explicit externally expected Merkle root, exact epoch
+commitment, maker identity, index bounds, canonical odd-node duplication
+and exact path depth. Changing tick/epoch, maker, share, fee or root
+invalidates proof verification. Regression tests cover 1, 2, 3, 5, 13
+and 137 makers plus adversarial paths.
+
+**A valid Merkle membership proof does not make the pro-rata allocation
+correct.** The root must first be produced by a trusted epoch-sealing
+process that checks finalized fills, maker ordering, account ownership,
+price/fee totals and full vault conservation. Here maker IDs are
+synthetic labels, not Solana pubkeys or signatures. The verifier returns
+`canWithdraw: false`. An eventual on-chain processor must use an
+audited canonical binary encoding, an authenticated epoch PDA/root,
+signer-to-position binding, bitmap or per-maker claim checkpoint, and
+atomic checked SPL withdrawals, with an explicit policy for old epochs
+and reclaimability. This research implementation has **none** of those
+execution rights and is never a substitute for Solana account checks.
