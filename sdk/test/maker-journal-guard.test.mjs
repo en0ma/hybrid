@@ -8,14 +8,24 @@ import {
   withMakerJournalLock,createPreparedIdentity,readPreparedIdentity,
 } from "../src/maker-journal-guard.mjs";
 
-const bytes=Buffer.from([1,3,5,7]);
+const wireSignature=Buffer.alloc(64,3);
+const bytes=Buffer.concat([Buffer.from([1]),wireSignature,Buffer.from([1,3,5,7])]);
+function encodeBase58(input){
+  const abc="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let n=0n;
+  for(const byte of input)n=n*256n+BigInt(byte);
+  let output="";
+  while(n>0n){output=abc[Number(n%58n)]+output;n/=58n;}
+  for(const byte of input){if(byte!==0)break;output="1"+output;}
+  return output;
+}
 const transaction={serialize(){return Buffer.from(bytes);}};
 const simulationEvidence={
   mode:"simulation-only",snapshotSlot:100,simulationSlot:102,
   signaturesVerifiedByRpc:true,
   transactionSha256:createHash("sha256").update(bytes).digest("hex"),
 };
-const signature="3".repeat(87),genesisHash="4".repeat(44);
+const signature=encodeBase58(wireSignature),genesisHash="4".repeat(44);
 const parameters={
   transaction,simulationEvidence,signature,genesisHash,
   lastValidBlockHeight:150,snapshotSlot:100,
@@ -54,12 +64,25 @@ test("immutable prepared intent survives restart and rejects changed signatures"
     assert.equal(record.transactionSha256,simulationEvidence.transactionSha256);
     assert.deepEqual(await readPreparedIdentity(path,parameters),record);
     await assert.rejects(createPreparedIdentity(path,parameters),/EEXIST/);
+    await assert.rejects(createPreparedIdentity(join(root,"wrong-sig.json"),{
+      ...parameters,signature:encodeBase58(Buffer.alloc(64,4)),
+    }),/first wire signature/);
     await assert.rejects(readPreparedIdentity(path,{
       ...parameters,signature:"5".repeat(87),
     }),/mismatch/);
     await assert.rejects(readPreparedIdentity(path,{
       ...parameters,genesisHash:"5".repeat(44),
     }),/mismatch/);
+    await assert.rejects(readPreparedIdentity(path,{
+      ...parameters,signature:encodeBase58(Buffer.alloc(64,4)),
+    }),/mismatch/);
+    const otherWire=Buffer.concat([Buffer.from([1]),Buffer.alloc(64,4),Buffer.from([1,3,5,7])]);
+    const otherTx={serialize(){return Buffer.from(otherWire);}};
+    const otherEvidence={...simulationEvidence,transactionSha256:
+      createHash("sha256").update(otherWire).digest("hex")};
+    await assert.rejects(readPreparedIdentity(path,{
+      ...parameters,transaction:otherTx,simulationEvidence:otherEvidence,
+    }),/differs/);
     await assert.rejects(readPreparedIdentity(path,{
       ...parameters,simulationEvidence:{
         ...simulationEvidence,transactionSha256:"0".repeat(64),
