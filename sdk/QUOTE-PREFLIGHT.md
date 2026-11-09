@@ -22,9 +22,11 @@ const targets=convertQuoteTargets({
 preflight guard. It defaults to kill switch on, no operator enablement,
 pending mutation assumed and no simulation. Explicit allow flags, a
 validated fresh RPC slot and phase-isolated cancels/placements are needed
-before it returns a phase *intent*. Those flags are supplied by the caller;
-this module does not prove a simulation, record an approval or persist a
-signature journal.
+before it returns a phase *intent*. The policy now requires simulation
+evidence bound to the exact serialized signed transaction bytes, a matching
+snapshot slot and a non-stale RPC simulation slot. Operator approval remains
+caller-provided; this module does not independently prove an approval or
+persist a signature journal.
 
 ```js
 import {admitMakerPhase} from "./src/execution-policy.mjs";
@@ -33,7 +35,8 @@ const phase=admitMakerPhase({
   killSwitch:true,              // hard stop
   pendingMutation:true,         // fail closed unless journal reconciled
   operatorApproved:false,
-  simulationPassed:false,
+  simulationEvidence:null,    // must bind exact signed bytes
+  transaction:null,           // not a submission handle
   snapshotSlot:0,currentSlot:0,
   cancellations:[],placements:[],
 });
@@ -104,3 +107,24 @@ This is **read-only** and provides no proof of complete historical absence,
 no journal storage, no signed-transaction identity binding beyond the caller's
 recorded signature, and no submission capability. A trusted RPC endpoint and
 an independently validated cluster configuration remain requirements.
+
+## Exact signed-transaction simulation preflight
+
+`sdk/src/simulation-preflight.mjs` accepts an already-signed, serializable
+Solana transaction and calls `simulateTransaction` with `sigVerify: true`,
+`replaceRecentBlockhash: false`, `commitment: "confirmed"`, and a minimum
+context slot. It rejects stale contexts, failed simulations, excessive compute
+usage, and transaction mutations while the RPC call is pending. It returns a
+SHA-256 fingerprint of the **exact serialized bytes**. The advisory execution
+policy calls `assertSimulatedBytes` to reject any altered/substituted signed
+transaction and requires snapshot/slot consistency.
+
+The transaction must already be correctly constructed and signed by the
+operator. **Simulation evidence is not authorization to broadcast.** The
+preflight does not derive PDAs, prove program/account authenticity, enforce
+blockhash validity, record signatures to durable storage, or submit a
+transaction. A malicious caller can fabricate evidence: only an independently
+controlled, trustworthy process combining the simulation RPC with atomic
+journal persistence can supply execution authority. The later submission path
+must recalculate the fingerprint and check finality, kill switch, risk budgets,
+and process-level journal locking immediately before any attempted broadcast.
