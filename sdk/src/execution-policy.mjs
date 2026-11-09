@@ -1,3 +1,4 @@
+import {assertSimulatedBytes} from "./simulation-preflight.mjs";
 // Non-signing maker execution admission policy.
 // This module cannot send, simulate, approve or sign transactions. The actual
 // transaction layer MUST use a durable journal and confirmed settlement before
@@ -6,16 +7,23 @@ export function admitMakerPhase({
   enabled=false,killSwitch=true,pendingMutation=true,
   snapshotSlot,currentSlot,maxLagSlots=4,
   cancellations=[],placements=[],maxChanges=16,
-  simulationPassed=false,operatorApproved=false,
+  simulationEvidence=null,transaction=null,operatorApproved=false,
 }={}){
   if(!enabled||killSwitch)throw new Error("Maker trading is disabled by operator");
   if(pendingMutation)throw new Error("Pending mutation: reconcile signature journal first");
   if(!operatorApproved)throw new Error("Explicit operator approval required");
-  if(!simulationPassed)throw new Error("Fresh transaction simulation required");
+  if(!simulationEvidence || !transaction)throw new Error("Fresh transaction simulation required");
+  assertSimulatedBytes(transaction,simulationEvidence);
   if(![snapshotSlot,currentSlot,maxLagSlots,maxChanges].every(
     x=>Number.isSafeInteger(x)&&x>=0
   )||snapshotSlot===0||currentSlot<snapshotSlot||
     currentSlot-snapshotSlot>maxLagSlots)throw new Error("Stale or invalid execution snapshot");
+  if(simulationEvidence.snapshotSlot!==snapshotSlot||
+      !Number.isSafeInteger(simulationEvidence.simulationSlot)||
+      simulationEvidence.simulationSlot<currentSlot||
+      simulationEvidence.signaturesVerifiedByRpc!==true){
+    throw new Error("Simulation evidence does not match fresh snapshot");
+  }
   if(!Array.isArray(cancellations)||!Array.isArray(placements)||
     cancellations.length+placements.length>maxChanges)
     throw new Error("Maker mutation cap exceeded");
