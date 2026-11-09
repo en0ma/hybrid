@@ -169,6 +169,22 @@ mod tests {
         );
         assert_ne!(
             hash_frozen_epoch_v2(&FrozenEpochV2 {
+                program: [0x44; 32],
+                ..original
+            })
+            .unwrap(),
+            first
+        );
+        assert_ne!(
+            hash_frozen_epoch_v2(&FrozenEpochV2 {
+                genesis: [0x44; 32],
+                ..original
+            })
+            .unwrap(),
+            first
+        );
+        assert_ne!(
+            hash_frozen_epoch_v2(&FrozenEpochV2 {
                 tick_sqrt_price_x64: 2u128 << 64,
                 ..original
             })
