@@ -404,7 +404,7 @@ Shared vector: market `11` repeated 32, program `22` repeated 32,
 genesis `33` repeated 32, epoch=7, sqrtPriceX64=`2^64`,
 ask roster `[(A,1),(B,2),(C,3)]`, totals
 `[2,0,0,7,0,1]`; binary length 236 and digest
-`dd4d8af7657c633c808fb709c8d30971099c72a5d4828228784637a6eb011ac1`.
+`fddeaffac0081511043c404a4fca35e3363bc97e8d235c697aa682e239cfb00b`.
 
 **This does not complete production epoch sealing.** The SDK frozen allocation model, synthetic claim ledger and Merkle
 claim sealer now use **the same binary v2 epoch digest**, not the older
