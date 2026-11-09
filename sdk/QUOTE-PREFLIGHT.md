@@ -157,3 +157,23 @@ trusted operator has conclusively reconciled the exact transaction with
 finalized chain history. Account/key provenance, OS directory trust and
 single-host filesystem semantics are mandatory preconditions. No funded
 or unattended execution has been enabled.
+
+## Cross-format pending journal consistency audit
+
+`sdk/src/journal-audit.mjs` reads the existing Rust `HYBMMJ01`
+104-byte journal (including its FNV checksum and reserved fields),
+requiring the `Submitted` phase. It derives a Solana base58 signature
+from the journal's raw 64 signature bytes and compares them against the
+immutable signed intent, exact serialized wire transaction and configured
+genesis hash. It also compares last-valid block height and ensures the
+intent's snapshot slot is not older than the last confirmed slot.
+
+`auditPendingMakerJournal(...)` returns `mode: "audit-only"`. Its
+checks are necessary but **insufficient** for submission: the v1 Rust
+journal does not store the originating prepared snapshot or the wire
+fingerprint; the companion JSON is not atomically persisted with that
+journal. Concurrent processes must hold a separate exclusive lock for
+the entire audit and any follow-up transitions. Missing or corrupt
+records fail closed. No callback here sends, signs, expires, confirms,
+or clears a transaction; the independent trusted owner must still
+verify finalized on-chain outcomes and reconcile every crash window.
