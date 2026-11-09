@@ -345,3 +345,9 @@ signer-to-position binding, bitmap or per-maker claim checkpoint, and
 atomic checked SPL withdrawals, with an explicit policy for old epochs
 and reclaimability. This research implementation has **none** of those
 execution rights and is never a substitute for Solana account checks.
+
+## Security-hardening of the research claim proof ABI
+
+The research Merkle verifier now commits a **versioned binary leaf** rather than JSON-string serialization: domain-separated SHA-256, exact 32-byte epoch digest, little-endian u32 roster index, one-byte ASCII maker-ID length and bytes, little-endian u64 maker weight, and six little-endian u64 settlement fields in fixed asset order. Internal nodes hash domain-separated 32-byte left/right siblings. Inputs with unbounded or noncanonical integers, extra/missing fields, forged roster indices, or malformed nodes fail closed. The binary proof commitment is insensitive to JavaScript object insertion order.
+
+This format is **not yet a production on-chain ABI**: maker IDs are synthetic rather than authenticated Solana public keys, and the epoch commitment still derives from a JSON model. An authenticated on-chain epoch account, bounded canonical epoch encoding, independently verified trade settlement and vault balances, and atomic anti-replay SPL transfer instructions remain release blockers. The SDK verifier grants no withdrawal authority.
