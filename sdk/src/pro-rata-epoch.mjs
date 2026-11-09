@@ -25,7 +25,9 @@ function canonical(epoch){
     if(!maker||!ID.test(maker.id)||ids.has(maker.id))
       throw new Error("Duplicate or invalid maker identity");
     ids.add(maker.id);
-    weight+=atom(maker.weight,MAX64,"maker weight");
+    const individual=atom(maker.weight,MAX64,"maker weight");
+    if(individual===0n)throw new Error("Zero maker weight");
+    weight+=individual;
     if(weight>MAX128)throw new RangeError("Weight accumulator overflow");
   }
   if(weight===0n||atom(epoch.totalWeight,MAX128,"totalWeight")!==weight)
@@ -37,7 +39,7 @@ function canonical(epoch){
   if(epoch.totals.baseDebit!=="0"&&epoch.totals.quoteDebit!=="0")
     throw new Error("One epoch cannot mix buy and sell settlement directions");
   if(BigInt(epoch.totals.baseDebit)>weight||
-      BigInt(epoch.totals.quoteDebit)>weight)
+      BigInt(epoch.totals.baseCredit)>weight)
     throw new Error("Debited quantity exceeds active epoch weight");
   return epoch;
 }
@@ -49,7 +51,7 @@ export function freezeProRataEpoch({epochId,tickId,makers,totals}){
   if(!Array.isArray(makers)||makers.length===0||makers.length>4096)
     throw new RangeError("Invalid maker count");
   const sorted=makers.map(m=>({id:m?.id,weight:m?.weight}))
-    .sort((a,b)=>String(a.id).localeCompare(String(b.id),"en"));
+    .sort((a,b)=>String(a.id)<String(b.id)?-1:String(a.id)>String(b.id)?1:0);
   const shift=Number.isSafeInteger(epochId)&&epochId>=0?epochId%sorted.length:0;
   const rotated=[...sorted.slice(shift),...sorted.slice(0,shift)];
   let weight=0n;
