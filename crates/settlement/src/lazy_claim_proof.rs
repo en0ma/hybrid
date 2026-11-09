@@ -222,6 +222,7 @@ mod tests {
         let left = claim_node_hash(&ha, &hb);
         let right = claim_node_hash(&hc, &hc);
         let root = claim_node_hash(&left, &right);
+        assert_eq!(hex(&root), "8df5339645b4e7481bbab50a25f00805f29e28ae3002cbee1e23e1f2fafb41bc");
         let siblings = [hc, left];
         let proof = MakerClaimProof {
             leaf_count: 3,
