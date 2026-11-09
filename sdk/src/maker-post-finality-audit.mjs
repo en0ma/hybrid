@@ -93,6 +93,14 @@ export async function auditFinalizedMakerState(connection,{
   const balance=await loadMakerBalanceSnapshot(mock,{
     ...common,maker,makerBalance,
   });
+  const makerBytes=bytes(maker,"maker");
+  const project=(orders,side)=>orders.filter(order=>
+    Buffer.from(order.owner).equals(makerBytes)).map(order=>Object.freeze({
+      side,sequence:order.sequence.toString(),
+      priceX64:order.priceX64.toString(),
+      baseQty:order.baseQty.toString(),
+    }));
+  const ownedOrders=Object.freeze([...project(ask.orders,"ask"),...project(bid.orders,"bid")]);
   const chainSlot=await connection.getSlot("finalized");
   if(!validSlot(chainSlot)||chainSlot<slot||chainSlot-slot>maxLagSlots)
     throw new Error("Post-finalization maker snapshot is stale");
@@ -101,6 +109,7 @@ export async function auditFinalizedMakerState(connection,{
     slot,finalizedTransactionSlot:journal.lastConfirmedSlot,
     observedSlot:chainSlot,
     askOrderCount:ask.orders.length,bidOrderCount:bid.orders.length,
+    ownedOrders,
     freeBase:balance.freeBase,lockedBase:balance.lockedBase,
     freeQuote:balance.freeQuote,lockedQuote:balance.lockedQuote,
     requiresFreshSimulationBeforeSubmission:true,
