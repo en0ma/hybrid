@@ -152,6 +152,8 @@ mod tests {
         ];
         let original = FrozenEpochV2 {
             market: [0x11; 32],
+            program: [0x22; 32],
+            genesis: [0x33; 32],
             epoch_id: 7,
             tick_sqrt_price_x64: 1u128 << 64,
             side: Side::Ask,
@@ -223,6 +225,8 @@ mod tests {
         let valid = [EpochMaker { id: "A", weight: 1 }];
         let base = FrozenEpochV2 {
             market: [0x11; 32],
+            program: [0x22; 32],
+            genesis: [0x33; 32],
             epoch_id: 7,
             tick_sqrt_price_x64: 1u128 << 64,
             side: Side::Ask,
