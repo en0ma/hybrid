@@ -382,3 +382,32 @@ on-chain immutable epochs, exact price/fill/fee conservation, escrow
 solvency, idempotent atomic claimed-state plus token settlement, and
 migration/fault-injection verification. A matching hash by itself
 does **not** permit withdrawals or prove epoch entitlement.
+
+## Canonical frozen epoch identity — v2 binary commitment
+
+`sdk/src/pro-rata-epoch-abi.mjs` and
+`crates/settlement/src/lazy_epoch_abi.rs` implement the same
+**read-only v2 SHA-256 commitment** over a fixed binary preimage:
+
+`"HYBRID_LAZY_EPOCH_V2\\0"` domain (including NUL), 32-byte market
+address, u64LE epoch ID, u128LE Q64 tick sqrt price, u8 side
+(0=ask, 1=bid), u32LE maker count, then for each maker in the exact
+frozen dust-priority order: u32LE roster index, u8 ASCII maker-name
+length, maker-name bytes, u64LE nonzero weight. Finally six u64LE
+atom totals in this order: baseDebit, baseCredit, quoteDebit,
+quoteCredit, baseFee, quoteFee. Cross-direction totals, zero fills,
+base fill exceeding total weight, duplicate/invalid makers, invalid
+market and zero tick price are rejected.
+
+Shared vector: market `11` repeated 32, epoch=7, sqrtPriceX64=`2^64`,
+ask roster `[(A,1),(B,2),(C,3)]`, totals
+`[2,0,0,7,0,1]`; binary length 172 and digest
+`dd4d8af7657c633c808fb709c8d30971099c72a5d4828228784637a6eb011ac1`.
+
+**This does not complete production epoch sealing.** The SDK v1 Merkle
+claim prototype currently accepts a historical research digest; an
+actual on-chain epoch must store and authenticate a v2 epoch digest,
+maker/seat signer bindings, verified fill and fee totals, solvency
+reserves and a corresponding v2 claim root. The two versions must not
+be conflated or migrated implicitly. No on-chain instruction uses the
+v2 commitment and no claim may be withdrawn using these helpers.
