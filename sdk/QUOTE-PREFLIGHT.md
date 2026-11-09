@@ -390,7 +390,8 @@ does **not** permit withdrawals or prove epoch entitlement.
 **read-only v2 SHA-256 commitment** over a fixed binary preimage:
 
 `"HYBRID_LAZY_EPOCH_V2\\0"` domain (including NUL), 32-byte market
-address, u64LE epoch ID, u128LE Q64 tick sqrt price, u8 side
+address, 32-byte owning program ID, 32-byte genesis hash,
+u64LE epoch ID, u128LE Q64 tick sqrt price, u8 side
 (0=ask, 1=bid), u32LE maker count, then for each maker in the exact
 frozen dust-priority order: u32LE roster index, u8 ASCII maker-name
 length, maker-name bytes, u64LE nonzero weight. Finally six u64LE
@@ -399,9 +400,10 @@ quoteCredit, baseFee, quoteFee. Cross-direction totals, zero fills,
 base fill exceeding total weight, duplicate/invalid makers, invalid
 market and zero tick price are rejected.
 
-Shared vector: market `11` repeated 32, epoch=7, sqrtPriceX64=`2^64`,
+Shared vector: market `11` repeated 32, program `22` repeated 32,
+genesis `33` repeated 32, epoch=7, sqrtPriceX64=`2^64`,
 ask roster `[(A,1),(B,2),(C,3)]`, totals
-`[2,0,0,7,0,1]`; binary length 172 and digest
+`[2,0,0,7,0,1]`; binary length 236 and digest
 `dd4d8af7657c633c808fb709c8d30971099c72a5d4828228784637a6eb011ac1`.
 
 **This does not complete production epoch sealing.** The SDK frozen allocation model, synthetic claim ledger and Merkle
@@ -429,3 +431,20 @@ This is a **pre-launch internal consolidation**, not a migration of an
 existing deployed protocol. Maker identifiers are still synthetic and
 real Solana signer/seat authentication, audited epoch creation, vault
 coverage, atomic on-chain claimed state and SPL settlement are outstanding.
+
+## Program and cluster replay boundary (first-deployment hardening)
+
+Canonical frozen-epoch preimages now explicitly bind **three distinct
+32-byte identifiers**: market address, owning Solana program ID and
+cluster genesis hash, ahead of epoch number, Q64 tick, roster and six
+asset totals. The Rust and JavaScript encoders assert the same 236-byte
+preimage and the SHA-256 vector
+`fddeaffac0081511043c404a4fca35e3363bc97e8d235c697aa682e239cfb00b`.
+Changing only the program or genesis changes the commitment, invalidates
+the Merkle root binding and blocks reuse of the synthetic claim ledger.
+
+For the first deployment, an actual epoch sealer MUST derive and
+authenticate these fields from the program ID, verified market PDA and
+trusted cluster context. User-provided values are not evidence of
+correctness. This remains a read-only prototype, with no deployed
+protocol, signer-bound seat, on-chain epoch PDA, or authorized withdrawal.
