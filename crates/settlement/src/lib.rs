@@ -1,5 +1,9 @@
 #![forbid(unsafe_code)]
 
+// Isolated read-only protocol proof verifier; no live settlement dispatch.
+pub mod lazy_claim_proof;
+pub mod lazy_epoch_abi;
+
 use hybrid_engine::ActiveFill;
 
 pub const MAKER_BALANCE_ACCOUNT_BYTES: usize = 64;

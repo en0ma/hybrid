@@ -11,7 +11,20 @@
     "./rpc": "./src/rpc.mjs",
     "./market-maker": "./src/market-maker.mjs",
     "./multipage": "./src/multipage.mjs",
-    "./maker-balance": "./src/maker-balance.mjs"
+    "./maker-balance": "./src/maker-balance.mjs",
+    "./quote-orders": "./src/quote-orders.mjs",
+    "./execution-policy": "./src/execution-policy.mjs",
+    "./signature-status": "./src/signature-status.mjs",
+    "./simulation-preflight": "./src/simulation-preflight.mjs",
+    "./maker-journal-guard": "./src/maker-journal-guard.mjs",
+    "./journal-audit": "./src/journal-audit.mjs",
+    "./maker-atomic-journal": "./src/maker-atomic-journal.mjs",
+    "./maker-finality-reconcile": "./src/maker-finality-reconcile.mjs",
+    "./maker-post-finality-audit": "./src/maker-post-finality-audit.mjs",
+    "./maker-inventory-reconcile": "./src/maker-inventory-reconcile.mjs",
+    "./pro-rata-epoch": "./src/pro-rata-epoch.mjs",
+    "./pro-rata-merkle": "./src/pro-rata-merkle.mjs",
+    "./pro-rata-epoch-abi": "./src/pro-rata-epoch-abi.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
