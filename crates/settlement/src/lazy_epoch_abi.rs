@@ -49,11 +49,18 @@ pub fn hash_frozen_epoch_v2(epoch: &FrozenEpochV2<'_>) -> Result<[u8; 32], Epoch
     let mut weight = 0u128;
     for (index, maker) in epoch.makers.iter().enumerate() {
         let name = maker.id.as_bytes();
-        if name.is_empty() || name.len() > 128 ||
-            !name.iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-') {
+        if name.is_empty()
+            || name.len() > 128
+            || !name
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-')
+        {
             return Err(EpochAbiError::InvalidMaker);
         }
-        if epoch.makers[..index].iter().any(|prior| prior.id == maker.id) {
+        if epoch.makers[..index]
+            .iter()
+            .any(|prior| prior.id == maker.id)
+        {
             return Err(EpochAbiError::InvalidMaker);
         }
         if maker.weight == 0 {
@@ -146,31 +153,51 @@ mod tests {
             totals: [1, 0, 0, 3, 0, 1],
         };
         let first = hash_frozen_epoch_v2(&original).unwrap();
-        assert_ne!(hash_frozen_epoch_v2(&FrozenEpochV2 {
-            market: [0x22; 32],
-            ..original
-        }).unwrap(), first);
-        assert_ne!(hash_frozen_epoch_v2(&FrozenEpochV2 {
-            tick_sqrt_price_x64: 2u128 << 64,
-            ..original
-        }).unwrap(), first);
-        assert_ne!(hash_frozen_epoch_v2(&FrozenEpochV2 {
-            totals: [1, 0, 0, 3, 0, 2],
-            ..original
-        }).unwrap(), first);
-        let reordered = [EpochMaker { id: "B", weight: 2 },
-            EpochMaker { id: "A", weight: 1 }];
-        assert_ne!(hash_frozen_epoch_v2(&FrozenEpochV2 {
-            makers: &reordered,
-            ..original
-        }).unwrap(), first);
+        assert_ne!(
+            hash_frozen_epoch_v2(&FrozenEpochV2 {
+                market: [0x22; 32],
+                ..original
+            })
+            .unwrap(),
+            first
+        );
+        assert_ne!(
+            hash_frozen_epoch_v2(&FrozenEpochV2 {
+                tick_sqrt_price_x64: 2u128 << 64,
+                ..original
+            })
+            .unwrap(),
+            first
+        );
+        assert_ne!(
+            hash_frozen_epoch_v2(&FrozenEpochV2 {
+                totals: [1, 0, 0, 3, 0, 2],
+                ..original
+            })
+            .unwrap(),
+            first
+        );
+        let reordered = [
+            EpochMaker { id: "B", weight: 2 },
+            EpochMaker { id: "A", weight: 1 },
+        ];
+        assert_ne!(
+            hash_frozen_epoch_v2(&FrozenEpochV2 {
+                makers: &reordered,
+                ..original
+            })
+            .unwrap(),
+            first
+        );
     }
 
     #[test]
     fn reject_zero_weight_duplicate_maker_and_incoherent_base_fill() {
         let zero = [EpochMaker { id: "A", weight: 0 }];
-        let duplicate = [EpochMaker { id: "A", weight: 1 },
-            EpochMaker { id: "A", weight: 1 }];
+        let duplicate = [
+            EpochMaker { id: "A", weight: 1 },
+            EpochMaker { id: "A", weight: 1 },
+        ];
         let valid = [EpochMaker { id: "A", weight: 1 }];
         let base = FrozenEpochV2 {
             market: [0x11; 32],
@@ -180,11 +207,26 @@ mod tests {
             makers: &valid,
             totals: [1, 0, 0, 2, 0, 0],
         };
-        assert_eq!(hash_frozen_epoch_v2(&FrozenEpochV2 {makers:&zero,..base}),
-            Err(EpochAbiError::InvalidWeight));
-        assert_eq!(hash_frozen_epoch_v2(&FrozenEpochV2 {makers:&duplicate,..base}),
-            Err(EpochAbiError::InvalidMaker));
-        assert_eq!(hash_frozen_epoch_v2(&FrozenEpochV2 {totals:[2,0,0,2,0,0],..base}),
-            Err(EpochAbiError::InvalidFill));
+        assert_eq!(
+            hash_frozen_epoch_v2(&FrozenEpochV2 {
+                makers: &zero,
+                ..base
+            }),
+            Err(EpochAbiError::InvalidWeight)
+        );
+        assert_eq!(
+            hash_frozen_epoch_v2(&FrozenEpochV2 {
+                makers: &duplicate,
+                ..base
+            }),
+            Err(EpochAbiError::InvalidMaker)
+        );
+        assert_eq!(
+            hash_frozen_epoch_v2(&FrozenEpochV2 {
+                totals: [2, 0, 0, 2, 0, 0],
+                ..base
+            }),
+            Err(EpochAbiError::InvalidFill)
+        );
     }
 }
