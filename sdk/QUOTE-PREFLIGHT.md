@@ -209,3 +209,26 @@ journal transitions, validates maker accounts and signatures, and never
 broadcasts a transaction before a durable prepared/submitted record is
 fully committed. This experimental v2 journal is a prototype for that
 integration, not a completed production atomic transaction system.
+
+## Finalized-status reconciliation for the experimental v2 journal
+
+`sdk/src/maker-finality-reconcile.mjs` connects the read-only
+`observeSignatureStatus` RPC observer to the isolated v2 journal. While
+holding an exclusive journal lock, the owner can verify the journal's
+stored signed-wire SHA-256, first wire signature, snapshot and expected
+cluster, then request historical signature status with finalized commitment.
+**Only finalized success** permits a durable transition from `submitted`
+to `finalized`. Pending, unknown history, and finalized execution errors
+leave the journal in `submitted` and return `canRetry: false`.
+A successful transition also returns `canRetry: false` and explicitly
+requires an independently verified refresh of maker inventory and book
+before any new order planning.
+
+The helper deliberately **never auto-expires** a transaction. It cannot
+prove historical absence, is not the trusted journal-lock owner itself,
+does not authenticate the RPC operator or the market accounts, and does
+not sign, assemble, submit or rebroadcast orders. Never invoke it without
+`withMakerJournalLock` spanning the entire RPC read and persistence
+transition; the v2 journal must not coexist as an authority with the legacy
+Rust v1 journal. This is a prototype recovery bridge, not production
+approval to trade unattended.
