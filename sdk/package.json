@@ -21,7 +21,8 @@
     "./maker-atomic-journal": "./src/maker-atomic-journal.mjs",
     "./maker-finality-reconcile": "./src/maker-finality-reconcile.mjs",
     "./maker-post-finality-audit": "./src/maker-post-finality-audit.mjs",
-    "./maker-inventory-reconcile": "./src/maker-inventory-reconcile.mjs"
+    "./maker-inventory-reconcile": "./src/maker-inventory-reconcile.mjs",
+    "./pro-rata-epoch": "./src/pro-rata-epoch.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
