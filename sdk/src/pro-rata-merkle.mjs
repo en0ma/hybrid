@@ -7,16 +7,16 @@ import {createHash} from "node:crypto";
 import {frozenMakerClaim,auditFrozenProRataEpoch} from "./pro-rata-epoch.mjs";
 
 // Versioned binary Merkle ABI, v1. Never hash JSON for on-chain proofs.
-// Leaf preimage: "HYBRID_LAZY_MAKER_LEAF_V1\\0" | 32-byte epoch digest |
+// Leaf preimage: "HYBRID_LAZY_MAKER_LEAF_V1\0" | 32-byte epoch digest |
 // u32LE roster index | u8 ASCII maker ID length | maker ID bytes |
 // u64LE weight | six u64LE asset amounts in ASSETS order.
-// Node preimage: "HYBRID_LAZY_MAKER_NODE_V1\\0" | left[32] | right[32].
+// Node preimage: "HYBRID_LAZY_MAKER_NODE_V1\0" | left[32] | right[32].
 const ASSETS=["baseDebit","baseCredit","quoteDebit","quoteCredit","baseFee","quoteFee"];
 const HEX=/^[0-9a-f]{64}$/;
 const ID=/^[A-Za-z0-9_-]{1,128}$/;
 const MAX64=(1n<<64n)-1n;
-const LEAF_DOMAIN=Buffer.from("HYBRID_LAZY_MAKER_LEAF_V1\\0","utf8");
-const NODE_DOMAIN=Buffer.from("HYBRID_LAZY_MAKER_NODE_V1\\0","utf8");
+const LEAF_DOMAIN=Buffer.from("HYBRID_LAZY_MAKER_LEAF_V1\0","utf8");
+const NODE_DOMAIN=Buffer.from("HYBRID_LAZY_MAKER_NODE_V1\0","utf8");
 const sha=(bytes)=>createHash("sha256").update(bytes).digest("hex");
 const eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 function u64(value,name,{positive=false}={}){
@@ -86,7 +86,8 @@ export function proveFrozenMakerClaim(seal,index){
     !Number.isSafeInteger(index)||index<0||index>=seal.leafCount||
     seal.leafCount!==seal.leaves?.length||seal.leafCount>4096)
     throw new Error("Invalid sealed maker claim index");
-  const leaves=seal.leaves.map((l,i)=>{\n    if(l.index!==i)throw new Error("Sealed leaf roster index mismatch");
+  const leaves=seal.leaves.map((l,i)=>{
+    if(l.index!==i)throw new Error("Sealed leaf roster index mismatch");
     safeLeaf(l);
     return leafHash(seal.epochCommitment,l.index,l.makerId,l.weight,l.claim);
   });
