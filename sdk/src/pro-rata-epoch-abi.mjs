@@ -1,5 +1,5 @@
 // Canonical binary frozen-epoch commitment, v2 research API.
-// Explicit market identity, epoch number, Q64 sqrt tick price, side, maker
+// Explicit cluster, program and market identity, epoch number, Q64 tick, maker
 // roster, and every settlement total are hashed together. Read-only.
 // This is NOT a trusted epoch sealer, account checker, or SPL authority.
 import {createHash} from "node:crypto";
@@ -35,10 +35,13 @@ function checkedRoster(makers){
  * ordering is IMPORTANT: it is the exact settlement and dust-priority order,
  * not a mutable set. Callers must authenticate its maker/seat contents.
  */
-export function encodeFrozenEpochV2({marketHex,epochId,tickSqrtPriceX64,side,
+export function encodeFrozenEpochV2({marketHex,programHex,genesisHex,epochId,tickSqrtPriceX64,side,
   makers,totals}){
   if(typeof marketHex!=="string"||!/^[0-9a-f]{64}$/.test(marketHex))
     throw new Error("Invalid canonical 32-byte market");
+  if(typeof programHex!=="string"||!/^[0-9a-f]{64}$/.test(programHex)||
+      typeof genesisHex!=="string"||!/^[0-9a-f]{64}$/.test(genesisHex))
+    throw new Error("Invalid canonical program or genesis identity");
   if(!["ask","bid"].includes(side))throw new Error("Invalid epoch side");
   if(!totals||typeof totals!=="object"||Array.isArray(totals)||
       JSON.stringify(Object.keys(totals).sort())!==
@@ -54,6 +57,7 @@ export function encodeFrozenEpochV2({marketHex,epochId,tickSqrtPriceX64,side,
      (totals.baseDebit!=="0"||totals.quoteCredit!=="0"||
       totals.quoteFee!=="0"))throw new Error("Cross-direction epoch asset totals");
   return Buffer.concat([DOMAIN,Buffer.from(marketHex,"hex"),
+    Buffer.from(programHex,"hex"),Buffer.from(genesisHex,"hex"),
     le(epochId,U64,8,"epochId"),le(tickSqrtPriceX64,U128,16,
       "tick sqrt price",{nonzero:true}),Buffer.from([side==="ask"?0:1]),
     count,...membership,...values]);
