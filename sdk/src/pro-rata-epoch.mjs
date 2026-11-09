@@ -36,8 +36,11 @@ function canonical(epoch){
       JSON.stringify([...ASSETS].sort()))
     throw new Error("Exact six asset totals required");
   for(const name of ASSETS)atom(epoch.totals[name],MAX64,name);
-  if(epoch.totals.baseDebit!=="0"&&epoch.totals.quoteDebit!=="0")
-    throw new Error("One epoch cannot mix buy and sell settlement directions");
+  const ask=epoch.totals.baseDebit!=="0"&&epoch.totals.baseCredit==="0"&&
+    epoch.totals.quoteDebit==="0"&&epoch.totals.baseFee==="0";
+  const bid=epoch.totals.baseCredit!=="0"&&epoch.totals.baseDebit==="0"&&
+    epoch.totals.quoteCredit==="0"&&epoch.totals.quoteFee==="0";
+  if(!ask&&!bid)throw new Error("Epoch totals mix settlement directions or have no base fills");
   if(BigInt(epoch.totals.baseDebit)>weight||
       BigInt(epoch.totals.baseCredit)>weight)
     throw new Error("Debited quantity exceeds active epoch weight");
@@ -71,25 +74,36 @@ function verify(epoch){
     throw new Error("Frozen epoch commitment mismatch");
   return epoch;
 }
-/** Prefix difference computed ONLY for immutable total, not intermediate F.
- * For each asset: sum_i(floor(T*(p+w)/W)-floor(T*p/W))=T.
- * Floating-point operations and settlement-order-dependent dust forbidden.
+/** The base fill is first allocated by frozen resting weights. Proceeds
+ * and fees are then allocated ONLY among makers with allocated base fill,
+ * preventing a zero-fill maker from receiving proceeds. All allocations
+ * telescope to immutable totals, regardless of later tick movements.
  */
 export function frozenMakerClaim(epoch,makerId){
   verify(epoch);
-  let prefix=0n;
   const W=BigInt(epoch.totalWeight);
+  const ask=epoch.totals.baseDebit!=="0";
+  const baseField=ask?"baseDebit":"baseCredit";
+  const filledBase=BigInt(epoch.totals[baseField]);
+  let weightPrefix=0n,fillPrefix=0n;
   for(const maker of epoch.makers){
-    const next=prefix+BigInt(maker.weight);
+    const weightNext=weightPrefix+BigInt(maker.weight);
+    const filledNext=(filledBase*weightNext)/W;
+    const filled=(filledNext-(filledBase*weightPrefix)/W);
     if(maker.id===makerId){
-      const claim={};
-      for(const asset of ASSETS){
-        const T=BigInt(epoch.totals[asset]);
-        claim[asset]=((T*next)/W-(T*prefix)/W).toString();
+      const claim=Object.fromEntries(ASSETS.map(asset=>[asset,"0"]));
+      claim[baseField]=filled.toString();
+      // Every maker receives the delta of the cumulative *filled-base*
+      // fraction, not the original resting-liquidity fraction.
+      for(const asset of ask?["quoteCredit","quoteFee"]:["quoteDebit","baseFee"]){
+        const total=BigInt(epoch.totals[asset]);
+        claim[asset]=((total*(fillPrefix+filled))/filledBase-
+          (total*fillPrefix)/filledBase).toString();
       }
       return Object.freeze(claim);
     }
-    prefix=next;
+    fillPrefix+=filled;
+    weightPrefix=weightNext;
   }
   throw new Error("Maker not active in frozen epoch");
 }
