@@ -256,3 +256,24 @@ and re-read and re-simulate an exact transaction under exclusive journal
 ownership before any attempt to trade. No tokens are moved and no
 order-submission permit is produced. Never activate the experimental v2
 journal alongside the Rust v1 journal for the same maker.
+
+## Independent collateral and resting-order reconciliation
+
+The finalized six-account audit now returns `ownedOrders` containing the
+maker's resting order side, sequence, Q64 price and remaining base size
+from authenticated owner sidecars. The SDK's
+`reconcileMakerInventory({before,after,expectedAssetDeltas,expectedOwnedOrders})`
+compares **all four** maker ledger fields (free/locked base and quote)
+against explicitly provided signed integer deltas, and compares the exact
+maker resting-order identity/price/remaining-size set against an externally
+verified expected result. Missing expected deltas, duplicated orders,
+stale/non-finalized snapshots, malformed quantities or unexplained
+changes fail closed. The result always has `canSubmit: false`.
+
+**Crucial limitation:** these expected deltas and orders must be authenticated
+independently from finalized transaction logs, SPL custody accounting and
+authorized transfers. This module **does not fetch or validate those
+receipts**, model fill fees, establish asset conservation on its own, or
+permit trades. A caller cannot claim successful independent reconciliation
+by passing unverified expected data derived from the same after snapshot.
+All account PDAs and context must already be independently authenticated.
