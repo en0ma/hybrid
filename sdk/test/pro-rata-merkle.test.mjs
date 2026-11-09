@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {freezeProRataEpoch,frozenMakerClaim} from "../src/pro-rata-epoch.mjs";
 import {
   sealFrozenMakerClaims,proveFrozenMakerClaim,verifyFrozenMakerProof,
+  hashFrozenMakerLeaf,hashFrozenMakerNode,
 } from "../src/pro-rata-merkle.mjs";
 const totals={baseDebit:"1",baseCredit:"0",quoteDebit:"0",
   quoteCredit:"29",baseFee:"0",quoteFee:"3"};
@@ -135,4 +136,20 @@ test("binary ABI root is invariant to object key insertion ordering",()=>{
     expectedMakerId:p.leaf.makerId}).mode,"membership-only");
   const forged={...seal,leaves:seal.leaves.map((l,i)=>i===2?{...l,index:3}:l)};
   assert.throws(()=>proveFrozenMakerClaim(forged,2),/roster index/);
+});
+
+test("shared canonical binary v1 vectors agree with Rust settlement verifier",()=>{
+  const epochCommitment="11".repeat(32);
+  const leaf={index:2,makerId:"maker_A",weight:"3",claim:{
+    baseDebit:"2",baseCredit:"0",quoteDebit:"0",quoteCredit:"7",
+    baseFee:"0",quoteFee:"1",
+  }};
+  assert.equal(hashFrozenMakerLeaf(epochCommitment,leaf),
+    "ae73290b47ed38b51dbc93ef0a058240e82a8d3eacadb43bf2614a787464201a");
+  assert.equal(hashFrozenMakerNode("aa".repeat(32),"bb".repeat(32)),
+    "d68609120b2b28233b897f0829e4dbd01f9566a25c0b7a1d87fb07af904271f8");
+  assert.throws(()=>hashFrozenMakerLeaf(epochCommitment,{
+    ...leaf,claim:{...leaf.claim,baseDebit:(1n<<64n).toString()},
+  }),/Out-of-range/);
+  assert.throws(()=>hashFrozenMakerLeaf("ff",leaf),/Invalid epoch commitment/);
 });
