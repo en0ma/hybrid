@@ -153,3 +153,21 @@ test("shared canonical binary v1 vectors agree with Rust settlement verifier",()
   }),/Out-of-range/);
   assert.throws(()=>hashFrozenMakerLeaf("ff",leaf),/Invalid epoch commitment/);
 });
+
+test("three-maker odd-tree root matches independent Rust test vector",()=>{
+  const epochCommitment="11".repeat(32);
+  const mk=(index,makerId,amounts)=>hashFrozenMakerLeaf(epochCommitment,{
+    index,makerId,weight:"1",claim:{
+      baseDebit:String(amounts[0]),baseCredit:"0",quoteDebit:"0",
+      quoteCredit:String(amounts[1]),baseFee:"0",quoteFee:String(amounts[2]),
+    },
+  });
+  const a=mk(0,"A",[1,2,0]);
+  const b=mk(1,"B",[0,0,0]);
+  const c=mk(2,"C",[1,3,1]);
+  const root=hashFrozenMakerNode(
+    hashFrozenMakerNode(a,b),hashFrozenMakerNode(c,c),
+  );
+  assert.equal(root,
+    "8df5339645b4e7481bbab50a25f00805f29e28ae3002cbee1e23e1f2fafb41bc");
+});
