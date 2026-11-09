@@ -4,7 +4,7 @@ import {freezeProRataEpoch,frozenMakerClaim} from "../src/pro-rata-epoch.mjs";
 import {
   sealFrozenMakerClaims,proveFrozenMakerClaim,verifyFrozenMakerProof,
 } from "../src/pro-rata-merkle.mjs";
-const totals={baseDebit:"7",baseCredit:"0",quoteDebit:"0",
+const totals={baseDebit:"1",baseCredit:"0",quoteDebit:"0",
   quoteCredit:"29",baseFee:"0",quoteFee:"3"};
 function epoch(n=13,id=17){
   return freezeProRataEpoch({
