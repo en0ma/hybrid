@@ -6,26 +6,50 @@
 import {createHash} from "node:crypto";
 import {frozenMakerClaim,auditFrozenProRataEpoch} from "./pro-rata-epoch.mjs";
 
+// Versioned binary Merkle ABI, v1. Never hash JSON for on-chain proofs.
+// Leaf preimage: "HYBRID_LAZY_MAKER_LEAF_V1\\0" | 32-byte epoch digest |
+// u32LE roster index | u8 ASCII maker ID length | maker ID bytes |
+// u64LE weight | six u64LE asset amounts in ASSETS order.
+// Node preimage: "HYBRID_LAZY_MAKER_NODE_V1\\0" | left[32] | right[32].
 const ASSETS=["baseDebit","baseCredit","quoteDebit","quoteCredit","baseFee","quoteFee"];
 const HEX=/^[0-9a-f]{64}$/;
+const ID=/^[A-Za-z0-9_-]{1,128}$/;
+const MAX64=(1n<<64n)-1n;
+const LEAF_DOMAIN=Buffer.from("HYBRID_LAZY_MAKER_LEAF_V1\\0","utf8");
+const NODE_DOMAIN=Buffer.from("HYBRID_LAZY_MAKER_NODE_V1\\0","utf8");
 const sha=(bytes)=>createHash("sha256").update(bytes).digest("hex");
-const digest=(domain,...parts)=>sha(Buffer.from(JSON.stringify([domain,...parts]),"utf8"));
 const eq=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
-function leafHash(epochCommitment,index,makerId,weight,claim){
-  return digest("HYBRID_LAZY_MAKER_LEAF_V1",epochCommitment,index,makerId,weight,
-    ...ASSETS.map(a=>claim[a]));
+function u64(value,name,{positive=false}={}){
+  if(typeof value!=="string"||!/^(0|[1-9][0-9]*)$/.test(value))
+    throw new Error("Invalid canonical integer: "+name);
+  const n=BigInt(value);
+  if(n>MAX64||(positive&&n===0n))throw new Error("Out-of-range u64: "+name);
+  const b=Buffer.alloc(8);b.writeBigUInt64LE(n);return b;
 }
-function nodeHash(left,right){return digest("HYBRID_LAZY_MAKER_NODE_V1",left,right);}
 function safeLeaf(leaf){
-  if(!leaf||typeof leaf!=="object"||
-    !Number.isSafeInteger(leaf.index)||leaf.index<0||
-    typeof leaf.makerId!=="string"||!/^[A-Za-z0-9_-]{1,128}$/.test(leaf.makerId)||
-    typeof leaf.weight!=="string"||!/^[1-9][0-9]*$/.test(leaf.weight)||
-    !leaf.claim||typeof leaf.claim!=="object"||
-    !eq(Object.keys(leaf.claim).sort(),[...ASSETS].sort())||
-    ASSETS.some(a=>typeof leaf.claim[a]!=="string"||!/^(0|[1-9][0-9]*)$/.test(leaf.claim[a])))
+  if(!leaf||typeof leaf!=="object"||Array.isArray(leaf)||
+    !eq(Object.keys(leaf).sort(),["index","makerId","weight","claim"].sort())||
+    !Number.isSafeInteger(leaf.index)||leaf.index<0||leaf.index>4095||
+    typeof leaf.makerId!=="string"||!ID.test(leaf.makerId)||
+    !leaf.claim||typeof leaf.claim!=="object"||Array.isArray(leaf.claim)||
+    !eq(Object.keys(leaf.claim).sort(),[...ASSETS].sort()))
     throw new Error("Invalid Merkle claim leaf");
+  u64(leaf.weight,"maker weight",{positive:true});
+  for(const asset of ASSETS)u64(leaf.claim[asset],asset);
   return leaf;
+}
+function leafHash(epochCommitment,index,makerId,weight,claim){
+  if(!HEX.test(epochCommitment))throw new Error("Invalid epoch commitment");
+  const leaf=safeLeaf({index,makerId,weight,claim});
+  const idx=Buffer.alloc(4);idx.writeUInt32LE(leaf.index);
+  const maker=Buffer.from(leaf.makerId,"ascii");
+  return sha(Buffer.concat([LEAF_DOMAIN,Buffer.from(epochCommitment,"hex"),idx,
+    Buffer.from([maker.length]),maker,u64(leaf.weight,"maker weight",{positive:true}),
+    ...ASSETS.map(a=>u64(leaf.claim[a],a))]));
+}
+function nodeHash(left,right){
+  if(!HEX.test(left)||!HEX.test(right))throw new Error("Invalid Merkle node");
+  return sha(Buffer.concat([NODE_DOMAIN,Buffer.from(left,"hex"),Buffer.from(right,"hex")]));
 }
 function buildLevels(hashes){
   const levels=[hashes];
@@ -62,7 +86,7 @@ export function proveFrozenMakerClaim(seal,index){
     !Number.isSafeInteger(index)||index<0||index>=seal.leafCount||
     seal.leafCount!==seal.leaves?.length||seal.leafCount>4096)
     throw new Error("Invalid sealed maker claim index");
-  const leaves=seal.leaves.map(l=>{
+  const leaves=seal.leaves.map((l,i)=>{\n    if(l.index!==i)throw new Error("Sealed leaf roster index mismatch");
     safeLeaf(l);
     return leafHash(seal.epochCommitment,l.index,l.makerId,l.weight,l.claim);
   });
@@ -91,7 +115,7 @@ export function verifyFrozenMakerProof(proof,{
       proof.root!==expectedRoot||proof.epochCommitment!==expectedEpochCommitment||
       !Number.isSafeInteger(proof.leafCount)||proof.leafCount<1||
       proof.leafCount>4096||!Array.isArray(proof.siblings)||
-      !Array.isArray(ASSETS))
+      typeof expectedMakerId!=="string"||!ID.test(expectedMakerId))
     throw new Error("Untrusted frozen maker proof context");
   const leaf=safeLeaf(proof.leaf);
   if(leaf.index>=proof.leafCount||leaf.makerId!==expectedMakerId)
