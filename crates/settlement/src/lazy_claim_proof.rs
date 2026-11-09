@@ -105,7 +105,7 @@ pub fn verify_maker_claim(
             .siblings
             .get(depth)
             .ok_or(ClaimProofError::InvalidPath)?;
-        hash = if index % 2 == 0 {
+        hash = if index.is_multiple_of(2) {
             // Terminal odd leaf must be paired with itself, not arbitrary
             // outsider data representing a phantom roster position.
             if index + 1 >= count && *sibling != hash {
