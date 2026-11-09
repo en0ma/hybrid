@@ -92,7 +92,7 @@ test("reject unfinished, malformed, mutated, overfilled and duplicate epochs",()
   assert.throws(()=>freezeProRataEpoch({
     epochId:0,marketHex:"11".repeat(32),tickSqrtPriceX64:(42n<<64n).toString(),makers:[{id:"A",weight:"3"}],
     totals:totals({baseDebit:"2",quoteDebit:"1"}),
-  }),/mix settlement directions/);
+  }),/Cross-direction epoch asset totals|mix settlement directions/);
 });
 test("synthetic claim ledger rejects replay and foreign claims",()=>{
   const e=three();
@@ -100,4 +100,33 @@ test("synthetic claim ledger rejects replay and foreign claims",()=>{
   assert.throws(()=>claimFrozenMaker(e,{...ledger,claimed:["A","A"]},"B"),/Invalid/);
   assert.throws(()=>claimFrozenMaker(e,ledger,"not_a_maker"),/not active/);
   assert.throws(()=>claimFrozenMaker(e,{...ledger,claimed:["foreign"]},"A"),/Invalid/);
+});
+
+test("one canonical binary epoch identity binds market and Q64 tick across all claim ledgers",()=>{
+  const old=three();
+  const newMarket=freezeProRataEpoch({
+    epochId:0,marketHex:"22".repeat(32),
+    tickSqrtPriceX64:(42n<<64n).toString(),
+    makers:[{id:"A",weight:"1"},{id:"B",weight:"1"},{id:"C",weight:"1"}],
+    totals:totals(),
+  });
+  const newTick=freezeProRataEpoch({
+    epochId:0,marketHex:"11".repeat(32),
+    tickSqrtPriceX64:(43n<<64n).toString(),
+    makers:[{id:"A",weight:"1"},{id:"B",weight:"1"},{id:"C",weight:"1"}],
+    totals:totals(),
+  });
+  assert.notEqual(old.commitment,newMarket.commitment);
+  assert.notEqual(old.commitment,newTick.commitment);
+  const ledger=newFrozenSettlementLedger(old);
+  assert.throws(()=>claimFrozenMaker(newMarket,ledger,"A"),/mismatched/);
+  assert.throws(()=>claimFrozenMaker(newTick,ledger,"A"),/mismatched/);
+  assert.throws(()=>frozenMakerClaim({
+    ...old,tickSqrtPriceX64:(43n<<64n).toString(),
+  },"A"),/commitment mismatch/);
+  assert.throws(()=>freezeProRataEpoch({
+    epochId:0,marketHex:"not-a-market",
+    tickSqrtPriceX64:(42n<<64n).toString(),
+    makers:[{id:"A",weight:"3"}],totals:totals(),
+  }),/market/);
 });
