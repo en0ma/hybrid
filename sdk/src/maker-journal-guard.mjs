@@ -3,7 +3,6 @@
 // has reconciled pending journal state. Never auto-break a stale lock.
 import {open,unlink,readFile} from "node:fs/promises";
 import {dirname} from "node:path";
-import {createHash} from "node:crypto";
 import {assertSimulatedBytes} from "./simulation-preflight.mjs";
 
 const HEX64=/^[a-f0-9]{64}$/;
@@ -25,18 +24,19 @@ export async function withMakerJournalLock(lockPath,operation){
   if(typeof lockPath!=="string"||!lockPath||typeof operation!=="function")
     throw new TypeError("Lock path and operation required");
   const handle=await open(lockPath,"wx",0o600);
-  let synced=false;
+  let complete=false;
   try{
     await handle.writeFile(JSON.stringify({version:1,createdAt:new Date().toISOString()})+"\n");
     await handle.sync();
     await syncDirectory(lockPath);
-    synced=true;
-    return await operation();
+    const result=await operation();
+    complete=true;
+    return result;
   }finally{
     await handle.close();
-    // A crash or an inability to sync the initial lock is NOT proof that
-    // no operation was attempted; leave it in place for manual recovery.
-    if(synced){
+    // Failure, crash or an inability to sync is NOT proof that no
+    // operation was attempted; leave lock in place for manual recovery.
+    if(complete){
       await unlink(lockPath);
       await syncDirectory(lockPath);
     }
