@@ -9,7 +9,7 @@ const totals=(overrides={})=>({
   quoteCredit:"7",baseFee:"0",quoteFee:"2",...overrides,
 });
 const three=()=>freezeProRataEpoch({
-  epochId:0,marketHex:"11".repeat(32),tickSqrtPriceX64:(42n<<64n).toString(),
+  epochId:0,marketHex:"11".repeat(32),programHex:"22".repeat(32),genesisHex:"33".repeat(32),tickSqrtPriceX64:(42n<<64n).toString(),
   makers:[{id:"A",weight:"1"},{id:"B",weight:"1"},{id:"C",weight:"1"}],
   totals:totals(),
 });
@@ -29,7 +29,7 @@ test("frozen epoch assigns exact base, proceeds and fee dust once",()=>{
 test("late settlement after new tick is independent of settlement order",()=>{
   const old=three();
   const moved=freezeProRataEpoch({
-    epochId:1,marketHex:"11".repeat(32),tickSqrtPriceX64:(43n<<64n).toString(),makers:[{id:"A",weight:"2"},{id:"B",weight:"3"}],
+    epochId:1,marketHex:"11".repeat(32),programHex:"22".repeat(32),genesisHex:"33".repeat(32),tickSqrtPriceX64:(43n<<64n).toString(),makers:[{id:"A",weight:"2"},{id:"B",weight:"3"}],
     totals:totals({baseDebit:"0",baseCredit:"3",quoteDebit:"11",quoteCredit:"0",quoteFee:"0",baseFee:"1"}),
   });
   let oldLedger=newFrozenSettlementLedger(old);
@@ -48,8 +48,8 @@ test("late settlement after new tick is independent of settlement order",()=>{
 });
 test("dust priority rotates between immutable epochs",()=>{
   const maker=[{id:"A",weight:"1"},{id:"B",weight:"1"},{id:"C",weight:"1"}];
-  const a=freezeProRataEpoch({epochId:0,marketHex:"11".repeat(32),tickSqrtPriceX64:(1n<<64n).toString(),makers:maker,totals:totals()});
-  const b=freezeProRataEpoch({epochId:1,marketHex:"11".repeat(32),tickSqrtPriceX64:(2n<<64n).toString(),makers:maker,totals:totals()});
+  const a=freezeProRataEpoch({epochId:0,marketHex:"11".repeat(32),programHex:"22".repeat(32),genesisHex:"33".repeat(32),tickSqrtPriceX64:(1n<<64n).toString(),makers:maker,totals:totals()});
+  const b=freezeProRataEpoch({epochId:1,marketHex:"11".repeat(32),programHex:"22".repeat(32),genesisHex:"33".repeat(32),tickSqrtPriceX64:(2n<<64n).toString(),makers:maker,totals:totals()});
   assert.equal(frozenMakerClaim(a,"A").baseDebit,"0");
   assert.equal(frozenMakerClaim(b,"B").baseDebit,"0");
   assert.equal(auditFrozenProRataEpoch(a).exactlyAllocated,true);
@@ -61,7 +61,7 @@ test("100+ uneven makers, shuffled settlement, large atom values conserve exactl
   }));
   const W=maker.reduce((n,m)=>n+BigInt(m.weight),0n);
   const e=freezeProRataEpoch({
-    epochId:6789,marketHex:"11".repeat(32),tickSqrtPriceX64:(999n<<64n).toString(),makers:maker,
+    epochId:6789,marketHex:"11".repeat(32),programHex:"22".repeat(32),genesisHex:"33".repeat(32),tickSqrtPriceX64:(999n<<64n).toString(),makers:maker,
     totals:totals({baseDebit:String(W-1n),quoteCredit:String((1n<<64n)-1n),
       quoteFee:"17",baseFee:"0"}),
   });
@@ -81,16 +81,16 @@ test("reject unfinished, malformed, mutated, overfilled and duplicate epochs",()
   assert.throws(()=>frozenMakerClaim({...e,totals:{...e.totals,baseDebit:"1"}},"A"),/commitment mismatch/);
   assert.throws(()=>frozenMakerClaim(e,"X"),/not active/);
   assert.throws(()=>freezeProRataEpoch({
-    epochId:0,marketHex:"11".repeat(32),tickSqrtPriceX64:(42n<<64n).toString(),makers:[{id:"A",weight:"1"},{id:"A",weight:"2"}],totals:totals(),
+    epochId:0,marketHex:"11".repeat(32),programHex:"22".repeat(32),genesisHex:"33".repeat(32),tickSqrtPriceX64:(42n<<64n).toString(),makers:[{id:"A",weight:"1"},{id:"A",weight:"2"}],totals:totals(),
   }),/Duplicate/);
   assert.throws(()=>freezeProRataEpoch({
-    epochId:0,marketHex:"11".repeat(32),tickSqrtPriceX64:(42n<<64n).toString(),makers:[{id:"A",weight:"0"}],totals:totals(),
+    epochId:0,marketHex:"11".repeat(32),programHex:"22".repeat(32),genesisHex:"33".repeat(32),tickSqrtPriceX64:(42n<<64n).toString(),makers:[{id:"A",weight:"0"}],totals:totals(),
   }),/Zero/);
   assert.throws(()=>freezeProRataEpoch({
-    epochId:0,marketHex:"11".repeat(32),tickSqrtPriceX64:(42n<<64n).toString(),makers:[{id:"A",weight:"1"}],totals:totals(),
+    epochId:0,marketHex:"11".repeat(32),programHex:"22".repeat(32),genesisHex:"33".repeat(32),tickSqrtPriceX64:(42n<<64n).toString(),makers:[{id:"A",weight:"1"}],totals:totals(),
   }),/exceeds active epoch weight/);
   assert.throws(()=>freezeProRataEpoch({
-    epochId:0,marketHex:"11".repeat(32),tickSqrtPriceX64:(42n<<64n).toString(),makers:[{id:"A",weight:"3"}],
+    epochId:0,marketHex:"11".repeat(32),programHex:"22".repeat(32),genesisHex:"33".repeat(32),tickSqrtPriceX64:(42n<<64n).toString(),makers:[{id:"A",weight:"3"}],
     totals:totals({baseDebit:"2",quoteDebit:"1"}),
   }),/Cross-direction epoch asset totals|mix settlement directions/);
 });
@@ -105,13 +105,13 @@ test("synthetic claim ledger rejects replay and foreign claims",()=>{
 test("one canonical binary epoch identity binds market and Q64 tick across all claim ledgers",()=>{
   const old=three();
   const newMarket=freezeProRataEpoch({
-    epochId:0,marketHex:"22".repeat(32),
+    epochId:0,marketHex:"22".repeat(32),programHex:"22".repeat(32),genesisHex:"33".repeat(32),
     tickSqrtPriceX64:(42n<<64n).toString(),
     makers:[{id:"A",weight:"1"},{id:"B",weight:"1"},{id:"C",weight:"1"}],
     totals:totals(),
   });
   const newTick=freezeProRataEpoch({
-    epochId:0,marketHex:"11".repeat(32),
+    epochId:0,marketHex:"11".repeat(32),programHex:"22".repeat(32),genesisHex:"33".repeat(32),
     tickSqrtPriceX64:(43n<<64n).toString(),
     makers:[{id:"A",weight:"1"},{id:"B",weight:"1"},{id:"C",weight:"1"}],
     totals:totals(),
