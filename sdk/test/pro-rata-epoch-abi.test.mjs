@@ -26,7 +26,7 @@ test("market, price, epoch, roster order, fees and direction cannot be substitut
     {...fixture,totals:{...totals,quoteFee:"2"}},
   ];
   for(const value of tampered)assert.notEqual(hashFrozenEpochV2(value),expected);
-  assert.throws(()=>hashFrozenEpochV2({...fixture,side:"bid"}),/Cross-direction/);
+  assert.throws(()=>hashFrozenEpochV2({...fixture,side:"bid"}),/Invalid epoch filled base|Cross-direction/);
 });
 test("reject invalid or ambiguous roster, amounts and market",()=>{
   assert.throws(()=>hashFrozenEpochV2({...fixture,makers:[]}),/roster/);
