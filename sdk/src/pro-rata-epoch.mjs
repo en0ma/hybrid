@@ -1,7 +1,7 @@
 // PURE, NON-EXECUTING pro-rata maker fill allocation prototype.
 // Matching does not write maker balances; claims are possible only after
 // fill totals are FROZEN for the epoch. No SPL token, custody or PDA actions.
-import {createHash} from "node:crypto";
+import {hashFrozenEpochV2} from "./pro-rata-epoch-abi.mjs";
 
 const MAX64=(1n<<64n)-1n, MAX128=(1n<<128n)-1n;
 const ASSETS=["baseDebit","baseCredit","quoteDebit","quoteCredit","baseFee","quoteFee"];
@@ -13,11 +13,17 @@ function atom(value,limit,name){
   if(result>limit)throw new RangeError(name+" exceeds precision bound");
   return result;
 }
-function hash(value){return createHash("sha256").update(JSON.stringify(value)).digest("hex");}
+function digest(epoch){
+  return hashFrozenEpochV2({marketHex:epoch.marketHex,
+    epochId:String(epoch.epochId),tickSqrtPriceX64:epoch.tickSqrtPriceX64,
+    side:epoch.totals.baseDebit!=="0"?"ask":"bid",
+    makers:epoch.makers,totals:epoch.totals});
+}
 function canonical(epoch){
-  if(!epoch||epoch.version!==1||epoch.status!=="frozen"||
+  if(!epoch||epoch.version!==2||epoch.status!=="frozen"||
       !Number.isSafeInteger(epoch.epochId)||epoch.epochId<0||
-      !ID.test(epoch.tickId)||!Array.isArray(epoch.makers)||epoch.makers.length===0||
+      typeof epoch.marketHex!=="string"||
+      typeof epoch.tickSqrtPriceX64!=="string"||!Array.isArray(epoch.makers)||epoch.makers.length===0||
       !epoch.totals||typeof epoch.totals!=="object")throw new Error("Invalid frozen epoch");
   const ids=new Set();
   let weight=0n;
@@ -50,7 +56,7 @@ function canonical(epoch){
  * Deterministic rotation of the sorted maker list changes dust priority
  * between epochs. Do not allow makers to enter/exit or claim while live.
  */
-export function freezeProRataEpoch({epochId,tickId,makers,totals}){
+export function freezeProRataEpoch({epochId,marketHex,tickSqrtPriceX64,makers,totals}){
   if(!Array.isArray(makers)||makers.length===0||makers.length>4096)
     throw new RangeError("Invalid maker count");
   const sorted=makers.map(m=>({id:m?.id,weight:m?.weight}))
@@ -59,18 +65,17 @@ export function freezeProRataEpoch({epochId,tickId,makers,totals}){
   const rotated=[...sorted.slice(shift),...sorted.slice(0,shift)];
   let weight=0n;
   for(const m of rotated)weight+=atom(m.weight,MAX64,"maker weight");
-  const record={version:1,status:"frozen",epochId,tickId,
+  const record={version:2,status:"frozen",epochId,marketHex,tickSqrtPriceX64,
     makers:rotated,totalWeight:weight.toString(),
     totals:{...totals}};
   canonical(record);
-  const commitment=hash(record);
+  const commitment=digest(record);
   return Object.freeze({...record,makers:Object.freeze(rotated.map(m=>Object.freeze(m))),
     totals:Object.freeze(record.totals),commitment});
 }
 function verify(epoch){
   canonical(epoch);
-  const {commitment,...record}=epoch;
-  if(typeof commitment!=="string"||commitment!==hash(record))
+  if(typeof epoch.commitment!=="string"||epoch.commitment!==digest(epoch))
     throw new Error("Frozen epoch commitment mismatch");
   return epoch;
 }
