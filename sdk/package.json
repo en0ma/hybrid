@@ -17,7 +17,8 @@
     "./signature-status": "./src/signature-status.mjs",
     "./simulation-preflight": "./src/simulation-preflight.mjs",
     "./maker-journal-guard": "./src/maker-journal-guard.mjs",
-    "./journal-audit": "./src/journal-audit.mjs"
+    "./journal-audit": "./src/journal-audit.mjs",
+    "./maker-atomic-journal": "./src/maker-atomic-journal.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
