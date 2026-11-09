@@ -14,7 +14,8 @@ function atom(value,limit,name){
   return result;
 }
 function digest(epoch){
-  return hashFrozenEpochV2({marketHex:epoch.marketHex,
+  return hashFrozenEpochV2({marketHex:epoch.marketHex,programHex:epoch.programHex,
+    genesisHex:epoch.genesisHex,
     epochId:String(epoch.epochId),tickSqrtPriceX64:epoch.tickSqrtPriceX64,
     side:epoch.totals.baseDebit!=="0"?"ask":"bid",
     makers:epoch.makers,totals:epoch.totals});
@@ -23,6 +24,7 @@ function canonical(epoch){
   if(!epoch||epoch.version!==2||epoch.status!=="frozen"||
       !Number.isSafeInteger(epoch.epochId)||epoch.epochId<0||
       typeof epoch.marketHex!=="string"||
+      typeof epoch.programHex!=="string"||typeof epoch.genesisHex!=="string"||
       typeof epoch.tickSqrtPriceX64!=="string"||!Array.isArray(epoch.makers)||epoch.makers.length===0||
       !epoch.totals||typeof epoch.totals!=="object")throw new Error("Invalid frozen epoch");
   const ids=new Set();
@@ -56,7 +58,7 @@ function canonical(epoch){
  * Deterministic rotation of the sorted maker list changes dust priority
  * between epochs. Do not allow makers to enter/exit or claim while live.
  */
-export function freezeProRataEpoch({epochId,marketHex,tickSqrtPriceX64,makers,totals}){
+export function freezeProRataEpoch({epochId,marketHex,programHex,genesisHex,tickSqrtPriceX64,makers,totals}){
   if(!Array.isArray(makers)||makers.length===0||makers.length>4096)
     throw new RangeError("Invalid maker count");
   const sorted=makers.map(m=>({id:m?.id,weight:m?.weight}))
@@ -65,7 +67,8 @@ export function freezeProRataEpoch({epochId,marketHex,tickSqrtPriceX64,makers,to
   const rotated=[...sorted.slice(shift),...sorted.slice(0,shift)];
   let weight=0n;
   for(const m of rotated)weight+=atom(m.weight,MAX64,"maker weight");
-  const record={version:2,status:"frozen",epochId,marketHex,tickSqrtPriceX64,
+  const record={version:2,status:"frozen",epochId,marketHex,programHex,genesisHex,
+    tickSqrtPriceX64,
     makers:rotated,totalWeight:weight.toString(),
     totals:{...totals}};
   canonical(record);
