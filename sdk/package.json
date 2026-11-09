@@ -16,7 +16,8 @@
     "./execution-policy": "./src/execution-policy.mjs",
     "./signature-status": "./src/signature-status.mjs",
     "./simulation-preflight": "./src/simulation-preflight.mjs",
-    "./maker-journal-guard": "./src/maker-journal-guard.mjs"
+    "./maker-journal-guard": "./src/maker-journal-guard.mjs",
+    "./journal-audit": "./src/journal-audit.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
