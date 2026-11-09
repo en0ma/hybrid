@@ -9,7 +9,7 @@ const totals={baseDebit:"1",baseCredit:"0",quoteDebit:"0",
   quoteCredit:"29",baseFee:"0",quoteFee:"3"};
 function epoch(n=13,id=17){
   return freezeProRataEpoch({
-    epochId:id,marketHex:"11".repeat(32),tickSqrtPriceX64:(301n<<64n).toString(),
+    epochId:id,marketHex:"11".repeat(32),programHex:"22".repeat(32),genesisHex:"33".repeat(32),tickSqrtPriceX64:(301n<<64n).toString(),
     makers:Array.from({length:n},(_,i)=>({
       id:"maker_"+i,weight:String((i*19)%23+1),
     })),
