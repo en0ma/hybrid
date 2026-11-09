@@ -232,3 +232,27 @@ not sign, assemble, submit or rebroadcast orders. Never invoke it without
 transition; the v2 journal must not coexist as an authority with the legacy
 Rust v1 journal. This is a prototype recovery bridge, not production
 approval to trade unattended.
+
+## Read-only maker inventory audit after finalized execution
+
+`sdk/src/maker-post-finality-audit.mjs` adds an independent, non-executable
+post-finality state check. It requires the experimental v2 journal to be
+`finalized` and validates the expected genesis hash. Its one
+`getMultipleAccountsInfoAndContext` request fetches **all six** market,
+ask-page, ask-owner, bid-page, bid-owner, and maker-balance accounts at
+`commitment: "finalized"` and with `minContextSlot` set to the journaled
+finalization slot. Existing SDK decoders authenticate market/page program
+ownership, sidecar bindings, maker/market ownership in the balance record
+and page formats. The audit rejects stale or mixed context slots, missing
+accounts, duplicate account keys, or incorrect program owners. It returns
+read-only available and locked collateral, order counts and the verified
+observation slot, with `canSubmit: false`.
+
+This helps ensure a maker cannot treat **transaction finalization alone**
+as proof of a fresh verified trading state. The caller still must derive
+and verify all canonical PDAs and the market's sidecar addresses, trust
+the RPC endpoint, check fill accounting/risk exposure and capacity,
+and re-read and re-simulate an exact transaction under exclusive journal
+ownership before any attempt to trade. No tokens are moved and no
+order-submission permit is produced. Never activate the experimental v2
+journal alongside the Rust v1 journal for the same maker.
