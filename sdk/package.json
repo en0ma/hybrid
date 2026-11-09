@@ -23,7 +23,8 @@
     "./maker-post-finality-audit": "./src/maker-post-finality-audit.mjs",
     "./maker-inventory-reconcile": "./src/maker-inventory-reconcile.mjs",
     "./pro-rata-epoch": "./src/pro-rata-epoch.mjs",
-    "./pro-rata-merkle": "./src/pro-rata-merkle.mjs"
+    "./pro-rata-merkle": "./src/pro-rata-merkle.mjs",
+    "./pro-rata-epoch-abi": "./src/pro-rata-epoch-abi.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
