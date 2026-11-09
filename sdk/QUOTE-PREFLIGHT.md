@@ -294,8 +294,11 @@ frozen total weight `W`, allocation is
 The integer floors telescope across all makers, so exactly `T` atoms
 are assigned: none are created, destroyed, or left in a global dust bucket.
 A lexically ordered roster is rotated by epoch ID to vary residual
-priority. Base debits/credits, quote debits/credits and fee claims each
-use their own independently fixed total. Tests cover uneven weights,
+priority. First allocate base fills from resting maker weights. Then
+allocate the corresponding quote proceeds/debits and fees **pro-rata by
+allocated base fill**, never by resting weight: a maker with zero base
+fill cannot earn proceeds or fees. Each asset total remains separately
+frozen and telescopes exactly. Tests cover uneven weights,
 dust, tick changes, deferred settlement and 137 makers in reversed
 settlement order.
 
