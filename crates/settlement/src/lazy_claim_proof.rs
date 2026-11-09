@@ -101,7 +101,10 @@ pub fn verify_maker_claim(
     let mut hash = claim_leaf_hash(epoch_commitment, &proof.leaf)?;
     let mut depth = 0usize;
     while count > 1 {
-        let sibling = proof.siblings.get(depth).ok_or(ClaimProofError::InvalidPath)?;
+        let sibling = proof
+            .siblings
+            .get(depth)
+            .ok_or(ClaimProofError::InvalidPath)?;
         hash = if index % 2 == 0 {
             // Terminal odd leaf must be paired with itself, not arbitrary
             // outsider data representing a phantom roster position.
@@ -148,31 +151,71 @@ mod tests {
     }
     #[test]
     fn exact_js_binary_leaf_and_node_vectors() {
-        assert_eq!(hex(&claim_leaf_hash(&[0x11; 32], &sample()).unwrap()), SAMPLE_LEAF_HASH);
-        assert_eq!(hex(&claim_node_hash(&[0xaa; 32], &[0xbb; 32])), SAMPLE_NODE_HASH);
+        assert_eq!(
+            hex(&claim_leaf_hash(&[0x11; 32], &sample()).unwrap()),
+            SAMPLE_LEAF_HASH
+        );
+        assert_eq!(
+            hex(&claim_node_hash(&[0xaa; 32], &[0xbb; 32])),
+            SAMPLE_NODE_HASH
+        );
     }
     #[test]
     fn singleton_proof_and_failed_replays() {
-        let leaf = MakerClaimLeaf { index: 0, ..sample() };
+        let leaf = MakerClaimLeaf {
+            index: 0,
+            ..sample()
+        };
         let digest = [0x11; 32];
         let root = claim_leaf_hash(&digest, &leaf).unwrap();
-        let proof = MakerClaimProof { leaf_count: 1, leaf, siblings: &[] };
-        assert_eq!(verify_maker_claim(&root, &digest, "maker_A", &proof), Ok(()));
-        assert_eq!(verify_maker_claim(&root, &digest, "attacker", &proof),
-            Err(ClaimProofError::InvalidMaker));
-        assert_eq!(verify_maker_claim(&root, &[0x22; 32], "maker_A", &proof),
-            Err(ClaimProofError::RootMismatch));
+        let proof = MakerClaimProof {
+            leaf_count: 1,
+            leaf,
+            siblings: &[],
+        };
+        assert_eq!(
+            verify_maker_claim(&root, &digest, "maker_A", &proof),
+            Ok(())
+        );
+        assert_eq!(
+            verify_maker_claim(&root, &digest, "attacker", &proof),
+            Err(ClaimProofError::InvalidMaker)
+        );
+        assert_eq!(
+            verify_maker_claim(&root, &[0x22; 32], "maker_A", &proof),
+            Err(ClaimProofError::RootMismatch)
+        );
         let extra = [[0u8; 32]];
-        let wrong = MakerClaimProof { siblings: &extra, ..proof };
-        assert_eq!(verify_maker_claim(&root, &digest, "maker_A", &wrong),
-            Err(ClaimProofError::InvalidPath));
+        let wrong = MakerClaimProof {
+            siblings: &extra,
+            ..proof
+        };
+        assert_eq!(
+            verify_maker_claim(&root, &digest, "maker_A", &wrong),
+            Err(ClaimProofError::InvalidPath)
+        );
     }
     #[test]
     fn odd_leaf_proof_rejects_fake_padding_and_wrong_root() {
         let digest = [0x11; 32];
-        let a = MakerClaimLeaf { index: 0, maker_id: "A", weight: 1, amounts: [1,0,0,2,0,0] };
-        let b = MakerClaimLeaf { index: 1, maker_id: "B", weight: 1, amounts: [0,0,0,0,0,0] };
-        let c = MakerClaimLeaf { index: 2, maker_id: "C", weight: 1, amounts: [1,0,0,3,0,1] };
+        let a = MakerClaimLeaf {
+            index: 0,
+            maker_id: "A",
+            weight: 1,
+            amounts: [1, 0, 0, 2, 0, 0],
+        };
+        let b = MakerClaimLeaf {
+            index: 1,
+            maker_id: "B",
+            weight: 1,
+            amounts: [0, 0, 0, 0, 0, 0],
+        };
+        let c = MakerClaimLeaf {
+            index: 2,
+            maker_id: "C",
+            weight: 1,
+            amounts: [1, 0, 0, 3, 0, 1],
+        };
         let ha = claim_leaf_hash(&digest, &a).unwrap();
         let hb = claim_leaf_hash(&digest, &b).unwrap();
         let hc = claim_leaf_hash(&digest, &c).unwrap();
@@ -180,30 +223,62 @@ mod tests {
         let right = claim_node_hash(&hc, &hc);
         let root = claim_node_hash(&left, &right);
         let siblings = [hc, left];
-        let proof = MakerClaimProof { leaf_count: 3, leaf: c, siblings: &siblings };
+        let proof = MakerClaimProof {
+            leaf_count: 3,
+            leaf: c,
+            siblings: &siblings,
+        };
         assert_eq!(verify_maker_claim(&root, &digest, "C", &proof), Ok(()));
         let fake = [[0x77; 32], left];
-        let corrupt = MakerClaimProof { siblings: &fake, ..proof.clone() };
-        assert_eq!(verify_maker_claim(&root, &digest, "C", &corrupt),
-            Err(ClaimProofError::InvalidPath));
-        assert_eq!(verify_maker_claim(&[0x44; 32], &digest, "C", &proof),
-            Err(ClaimProofError::RootMismatch));
+        let corrupt = MakerClaimProof {
+            siblings: &fake,
+            ..proof.clone()
+        };
+        assert_eq!(
+            verify_maker_claim(&root, &digest, "C", &corrupt),
+            Err(ClaimProofError::InvalidPath)
+        );
+        assert_eq!(
+            verify_maker_claim(&[0x44; 32], &digest, "C", &proof),
+            Err(ClaimProofError::RootMismatch)
+        );
     }
     #[test]
     fn deny_zero_weight_wrong_leaf_identity_and_bounds() {
         let digest = [0x11; 32];
         for leaf in [
-            MakerClaimLeaf { weight: 0, ..sample() },
-            MakerClaimLeaf { maker_id: "not valid", ..sample() },
-            MakerClaimLeaf { maker_id: "", ..sample() },
+            MakerClaimLeaf {
+                weight: 0,
+                ..sample()
+            },
+            MakerClaimLeaf {
+                maker_id: "not valid",
+                ..sample()
+            },
+            MakerClaimLeaf {
+                maker_id: "",
+                ..sample()
+            },
         ] {
             assert!(claim_leaf_hash(&digest, &leaf).is_err());
         }
-        let invalid = MakerClaimLeaf { index: 4096, ..sample() };
-        assert_eq!(claim_leaf_hash(&digest, &invalid), Err(ClaimProofError::InvalidIndex));
+        let invalid = MakerClaimLeaf {
+            index: 4096,
+            ..sample()
+        };
+        assert_eq!(
+            claim_leaf_hash(&digest, &invalid),
+            Err(ClaimProofError::InvalidIndex)
+        );
         let leaf = sample();
-        let proof = MakerClaimProof { leaf_count: 2, leaf, siblings: &[] };
-        assert_eq!(verify_maker_claim(&[0; 32], &digest, "maker_A", &proof),
-            Err(ClaimProofError::InvalidIndex));
+        let proof = MakerClaimProof {
+            leaf_count: 2,
+            leaf,
+            siblings: &[],
+        };
+        assert_eq!(
+            verify_maker_claim(&[0; 32], &digest, "maker_A", &proof),
+            Err(ClaimProofError::InvalidIndex)
+        );
     }
 }
