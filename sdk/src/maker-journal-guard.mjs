@@ -26,7 +26,7 @@ function decodeBase58(value){
   for(const c of value){if(c!=="1")break;parts.push(0);}
   return Buffer.from(parts.reverse());
 }
-function assertFirstWireSignature(transaction,signature){
+export function assertFirstWireSignature(transaction,signature){
   requireBase58(signature,"signature",80,90);
   const expected=decodeBase58(signature);
   if(expected.length!==64||expected.every(byte=>byte===0))
