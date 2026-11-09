@@ -277,3 +277,44 @@ receipts**, model fill fees, establish asset conservation on its own, or
 permit trades. A caller cannot claim successful independent reconciliation
 by passing unverified expected data derived from the same after snapshot.
 All account PDAs and context must already be independently authenticated.
+
+## Research: frozen-epoch pro-rata fills and delayed settlement
+
+`sdk/src/pro-rata-epoch.mjs` is a **pure, non-executing prototype**
+for proportional maker allocation without a write to each maker on every
+fill. A tick/price step has its own **immutable frozen epoch**: maker
+identities, weights, six integer base/quote debit/credit/fee totals and
+an epoch commitment. Settlement MUST NOT begin until all fill totals for
+that epoch are final. Tick movements begin a different epoch, retaining
+the old checkpoint unchanged for makers who settle much later.
+
+For one amount `T`, maker weight `w`, preceding prefix `p`, and
+frozen total weight `W`, allocation is
+`floor(T * (p + w) / W) - floor(T * p / W)`.
+The integer floors telescope across all makers, so exactly `T` atoms
+are assigned: none are created, destroyed, or left in a global dust bucket.
+A lexically ordered roster is rotated by epoch ID to vary residual
+priority. Base debits/credits, quote debits/credits and fee claims each
+use their own independently fixed total. Tests cover uneven weights,
+dust, tick changes, deferred settlement and 137 makers in reversed
+settlement order.
+
+**Important correction:** this formula is *not generally monotone*
+as `T` increases. A maker's cumulative allocation may decrease while
+an epoch is still filling (e.g. five equal makers, third maker's
+allocation for `T=2` is one atom, but zero for `T=3`).
+Therefore a maker MUST NOT settle against a live/changing epoch.
+Freeze an epoch **before** permitting claims; its maker weights, total
+fees, price and fill totals may never be revised after first claim.
+If partial fill progress must be claimable sooner, create new immutable
+subepochs with separately frozen totals and immutable membership.
+
+The synthetic claim ledger rejects duplicate claims in one in-memory
+state transition, but **does not** verify a maker signature, enforce
+on-chain atomic ledger-plus-SPL transfers, prove real fill and fee totals,
+authenticate PDAs/escrow, enforce vault solvency, or prevent replay
+between independently persisted ledger copies. A production processor
+needs an authenticated epoch commitment, bounded storage/proof costs,
+correct per-price trade pricing, checked reserve accounting, atomic
+claim checkpoint plus transfers and an independent conservation audit.
+Do not activate for funded matching or replace eager maker settlement.
