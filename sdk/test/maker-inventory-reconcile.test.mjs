@@ -52,7 +52,7 @@ test("reject unexpected quote replacement, duplicate sequence, and missing order
 });
 test("reject stale, not-finalized, regression, or unsafe-number snapshots",()=>{
   assert.throws(()=>reconcileMakerInventory({
-    ...args,after:{...after,slot:110},
+    ...args,after:{...after,slot:110,finalizedTransactionSlot:110},
   }),/did not advance/);
   assert.throws(()=>reconcileMakerInventory({
     ...args,after:{...after,finalizedTransactionSlot:100},
