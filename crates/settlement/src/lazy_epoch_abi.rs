@@ -30,6 +30,8 @@ pub struct EpochMaker<'a> {
 #[derive(Clone, Copy)]
 pub struct FrozenEpochV2<'a> {
     pub market: [u8; 32],
+    pub program: [u8; 32],
+    pub genesis: [u8; 32],
     pub epoch_id: u64,
     pub tick_sqrt_price_x64: u128,
     pub side: Side,
@@ -89,6 +91,8 @@ pub fn hash_frozen_epoch_v2(epoch: &FrozenEpochV2<'_>) -> Result<[u8; 32], Epoch
     let mut hash = Sha256::new();
     hash.update(DOMAIN);
     hash.update(epoch.market);
+    hash.update(epoch.program);
+    hash.update(epoch.genesis);
     hash.update(epoch.epoch_id.to_le_bytes());
     hash.update(epoch.tick_sqrt_price_x64.to_le_bytes());
     hash.update([match epoch.side {
@@ -126,6 +130,8 @@ mod tests {
         ];
         let epoch = FrozenEpochV2 {
             market: [0x11; 32],
+            program: [0x22; 32],
+            genesis: [0x33; 32],
             epoch_id: 7,
             tick_sqrt_price_x64: 1u128 << 64,
             side: Side::Ask,
@@ -134,7 +140,7 @@ mod tests {
         };
         assert_eq!(
             hex(&hash_frozen_epoch_v2(&epoch).unwrap()),
-            "dd4d8af7657c633c808fb709c8d30971099c72a5d4828228784637a6eb011ac1"
+            "fddeaffac0081511043c404a4fca35e3363bc97e8d235c697aa682e239cfb00b"
         );
     }
 
