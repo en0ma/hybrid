@@ -351,3 +351,34 @@ execution rights and is never a substitute for Solana account checks.
 The research Merkle verifier now commits a **versioned binary leaf** rather than JSON-string serialization: domain-separated SHA-256, exact 32-byte epoch digest, little-endian u32 roster index, one-byte ASCII maker-ID length and bytes, little-endian u64 maker weight, and six little-endian u64 settlement fields in fixed asset order. Internal nodes hash domain-separated 32-byte left/right siblings. Inputs with unbounded or noncanonical integers, extra/missing fields, forged roster indices, or malformed nodes fail closed. The binary proof commitment is insensitive to JavaScript object insertion order.
 
 This format is **not yet a production on-chain ABI**: maker IDs are synthetic rather than authenticated Solana public keys, and the epoch commitment still derives from a JSON model. An authenticated on-chain epoch account, bounded canonical epoch encoding, independently verified trade settlement and vault balances, and atomic anti-replay SPL transfer instructions remain release blockers. The SDK verifier grants no withdrawal authority.
+
+## Cross-language frozen claim ABI conformance (Rust ↔ SDK)
+
+The pure Rust verifier at `crates/settlement/src/lazy_claim_proof.rs`
+implements the same fixed binary leaf and node hashes and bounded,
+canonical odd-node Merkle verification as
+`sdk/src/pro-rata-merkle.mjs`. This is a **read-only, isolated
+library module**: there is no Solana instruction dispatch or SPL CPI.
+
+Canonical test vectors are asserted in **both** the Rust and JavaScript
+test suites, independently of the epoch-sealing implementation:
+
+- epoch digest: 32 bytes of `0x11`; leaf index: 2 (u32LE);
+  maker ID: `maker_A` (ASCII, 7 bytes); weight: 3 (u64LE).
+- six u64LE amounts, in protocol order
+  [baseDebit, baseCredit, quoteDebit, quoteCredit, baseFee, quoteFee]:
+  `[2, 0, 0, 7, 0, 1]`.
+- expected SHA-256 leaf digest:
+  `ae73290b47ed38b51dbc93ef0a058240e82a8d3eacadb43bf2614a787464201a`.
+- expected SHA-256 internal-node digest for left `aa` × 32
+  and right `bb` × 32:
+  `d68609120b2b28233b897f0829e4dbd01f9566a25c0b7a1d87fb07af904271f8`.
+
+Both implementations reject zero maker weight, invalid maker IDs,
+out-of-bounds indices, an incorrect expected maker, wrong roots, malformed
+path length, and noncanonical odd-leaf siblings. Production security
+remains contingent on **authenticated** roots and maker identities,
+on-chain immutable epochs, exact price/fill/fee conservation, escrow
+solvency, idempotent atomic claimed-state plus token settlement, and
+migration/fault-injection verification. A matching hash by itself
+does **not** permit withdrawals or prove epoch entitlement.
