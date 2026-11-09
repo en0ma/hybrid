@@ -51,6 +51,15 @@ function nodeHash(left,right){
   if(!HEX.test(left)||!HEX.test(right))throw new Error("Invalid Merkle node");
   return sha(Buffer.concat([NODE_DOMAIN,Buffer.from(left,"hex"),Buffer.from(right,"hex")]));
 }
+/** Test-vector utilities for the v1 ABI. Cryptographic membership only.
+ * These exports never authenticate a canonical Solana epoch or authorize pay.
+ */
+export function hashFrozenMakerLeaf(epochCommitment,leaf){
+  safeLeaf(leaf);
+  return leafHash(epochCommitment,leaf.index,leaf.makerId,leaf.weight,leaf.claim);
+}
+export function hashFrozenMakerNode(left,right){return nodeHash(left,right);}
+
 function buildLevels(hashes){
   const levels=[hashes];
   while(levels.at(-1).length>1){
