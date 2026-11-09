@@ -404,10 +404,28 @@ ask roster `[(A,1),(B,2),(C,3)]`, totals
 `[2,0,0,7,0,1]`; binary length 172 and digest
 `dd4d8af7657c633c808fb709c8d30971099c72a5d4828228784637a6eb011ac1`.
 
-**This does not complete production epoch sealing.** The SDK v1 Merkle
-claim prototype currently accepts a historical research digest; an
-actual on-chain epoch must store and authenticate a v2 epoch digest,
-maker/seat signer bindings, verified fill and fee totals, solvency
-reserves and a corresponding v2 claim root. The two versions must not
-be conflated or migrated implicitly. No on-chain instruction uses the
+**This does not complete production epoch sealing.** The SDK frozen allocation model, synthetic claim ledger and Merkle
+claim sealer now use **the same binary v2 epoch digest**, not the older
+JSON-origin epoch digest. This was consolidated before initial deployment;
+no live protocol or user-state migration is required. An actual on-chain
+epoch must still store and authenticate that digest, maker/seat signer
+bindings, verified fill and fee totals, solvency reserves and the
+corresponding claim root. No on-chain instruction uses the
 v2 commitment and no claim may be withdrawn using these helpers.
+
+## First-deployment epoch commitment consolidation
+
+The pre-deployment `freezeProRataEpoch` API now **requires** canonical
+`marketHex` and `tickSqrtPriceX64` in place of the old, untrusted
+free-text `tickId` identity. Its immutable `commitment` is computed by
+the exact Rust-compatible binary `hashFrozenEpochV2` layout, not JSON
+serialization. Claim allocation, synthetic claimed-set checkpoints and
+Merkle sealing all consume this identical digest; a claimant cannot
+reuse a checkpoint or inclusion proof at another market, epoch or tick
+without failing the commitment check. Exact resting weights, roster
+ordering and all six atom totals are also committed.
+
+This is a **pre-launch internal consolidation**, not a migration of an
+existing deployed protocol. Maker identifiers are still synthetic and
+real Solana signer/seat authentication, audited epoch creation, vault
+coverage, atomic on-chain claimed state and SPL settlement are outstanding.
