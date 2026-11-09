@@ -20,7 +20,9 @@ function canonical(value){
   if(value.version!==2||!["prepared","submitted","finalized","expired"].includes(value.phase)||
       !isSlot(value.lastConfirmedSlot)||!isSlot(value.snapshotSlot)||
       !isSlot(value.lastValidBlockHeight)||value.snapshotSlot===0||
-      value.lastValidBlockHeight===0||value.snapshotSlot<value.lastConfirmedSlot||
+      value.lastValidBlockHeight===0||
+      (["prepared","submitted"].includes(value.phase)&&
+       value.snapshotSlot<value.lastConfirmedSlot)||
       typeof value.signature!=="string"||value.signature.length<80||
       value.signature.length>90||!BASE58.test(value.signature)||
       typeof value.genesisHash!=="string"||value.genesisHash.length<32||
