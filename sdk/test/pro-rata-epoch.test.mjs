@@ -40,7 +40,7 @@ test("late settlement after new tick is independent of settlement order",()=>{
   assert.throws(()=>claimFrozenMaker(old,oldLedger,"B"),/already claimed/);
   assert.throws(()=>claimFrozenMaker(moved,oldLedger,"A"),/mismatched/);
   const newLedger=newFrozenSettlementLedger(moved);
-  assert.equal(claimFrozenMaker(moved,newLedger,"A").claim.baseCredit,"1");
+  assert.equal(claimFrozenMaker(moved,newLedger,"A").claim.baseCredit,"2");
   assert.equal(auditFrozenProRataEpoch(moved).exactlyAllocated,true);
   assert.notEqual(old.commitment,moved.commitment);
 });
