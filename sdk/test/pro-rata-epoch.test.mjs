@@ -125,8 +125,8 @@ test("one canonical binary epoch identity binds market and Q64 tick across all c
     ...old,tickSqrtPriceX64:(43n<<64n).toString(),
   },"A"),/commitment mismatch/);
   assert.throws(()=>freezeProRataEpoch({
-    epochId:0,marketHex:"not-a-market",
-    tickSqrtPriceX64:(42n<<64n).toString(),
+    epochId:0,marketHex:"not-a-market",programHex:"22".repeat(32),
+    genesisHex:"33".repeat(32),tickSqrtPriceX64:(42n<<64n).toString(),
     makers:[{id:"A",weight:"3"}],totals:totals(),
   }),/market/);
 });
