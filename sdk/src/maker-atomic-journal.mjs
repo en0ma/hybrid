@@ -7,6 +7,7 @@ import {open,readFile,rename} from "node:fs/promises";
 import {dirname,basename,join} from "node:path";
 import {createHash} from "node:crypto";
 import {assertSimulatedBytes} from "./simulation-preflight.mjs";
+import {assertFirstWireSignature} from "./maker-journal-guard.mjs";
 
 const KEYS=["genesisHash","lastConfirmedSlot","lastValidBlockHeight","phase",
   "signature","snapshotSlot","transactionSha256","version"];
@@ -79,6 +80,7 @@ export async function initializeAtomicMakerJournal(path,{
   lastValidBlockHeight,snapshotSlot,lastConfirmedSlot=0,
 }){
   assertSimulatedBytes(transaction,simulationEvidence);
+  assertFirstWireSignature(transaction,signature);
   if(simulationEvidence.snapshotSlot!==snapshotSlot||
       simulationEvidence.signaturesVerifiedByRpc!==true)
     throw new Error("Unverified signed transaction snapshot");
@@ -99,6 +101,7 @@ export async function advanceAtomicMakerJournal(path,{
   if(old.phase!==from||old.signature!==signature||old.genesisHash!==genesisHash)
     throw new Error("Maker journal phase, signature or cluster mismatch");
   assertSimulatedBytes(transaction,simulationEvidence);
+  assertFirstWireSignature(transaction,signature);
   if(old.transactionSha256!==simulationEvidence.transactionSha256||
       old.snapshotSlot!==simulationEvidence.snapshotSlot)
     throw new Error("Maker journal transaction fingerprint mismatch");
