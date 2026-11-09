@@ -177,3 +177,35 @@ the entire audit and any follow-up transitions. Missing or corrupt
 records fail closed. No callback here sends, signs, expires, confirms,
 or clears a transaction; the independent trusted owner must still
 verify finalized on-chain outcomes and reconcile every crash window.
+
+## Experimental single-record journal (not a migration)
+
+`sdk/src/maker-atomic-journal.mjs` introduces an isolated version-2
+**experimental** journal for the *same* signed wire identity and submission
+phase in **one** checksummed JSON record. New states use an exclusive
+`.pending` creation, fsync, rename, and directory fsync. Unresolved
+`.pending` files block further writes. It requires the decoded first
+wire signature, transaction SHA-256, cluster identity, positive blockhash
+validity height, and consistent snapshot slot. Replacing a prepared state
+with submitted, and submitted with finalized or proven-expired, changes
+the identity and phase **together** in one record. Tests cover restart,
+mismatches, torn files, overlapping lock access, and premature expiry.
+
+**Important:** This module is not connected to the existing Rust
+`HYBMMJ01` journal or any live transaction sender; it does not migrate
+existing pending transactions, perform RPC checks, or authenticate caller
+claims of finality/absence. It must NOT be activated alongside the legacy
+journal for the same maker without an audited, explicit, offline migration
+and independent reconciliation of old pending signatures. All calls must
+be made under `withMakerJournalLock` in a trusted single-host process;
+the module itself does not acquire that lock, and a JSON checksum is an
+integrity detector, not an authentication MAC. A failed write or a stale
+lock always requires operator reconciliation. A `finalizedSlot` or
+`authoritativeAbsent` boolean passed by a caller is **not verified here**.
+
+**Unattended execution remains disabled.** The next architecture task is
+a single trusted owner that authenticates chain observations, locks all
+journal transitions, validates maker accounts and signatures, and never
+broadcasts a transaction before a durable prepared/submitted record is
+fully committed. This experimental v2 journal is a prototype for that
+integration, not a completed production atomic transaction system.
