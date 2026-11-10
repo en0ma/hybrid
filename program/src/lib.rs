@@ -152,6 +152,7 @@ pub fn process_instruction(
         }
         Some(39) => lazy_reserve::initialize_market_lazy_reserve(_program_id, _accounts, data),
         Some(40) => frozen_claim_payout::process_atomic_frozen_claim(_program_id, _accounts, data),
+        Some(41) => lazy_ask_execute::execute_and_seal_ask(_program_id, _accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
