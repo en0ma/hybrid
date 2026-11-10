@@ -27,6 +27,7 @@ test("key/seat/epoch/weight/amount changes cannot reuse the hash",()=>{
     "4","0","0","12","0",(1n<<64n).toString(),
   ]}),/Out-of-range/);
   assert.throws(()=>hashPubkeyMakerClaim(epoch,{...leaf,makerHex:"wrong"}),/Invalid/);
+  assert.throws(()=>hashPubkeyMakerClaim(epoch,{...leaf,makerHex:"0".repeat(64)}),/Zero/);
   assert.throws(()=>hashPubkeyMakerClaim(epoch,{...leaf,amounts:[
     "4","0","0","12","0","01",
   ]}),/Noncanonical/);
