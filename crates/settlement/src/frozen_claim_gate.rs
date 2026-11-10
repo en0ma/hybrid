@@ -294,6 +294,13 @@ mod tests {
             ),
             Err(FrozenClaimError::UnauthorizedMaker)
         );
+        assert_eq!(
+            verify_frozen_claim(&context, &PubkeyClaimLeaf {
+                amounts: [0, 0, 0, 0, 0, 0],
+                ..leaf
+            }, &[]),
+            Err(FrozenClaimError::InvalidAmount)
+        );
         let view = FrozenEpochView::decode(&data).unwrap();
         view.mark_claimed(&mut data, 0).unwrap();
         let claimed = ClaimContext {
