@@ -200,7 +200,11 @@ impl FrozenEpochView {
             let start = REMAINING_TOTALS_OFFSET + i * 8;
             u64::from_le_bytes(data[start..start + 8].try_into().expect("fixed amount"))
         });
-        if remaining.iter().zip(header.totals).any(|(left, total)| *left > total) {
+        if remaining
+            .iter()
+            .zip(header.totals)
+            .any(|(left, total)| *left > total)
+        {
             return Err(FrozenEpochError::InvalidState);
         }
         if claimed_count == 0 && remaining != header.totals {
@@ -251,7 +255,8 @@ impl FrozenEpochView {
             return Err(FrozenEpochError::InvalidSeat);
         }
         let current = Self::decode(data)?;
-        if current.header != self.header || current.remaining != self.remaining
+        if current.header != self.header
+            || current.remaining != self.remaining
             || current.claimed_count != self.claimed_count
         {
             return Err(FrozenEpochError::InvalidState);
@@ -259,13 +264,18 @@ impl FrozenEpochView {
         if current.is_claimed(data, seat)? {
             return Err(FrozenEpochError::AlreadyClaimed);
         }
-        let base = if self.header.side == 0 { amounts[0] } else { amounts[1] };
-        if base == 0 || amounts.iter().zip(self.header.totals)
-            .any(|(amount, total)| *amount > total)
-            || (self.header.side == 0
-                && (amounts[1] != 0 || amounts[2] != 0 || amounts[4] != 0))
-            || (self.header.side == 1
-                && (amounts[0] != 0 || amounts[3] != 0 || amounts[5] != 0))
+        let base = if self.header.side == 0 {
+            amounts[0]
+        } else {
+            amounts[1]
+        };
+        if base == 0
+            || amounts
+                .iter()
+                .zip(self.header.totals)
+                .any(|(amount, total)| *amount > total)
+            || (self.header.side == 0 && (amounts[1] != 0 || amounts[2] != 0 || amounts[4] != 0))
+            || (self.header.side == 1 && (amounts[0] != 0 || amounts[3] != 0 || amounts[5] != 0))
         {
             return Err(FrozenEpochError::InvalidState);
         }
@@ -276,7 +286,8 @@ impl FrozenEpochView {
                 .checked_sub(amounts[i])
                 .ok_or(FrozenEpochError::InvalidState)?;
         }
-        let next_count = current.claimed_count
+        let next_count = current
+            .claimed_count
             .checked_add(1)
             .ok_or(FrozenEpochError::Overflow)?;
         for (i, total) in remaining.iter().enumerate() {
@@ -320,16 +331,20 @@ mod tests {
         assert_eq!(view.header, expected);
         assert_eq!(view.claimed_count, 0);
         assert_eq!(view.is_claimed(&account, 2), Ok(false));
-        view.record_claim(&mut account, 2, [10,0,0,25,0,1]).unwrap();
+        view.record_claim(&mut account, 2, [10, 0, 0, 25, 0, 1])
+            .unwrap();
         assert_eq!(FrozenEpochView::decode(&account).unwrap().claimed_count, 1);
-        assert_eq!(FrozenEpochView::decode(&account).unwrap().remaining, [90,0,0,225,0,2]);
+        assert_eq!(
+            FrozenEpochView::decode(&account).unwrap().remaining,
+            [90, 0, 0, 225, 0, 2]
+        );
         assert_eq!(view.is_claimed(&account, 2), Ok(true));
         assert_eq!(
-            view.record_claim(&mut account, 2, [10,0,0,25,0,1]),
+            view.record_claim(&mut account, 2, [10, 0, 0, 25, 0, 1]),
             Err(FrozenEpochError::AlreadyClaimed)
         );
         assert_eq!(
-            view.record_claim(&mut account, 3, [10,0,0,25,0,1]),
+            view.record_claim(&mut account, 3, [10, 0, 0, 25, 0, 1]),
             Err(FrozenEpochError::InvalidSeat)
         );
     }
@@ -338,10 +353,11 @@ mod tests {
         let mut account = [0u8; FROZEN_EPOCH_BYTES];
         header(MAX_FROZEN_MAKERS).initialize(&mut account).unwrap();
         let view = FrozenEpochView::decode(&account).unwrap();
-        view.record_claim(&mut account, 4095, [10,0,0,25,0,1]).unwrap();
+        view.record_claim(&mut account, 4095, [10, 0, 0, 25, 0, 1])
+            .unwrap();
         assert_eq!(FrozenEpochView::decode(&account).unwrap().claimed_count, 1);
         assert_eq!(
-            view.record_claim(&mut account, 4096, [10,0,0,25,0,1]),
+            view.record_claim(&mut account, 4096, [10, 0, 0, 25, 0, 1]),
             Err(FrozenEpochError::InvalidSeat)
         );
         let mut smaller = [0u8; FROZEN_EPOCH_BYTES];
@@ -362,12 +378,14 @@ mod tests {
             header(3).initialize(&mut account),
             Err(FrozenEpochError::InvalidState)
         );
-        initial.record_claim(&mut account, 0, [10,0,0,25,0,1]).unwrap();
+        initial
+            .record_claim(&mut account, 0, [10, 0, 0, 25, 0, 1])
+            .unwrap();
         // A previously decoded view can only update the current, validated
         // account, never a stale snapshot of a different header.
         account[168] ^= 1;
         assert_eq!(
-            initial.record_claim(&mut account, 1, [10,0,0,25,0,1]),
+            initial.record_claim(&mut account, 1, [10, 0, 0, 25, 0, 1]),
             Err(FrozenEpochError::InvalidState)
         );
         account[168] ^= 1;
