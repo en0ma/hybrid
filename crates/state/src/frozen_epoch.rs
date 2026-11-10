@@ -225,7 +225,7 @@ mod tests {
         assert_eq!(view.mark_claimed(&mut account, 3), Err(FrozenEpochError::InvalidSeat));
     }
     #[test]
-    fn 4096_bitmap_boundary_and_out_of_roster_poison() {
+    fn bitmap_4096_boundary_and_out_of_roster_poison() {
         let mut account = [0u8; FROZEN_EPOCH_BYTES];
         header(MAX_FROZEN_MAKERS).initialize(&mut account).unwrap();
         let view = FrozenEpochView::decode(&account).unwrap();
