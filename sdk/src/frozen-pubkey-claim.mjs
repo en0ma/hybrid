@@ -37,3 +37,24 @@ export function hashPubkeyMakerClaim(epochDigest,{seat,makerHex,weight,amounts})
 export function hashPubkeyClaimNode(left,right){
   return sha(Buffer.concat([NODE,pubkey(left,"left node"),pubkey(right,"right node")]));
 }
+
+/** Read-only Solana opcode 38 ABI. Account metas MUST be supplied and
+ * authenticated separately: market, frozen epoch PDA, balance PDA, signer.
+ * A successful preflight NEVER authorizes withdrawal or modifies balances.
+ */
+export function encodeFrozenClaimPreflight({
+  genesisHex,seat,weight,amounts,siblings,
+}){
+  if(!Number.isSafeInteger(seat)||seat<0||seat>=4096||
+      !Array.isArray(amounts)||amounts.length!==6||
+      !Array.isArray(siblings)||siblings.length>12)
+    throw new Error("Invalid frozen preflight input");
+  const genesis=pubkey(genesisHex,"genesis hash");
+  const index=Buffer.alloc(4);index.writeUInt32LE(seat);
+  const nodes=siblings.map((value)=>pubkey(value,"Merkle sibling"));
+  return Buffer.concat([
+    Buffer.from([38]),genesis,index,u64(weight,"weight",{positive:true}),
+    ...amounts.map((value,i)=>u64(value,"amount "+i)),
+    Buffer.from([nodes.length]),...nodes,
+  ]);
+}
