@@ -10,6 +10,8 @@ const MAX64=(1n<<64n)-1n;
 function pubkey(value,name){
   if(typeof value!=="string"||!HEX.test(value))
     throw new Error("Invalid "+name);
+  if(name==="maker public key"&&value==="0".repeat(64))
+    throw new Error("Zero maker public key");
   return Buffer.from(value,"hex");
 }
 function u64(value,name,{positive=false}={}){
