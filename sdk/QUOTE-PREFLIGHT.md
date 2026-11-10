@@ -448,3 +448,32 @@ authenticate these fields from the program ID, verified market PDA and
 trusted cluster context. User-provided values are not evidence of
 correctness. This remains a read-only prototype, with no deployed
 protocol, signer-bound seat, on-chain epoch PDA, or authorized withdrawal.
+
+## Read-only on-chain claim preflight (opcode 38; PR #71)
+
+The Solana program exposes **preflight only**:
+`[38, genesis_hash[32], seat:u32LE, weight:u64LE, six_amounts:u64LE,
+  merkle_depth:u8, siblings[32*depth]]` (94-byte header; at most
+12 siblings). Accounts in exact order are **market, frozen epoch PDA,
+maker balance PDA, maker signer**. The SDK helper
+`encodeFrozenClaimPreflight` serializes this ABI with strict atom and
+node widths.
+
+The program validates actual AccountInfo ownership, the
+`["frozen-epoch", market, epoch_id_le]` epoch PDA and stored bump,
+the existing `["maker-balance", market, maker]` PDA and owner/market,
+the maker signing bit, collateralized market header, the frozen
+epoch's program/market identity, directional amounts, unclaimed seat,
+and the signer/pubkey claim leaf under the stored root. It rejects
+writable epoch/market/balance accounts. It **never** touches the
+claim bitmap, balances, vault accounts, or SPL token program.
+
+**Security limits:** the genesis hash in the instruction is supplied
+by the caller, not verified from a trusted cluster configuration.
+A program-owned epoch root is not yet trustworthy until there is a
+strictly authorized sealer deriving fills/fees and vault liabilities
+from validated order execution. Success from this opcode is NOT
+an authorization to pay or settle and the opcode must not be used to
+gate withdrawal. The actual settlement instruction must repeat all
+authentication checks and atomically perform reserved-asset accounting,
+claim-state mutation and checked SPL token transfers.
