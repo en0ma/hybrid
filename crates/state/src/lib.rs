@@ -1894,6 +1894,13 @@ mod tests {
             println!("HYBRID_STATE_BYTES {name} {actual}");
             assert_eq!(actual, expected);
         }
+        for (name, actual, expected) in [
+            ("frozen_epoch", frozen_epoch::FROZEN_EPOCH_BYTES, 912usize),
+            ("lazy_reserve", lazy_reserve::LAZY_RESERVE_BYTES, 144usize),
+        ] {
+            println!("HYBRID_STATE_BYTES {name} {actual}");
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]
