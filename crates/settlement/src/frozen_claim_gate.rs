@@ -205,6 +205,18 @@ mod tests {
             amounts: [4, 0, 0, 12, 0, 1],
         };
         let root = pubkey_claim_leaf_hash(&[4; 32], &leaf).unwrap();
+        let hex = |value: [u8; 32]| -> String {
+            value.iter().map(|byte| format!("{byte:02x}")).collect()
+        };
+        assert_eq!(
+            hex(root),
+            "dd947a836deb66eec48699d9852f13979a08092a3831b707d87bb23defde0a84"
+        );
+        assert_eq!(
+            hex(pubkey_claim_node_hash(&root, &root)),
+            "58727584703157c37930af764088f159261d7dbfa9ee1f94a0d7dc840dc490c2"
+        );
+
         let (mut data, balance) = fixture(root, 1);
         let context = ClaimContext {
             program: [2; 32],
