@@ -35,10 +35,16 @@ pub struct LazyReserve {
 impl LazyReserve {
     pub fn new(bump: u8, market: [u8; 32], genesis: [u8; 32]) -> Result<Self, LazyReserveError> {
         let state = Self {
-            bump, market, genesis, next_epoch_id: 0,
-            maker_base_credit: 0, maker_quote_credit: 0,
-            maker_base_debit: 0, maker_quote_debit: 0,
-            base_fees: 0, quote_fees: 0,
+            bump,
+            market,
+            genesis,
+            next_epoch_id: 0,
+            maker_base_credit: 0,
+            maker_quote_credit: 0,
+            maker_base_debit: 0,
+            maker_quote_debit: 0,
+            base_fees: 0,
+            quote_fees: 0,
         };
         state.validate()?;
         Ok(state)
@@ -61,10 +67,17 @@ impl LazyReserve {
         data[16..48].copy_from_slice(&self.market);
         data[48..80].copy_from_slice(&self.genesis);
         for (i, field) in [
-            self.next_epoch_id, self.maker_base_credit,
-            self.maker_quote_credit, self.maker_base_debit,
-            self.maker_quote_debit, self.base_fees, self.quote_fees,
-        ].iter().enumerate() {
+            self.next_epoch_id,
+            self.maker_base_credit,
+            self.maker_quote_credit,
+            self.maker_base_debit,
+            self.maker_quote_debit,
+            self.base_fees,
+            self.quote_fees,
+        ]
+        .iter()
+        .enumerate()
+        {
             let offset = 80 + i * 8;
             data[offset..offset + 8].copy_from_slice(&field.to_le_bytes());
         }
@@ -85,8 +98,12 @@ impl LazyReserve {
         };
         let state = Self {
             bump: data[9],
-            market: data[16..48].try_into().map_err(|_| LazyReserveError::Invalid)?,
-            genesis: data[48..80].try_into().map_err(|_| LazyReserveError::Invalid)?,
+            market: data[16..48]
+                .try_into()
+                .map_err(|_| LazyReserveError::Invalid)?,
+            genesis: data[48..80]
+                .try_into()
+                .map_err(|_| LazyReserveError::Invalid)?,
             next_epoch_id: get(0),
             maker_base_credit: get(1),
             maker_quote_credit: get(2),
@@ -101,21 +118,44 @@ impl LazyReserve {
 
     /// Called only by a verified execution+sealing instruction. Precalculates
     /// every balance before updating, so an overflow never partially mutates.
-    pub fn reserve_execution(&mut self, epoch_id: u64, totals: [u64; 6])
-        -> Result<(), LazyReserveError>
-    {
+    pub fn reserve_execution(
+        &mut self,
+        epoch_id: u64,
+        totals: [u64; 6],
+    ) -> Result<(), LazyReserveError> {
         if epoch_id != self.next_epoch_id {
             return Err(LazyReserveError::Invalid);
         }
         let [base_debit, base_credit, quote_debit, quote_credit, base_fee, quote_fee] = totals;
         let next = Self {
-            next_epoch_id: self.next_epoch_id.checked_add(1).ok_or(LazyReserveError::Overflow)?,
-            maker_base_credit: self.maker_base_credit.checked_add(base_credit).ok_or(LazyReserveError::Overflow)?,
-            maker_quote_credit: self.maker_quote_credit.checked_add(quote_credit).ok_or(LazyReserveError::Overflow)?,
-            maker_base_debit: self.maker_base_debit.checked_add(base_debit).ok_or(LazyReserveError::Overflow)?,
-            maker_quote_debit: self.maker_quote_debit.checked_add(quote_debit).ok_or(LazyReserveError::Overflow)?,
-            base_fees: self.base_fees.checked_add(base_fee).ok_or(LazyReserveError::Overflow)?,
-            quote_fees: self.quote_fees.checked_add(quote_fee).ok_or(LazyReserveError::Overflow)?,
+            next_epoch_id: self
+                .next_epoch_id
+                .checked_add(1)
+                .ok_or(LazyReserveError::Overflow)?,
+            maker_base_credit: self
+                .maker_base_credit
+                .checked_add(base_credit)
+                .ok_or(LazyReserveError::Overflow)?,
+            maker_quote_credit: self
+                .maker_quote_credit
+                .checked_add(quote_credit)
+                .ok_or(LazyReserveError::Overflow)?,
+            maker_base_debit: self
+                .maker_base_debit
+                .checked_add(base_debit)
+                .ok_or(LazyReserveError::Overflow)?,
+            maker_quote_debit: self
+                .maker_quote_debit
+                .checked_add(quote_debit)
+                .ok_or(LazyReserveError::Overflow)?,
+            base_fees: self
+                .base_fees
+                .checked_add(base_fee)
+                .ok_or(LazyReserveError::Overflow)?,
+            quote_fees: self
+                .quote_fees
+                .checked_add(quote_fee)
+                .ok_or(LazyReserveError::Overflow)?,
             ..*self
         };
         *self = next;
@@ -127,10 +167,22 @@ impl LazyReserve {
     pub fn release_claim(&mut self, totals: [u64; 6]) -> Result<(), LazyReserveError> {
         let [base_debit, base_credit, quote_debit, quote_credit, _, _] = totals;
         let next = Self {
-            maker_base_credit: self.maker_base_credit.checked_sub(base_credit).ok_or(LazyReserveError::Underflow)?,
-            maker_quote_credit: self.maker_quote_credit.checked_sub(quote_credit).ok_or(LazyReserveError::Underflow)?,
-            maker_base_debit: self.maker_base_debit.checked_sub(base_debit).ok_or(LazyReserveError::Underflow)?,
-            maker_quote_debit: self.maker_quote_debit.checked_sub(quote_debit).ok_or(LazyReserveError::Underflow)?,
+            maker_base_credit: self
+                .maker_base_credit
+                .checked_sub(base_credit)
+                .ok_or(LazyReserveError::Underflow)?,
+            maker_quote_credit: self
+                .maker_quote_credit
+                .checked_sub(quote_credit)
+                .ok_or(LazyReserveError::Underflow)?,
+            maker_base_debit: self
+                .maker_base_debit
+                .checked_sub(base_debit)
+                .ok_or(LazyReserveError::Underflow)?,
+            maker_quote_debit: self
+                .maker_quote_debit
+                .checked_sub(quote_debit)
+                .ok_or(LazyReserveError::Underflow)?,
             ..*self
         };
         *self = next;
@@ -139,13 +191,17 @@ impl LazyReserve {
     /// Total on-chain vault quantity that cannot be spent by ordinary
     /// withdrawals, including existing normal custody balances and all
     /// unclaimed epoch credits and accrued protocol fees.
-    pub fn vault_floor(&self, custody_base: u64, custody_quote: u64)
-        -> Result<(u64, u64), LazyReserveError>
-    {
-        let base = custody_base.checked_add(self.maker_base_credit)
+    pub fn vault_floor(
+        &self,
+        custody_base: u64,
+        custody_quote: u64,
+    ) -> Result<(u64, u64), LazyReserveError> {
+        let base = custody_base
+            .checked_add(self.maker_base_credit)
             .and_then(|value| value.checked_add(self.base_fees))
             .ok_or(LazyReserveError::Overflow)?;
-        let quote = custody_quote.checked_add(self.maker_quote_credit)
+        let quote = custody_quote
+            .checked_add(self.maker_quote_credit)
             .and_then(|value| value.checked_add(self.quote_fees))
             .ok_or(LazyReserveError::Overflow)?;
         Ok((base, quote))
@@ -179,19 +235,27 @@ mod tests {
     #[test]
     fn replay_underflow_overflow_and_epoch_reuse_preserve_state() {
         let mut reserve = LazyReserve::new(2, [1; 32], [3; 32]).unwrap();
-        assert_eq!(reserve.reserve_execution(1, [1, 0, 0, 2, 0, 0]),
-            Err(LazyReserveError::Invalid));
+        assert_eq!(
+            reserve.reserve_execution(1, [1, 0, 0, 2, 0, 0]),
+            Err(LazyReserveError::Invalid)
+        );
         reserve.reserve_execution(0, [1, 0, 0, 2, 0, 0]).unwrap();
         let before = reserve;
-        assert_eq!(reserve.reserve_execution(0, [1, 0, 0, 2, 0, 0]),
-            Err(LazyReserveError::Invalid));
-        assert_eq!(reserve.release_claim([2, 0, 0, 2, 0, 0]),
-            Err(LazyReserveError::Underflow));
+        assert_eq!(
+            reserve.reserve_execution(0, [1, 0, 0, 2, 0, 0]),
+            Err(LazyReserveError::Invalid)
+        );
+        assert_eq!(
+            reserve.release_claim([2, 0, 0, 2, 0, 0]),
+            Err(LazyReserveError::Underflow)
+        );
         assert_eq!(reserve, before);
         reserve.maker_quote_credit = u64::MAX;
         let before_overflow = reserve;
-        assert_eq!(reserve.reserve_execution(1, [1, 0, 0, 1, 0, 0]),
-            Err(LazyReserveError::Overflow));
+        assert_eq!(
+            reserve.reserve_execution(1, [1, 0, 0, 1, 0, 0]),
+            Err(LazyReserveError::Overflow)
+        );
         assert_eq!(reserve, before_overflow);
     }
 }
