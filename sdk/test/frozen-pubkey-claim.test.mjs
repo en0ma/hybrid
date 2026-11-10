@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {hashPubkeyMakerClaim,hashPubkeyClaimNode,encodeFrozenClaimPreflight} from "../src/frozen-pubkey-claim.mjs";
+import {hashPubkeyMakerClaim,hashPubkeyClaimNode,encodeFrozenClaimPreflight,hashPubkeyFrozenEpochV1,encodeLazyReserveInit,encodeLazyAskExecute,encodeAtomicFrozenMakerClaim} from "../src/frozen-pubkey-claim.mjs";
 
 const epoch="04".repeat(32);
 const leaf={seat:0,makerHex:"05".repeat(32),weight:"10",
