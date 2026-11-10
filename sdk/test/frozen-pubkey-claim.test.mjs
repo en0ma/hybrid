@@ -62,3 +62,38 @@ test("opcode 38 encodes exact 94-byte read-only header and sibling path",()=>{
     amounts:["4","0","0","12","0","1"],siblings:Array(13).fill("aa".repeat(32)),
   }),/Invalid/);
 });
+
+test("on-chain authenticated 2-maker ask epoch has canonical 289-byte digest vector",()=>{
+  const spec={
+    marketHex:"01".repeat(32),programHex:"02".repeat(32),
+    genesisHex:"03".repeat(32),epochId:"0",
+    tickSqrtPriceX64:(1n<<64n).toString(),
+    makers:[{makerHex:"05".repeat(32),weight:"100"},
+      {makerHex:"06".repeat(32),weight:"200"}],
+    totals:["150","0","0","150","0","1"],
+  };
+  assert.equal(hashPubkeyFrozenEpochV1(spec),
+    "5f36a8ed5802bab492090c2811ef96aa10e5a129c486d3d2a5ca99ad5ea677c7");
+  assert.notEqual(hashPubkeyFrozenEpochV1({...spec,epochId:"1"}),
+    hashPubkeyFrozenEpochV1(spec));
+  assert.notEqual(hashPubkeyFrozenEpochV1({...spec,programHex:"09".repeat(32)}),
+    hashPubkeyFrozenEpochV1(spec));
+  assert.throws(()=>hashPubkeyFrozenEpochV1({...spec,
+    makers:[spec.makers[0],spec.makers[0]]}),/Duplicate/);
+  assert.throws(()=>hashPubkeyFrozenEpochV1({...spec,
+    totals:["301","0","0","150","0","1"]}),/Overfilled/);
+});
+test("execution and atomic claim instruction discriminators and bounds",()=>{
+  const init=encodeLazyReserveInit("03".repeat(32));
+  assert.equal(init.length,33);assert.equal(init[0],39);
+  const seal=encodeLazyAskExecute("150","151");
+  assert.equal(seal.length,17);assert.equal(seal[0],41);
+  assert.equal(seal.readBigUInt64LE(1),150n);
+  assert.equal(seal.readBigUInt64LE(9),151n);
+  assert.throws(()=>encodeLazyAskExecute("0","151"),/Out-of-range/);
+  const claim=encodeAtomicFrozenMakerClaim({
+    genesisHex:"03".repeat(32),seat:0,weight:"100",
+    amounts:["50","0","0","50","0","0"],siblings:["aa".repeat(32)],
+  });
+  assert.equal(claim[0],40);assert.equal(claim.length,126);
+});
