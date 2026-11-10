@@ -15,7 +15,6 @@ test-sbf = []
 [dependencies]
 hybrid-engine.workspace = true
 hybrid-state.workspace = true
-hybrid-settlement.workspace = true
 solana-program.workspace = true
 
 [dev-dependencies]
