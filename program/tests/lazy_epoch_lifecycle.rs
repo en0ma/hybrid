@@ -2,13 +2,13 @@
 
 use hybrid_engine::Q64;
 use hybrid_program::ID;
+use hybrid_state::frozen_epoch::{FrozenEpochView, FROZEN_EPOCH_BYTES};
+use hybrid_state::lazy_reserve::{LazyReserve, LAZY_RESERVE_BYTES};
 use hybrid_state::{
     AskEntry, AskOwnerPage, AskPage, CustodyState, MakerBalance, MarketHeader, PageLinks,
     ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES, CUSTODY_STATE_BYTES, MAKER_BALANCE_BYTES,
     MARKET_FLAG_COLLATERALIZED_ACTIVE, MARKET_HEADER_BYTES,
 };
-use hybrid_state::frozen_epoch::{FrozenEpochView, FROZEN_EPOCH_BYTES};
-use hybrid_state::lazy_reserve::{LazyReserve, LAZY_RESERVE_BYTES};
 use solana_account::Account;
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
@@ -21,7 +21,13 @@ const TOKEN: Pubkey = solana_program::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9
 const GENESIS: [u8; 32] = [3; 32];
 
 fn account(data: Vec<u8>, owner: Pubkey) -> Account {
-    Account { lamports: 5_000_000, data, owner, executable: false, rent_epoch: 0 }
+    Account {
+        lamports: 5_000_000,
+        data,
+        owner,
+        executable: false,
+        rent_epoch: 0,
+    }
 }
 fn mint_data() -> Vec<u8> {
     let mut data = vec![0; 82];
@@ -71,20 +77,24 @@ fn fixture(freeze_destination: bool) -> Fixture {
     let maker_a = Keypair::new();
     let maker_b = Keypair::new();
     let taker = Keypair::new();
-    let (custody, custody_bump) = Pubkey::find_program_address(
-        &[b"custody", market.as_ref()], &ID);
-    let (reserve, _) = Pubkey::find_program_address(
-        &[b"lazy-reserve", market.as_ref()], &ID);
+    let (custody, custody_bump) = Pubkey::find_program_address(&[b"custody", market.as_ref()], &ID);
+    let (reserve, _) = Pubkey::find_program_address(&[b"lazy-reserve", market.as_ref()], &ID);
     let (epoch, _) = Pubkey::find_program_address(
-        &[b"frozen-epoch", market.as_ref(), &0u64.to_le_bytes()], &ID);
-    let (ask, _) = Pubkey::find_program_address(
-        &[b"ask-page", market.as_ref(), &0u32.to_le_bytes()], &ID);
+        &[b"frozen-epoch", market.as_ref(), &0u64.to_le_bytes()],
+        &ID,
+    );
+    let (ask, _) =
+        Pubkey::find_program_address(&[b"ask-page", market.as_ref(), &0u32.to_le_bytes()], &ID);
     let (balance_a, bump_a) = Pubkey::find_program_address(
-        &[b"maker-balance", market.as_ref(), maker_a.pubkey().as_ref()], &ID);
+        &[b"maker-balance", market.as_ref(), maker_a.pubkey().as_ref()],
+        &ID,
+    );
     let (balance_b, bump_b) = Pubkey::find_program_address(
-        &[b"maker-balance", market.as_ref(), maker_b.pubkey().as_ref()], &ID);
-    let (vault_authority, _) = Pubkey::find_program_address(
-        &[b"vault-authority", market.as_ref()], &ID);
+        &[b"maker-balance", market.as_ref(), maker_b.pubkey().as_ref()],
+        &ID,
+    );
+    let (vault_authority, _) =
+        Pubkey::find_program_address(&[b"vault-authority", market.as_ref()], &ID);
     let owners = Pubkey::new_unique();
     let base_mint = Pubkey::new_unique();
     let quote_mint = Pubkey::new_unique();
@@ -106,11 +116,19 @@ fn fixture(freeze_destination: bool) -> Fixture {
     let mut asks = AskPage::default();
     asks.set_links(PageLinks::new(0, None, None));
     asks.insert(AskEntry {
-        price_x64: Q64, sqrt_price_x64: Q64, base_qty: 100, sequence: 1,
-    }).unwrap();
+        price_x64: Q64,
+        sqrt_price_x64: Q64,
+        base_qty: 100,
+        sequence: 1,
+    })
+    .unwrap();
     asks.insert(AskEntry {
-        price_x64: Q64, sqrt_price_x64: Q64, base_qty: 200, sequence: 2,
-    }).unwrap();
+        price_x64: Q64,
+        sqrt_price_x64: Q64,
+        base_qty: 200,
+        sequence: 2,
+    })
+    .unwrap();
     let mut ask_data = vec![0; ASK_PAGE_BYTES];
     asks.encode_into(&mut ask_data).unwrap();
 
@@ -125,29 +143,39 @@ fn fixture(freeze_destination: bool) -> Fixture {
     let custody_state = CustodyState {
         magic: hybrid_state::CUSTODY_MAGIC,
         version: hybrid_state::STATE_VERSION,
-        bump: custody_bump, base_decimals: 6, quote_decimals: 6,
-        reserved: [0; 4], market: market.to_bytes(),
-        base_mint: base_mint.to_bytes(), quote_mint: quote_mint.to_bytes(),
-        base_vault: base_vault.to_bytes(), quote_vault: quote_vault.to_bytes(),
-        total_base: 300, total_quote: 0,
+        bump: custody_bump,
+        base_decimals: 6,
+        quote_decimals: 6,
+        reserved: [0; 4],
+        market: market.to_bytes(),
+        base_mint: base_mint.to_bytes(),
+        quote_mint: quote_mint.to_bytes(),
+        base_vault: base_vault.to_bytes(),
+        quote_vault: quote_vault.to_bytes(),
+        total_base: 300,
+        total_quote: 0,
     };
     let mut custody_data = vec![0; CUSTODY_STATE_BYTES];
     custody_state.encode_into(&mut custody_data).unwrap();
 
-    let mut balance_a_state = MakerBalance::new(
-        bump_a, market.to_bytes(), maker_a.pubkey().to_bytes());
+    let mut balance_a_state =
+        MakerBalance::new(bump_a, market.to_bytes(), maker_a.pubkey().to_bytes());
     balance_a_state.locked_base = 100;
     let mut balance_a_data = vec![0; MAKER_BALANCE_BYTES];
     balance_a_state.encode_into(&mut balance_a_data).unwrap();
-    let mut balance_b_state = MakerBalance::new(
-        bump_b, market.to_bytes(), maker_b.pubkey().to_bytes());
+    let mut balance_b_state =
+        MakerBalance::new(bump_b, market.to_bytes(), maker_b.pubkey().to_bytes());
     balance_b_state.locked_base = 200;
     let mut balance_b_data = vec![0; MAKER_BALANCE_BYTES];
     balance_b_state.encode_into(&mut balance_b_data).unwrap();
 
     let mut test = ProgramTest::new("hybrid_program", ID, None);
     test.prefer_bpf(false);
-    test.add_program("spl_token", TOKEN, processor!(spl_token::processor::Processor::process));
+    test.add_program(
+        "spl_token",
+        TOKEN,
+        processor!(spl_token::processor::Processor::process),
+    );
     test.prefer_bpf(true);
     test.add_account(market, account(market_data, ID));
     test.add_account(custody, account(custody_data, ID));
@@ -155,7 +183,12 @@ fn fixture(freeze_destination: bool) -> Fixture {
     test.add_account(owners, account(owner_data, ID));
     test.add_account(balance_a, account(balance_a_data, ID));
     test.add_account(balance_b, account(balance_b_data, ID));
-    for key in [market_signer.pubkey(), maker_a.pubkey(), maker_b.pubkey(), taker.pubkey()] {
+    for key in [
+        market_signer.pubkey(),
+        maker_a.pubkey(),
+        maker_b.pubkey(),
+        taker.pubkey(),
+    ] {
         // market account is already set above.
         if key != market {
             test.add_account(key, account(Vec::new(), Pubkey::default()));
@@ -163,24 +196,57 @@ fn fixture(freeze_destination: bool) -> Fixture {
     }
     test.add_account(base_mint, account(mint_data(), TOKEN));
     test.add_account(quote_mint, account(mint_data(), TOKEN));
-    test.add_account(base_vault, account(
-        token_data(base_mint, vault_authority, 300, false), TOKEN));
-    test.add_account(quote_vault, account(
-        token_data(quote_mint, vault_authority, 0, false), TOKEN));
-    test.add_account(taker_base, account(
-        token_data(base_mint, taker.pubkey(), 0, false), TOKEN));
-    test.add_account(taker_quote, account(
-        token_data(quote_mint, taker.pubkey(), 500, false), TOKEN));
-    test.add_account(destination_a, account(
-        token_data(quote_mint, maker_a.pubkey(), 0, freeze_destination), TOKEN));
-    test.add_account(destination_b, account(
-        token_data(quote_mint, maker_b.pubkey(), 0, false), TOKEN));
+    test.add_account(
+        base_vault,
+        account(token_data(base_mint, vault_authority, 300, false), TOKEN),
+    );
+    test.add_account(
+        quote_vault,
+        account(token_data(quote_mint, vault_authority, 0, false), TOKEN),
+    );
+    test.add_account(
+        taker_base,
+        account(token_data(base_mint, taker.pubkey(), 0, false), TOKEN),
+    );
+    test.add_account(
+        taker_quote,
+        account(token_data(quote_mint, taker.pubkey(), 500, false), TOKEN),
+    );
+    test.add_account(
+        destination_a,
+        account(
+            token_data(quote_mint, maker_a.pubkey(), 0, freeze_destination),
+            TOKEN,
+        ),
+    );
+    test.add_account(
+        destination_b,
+        account(token_data(quote_mint, maker_b.pubkey(), 0, false), TOKEN),
+    );
 
     Fixture {
-        test: Some(test), market_signer, market, custody, reserve, epoch,
-        ask, owners, maker_a, maker_b, balance_a, balance_b,
-        destination_a, destination_b, taker, taker_quote, taker_base,
-        quote_vault, base_vault, quote_mint, base_mint, vault_authority,
+        test: Some(test),
+        market_signer,
+        market,
+        custody,
+        reserve,
+        epoch,
+        ask,
+        owners,
+        maker_a,
+        maker_b,
+        balance_a,
+        balance_b,
+        destination_a,
+        destination_b,
+        taker,
+        taker_quote,
+        taker_base,
+        quote_vault,
+        base_vault,
+        quote_mint,
+        base_mint,
+        vault_authority,
     }
 }
 
@@ -228,23 +294,40 @@ fn seal(f: &Fixture, payer: Pubkey, base: u64, limit: u64) -> Instruction {
     }
 }
 
-fn leaf(digest: &[u8; 32], seat: u32, maker: Pubkey, weight: u64,
-    amounts: [u64; 6]) -> [u8; 32]
-{
+fn leaf(digest: &[u8; 32], seat: u32, maker: Pubkey, weight: u64, amounts: [u64; 6]) -> [u8; 32] {
     let index = seat.to_le_bytes();
     let weight_bytes = weight.to_le_bytes();
     let atoms = amounts.map(u64::to_le_bytes);
     hashv(&[
-        b"HYBRID_MAKER_PUBKEY_CLAIM_V1\0", digest, &index, maker.as_ref(),
-        &weight_bytes, &atoms[0], &atoms[1], &atoms[2], &atoms[3],
-        &atoms[4], &atoms[5],
-    ]).to_bytes()
+        b"HYBRID_MAKER_PUBKEY_CLAIM_V1\0",
+        digest,
+        &index,
+        maker.as_ref(),
+        &weight_bytes,
+        &atoms[0],
+        &atoms[1],
+        &atoms[2],
+        &atoms[3],
+        &atoms[4],
+        &atoms[5],
+    ])
+    .to_bytes()
 }
 fn claim(f: &Fixture, seat: u32, sibling: [u8; 32], destination: Pubkey) -> Instruction {
     let (maker, balance, weight, amounts) = if seat == 0 {
-        (f.maker_a.pubkey(), f.balance_a, 100u64, [50, 0, 0, 50, 0, 0])
+        (
+            f.maker_a.pubkey(),
+            f.balance_a,
+            100u64,
+            [50, 0, 0, 50, 0, 0],
+        )
     } else {
-        (f.maker_b.pubkey(), f.balance_b, 200u64, [100, 0, 0, 100, 0, 1])
+        (
+            f.maker_b.pubkey(),
+            f.balance_b,
+            200u64,
+            [100, 0, 0, 100, 0, 1],
+        )
     };
     let mut data = vec![40];
     data.extend_from_slice(&GENESIS);
@@ -274,27 +357,48 @@ fn claim(f: &Fixture, seat: u32, sibling: [u8; 32], destination: Pubkey) -> Inst
     }
 }
 
-async fn tx(context: &mut ProgramTestContext, ix: Instruction,
-    signers: &[&Keypair]) -> Result<(), solana_program_test::BanksClientError>
-{
+async fn tx(
+    context: &mut ProgramTestContext,
+    ix: Instruction,
+    signers: &[&Keypair],
+) -> Result<(), solana_program_test::BanksClientError> {
     let blockhash = context.get_new_latest_blockhash().await.unwrap();
     let mut all_signers: Vec<&Keypair> = vec![&context.payer];
     all_signers.extend_from_slice(signers);
     let signed = Transaction::new_signed_with_payer(
-        &[ix], Some(&context.payer.pubkey()), &all_signers, blockhash);
+        &[ix],
+        Some(&context.payer.pubkey()),
+        &all_signers,
+        blockhash,
+    );
     context.banks_client.process_transaction(signed).await
 }
 async fn bytes(context: &mut ProgramTestContext, pubkey: Pubkey) -> Vec<u8> {
-    context.banks_client.get_account(pubkey).await.unwrap().unwrap().data
+    context
+        .banks_client
+        .get_account(pubkey)
+        .await
+        .unwrap()
+        .unwrap()
+        .data
 }
-async fn snapshot(context: &mut ProgramTestContext, f: &Fixture)
-    -> Vec<Vec<u8>>
-{
+async fn snapshot(context: &mut ProgramTestContext, f: &Fixture) -> Vec<Vec<u8>> {
     let mut accounts = Vec::new();
     for key in [
-        f.market, f.custody, f.reserve, f.epoch, f.ask, f.owners,
-        f.balance_a, f.balance_b, f.taker_quote, f.taker_base,
-        f.quote_vault, f.base_vault, f.destination_a, f.destination_b,
+        f.market,
+        f.custody,
+        f.reserve,
+        f.epoch,
+        f.ask,
+        f.owners,
+        f.balance_a,
+        f.balance_b,
+        f.taker_quote,
+        f.taker_base,
+        f.quote_vault,
+        f.base_vault,
+        f.destination_a,
+        f.destination_b,
     ] {
         accounts.push(bytes(context, key).await);
     }
@@ -307,27 +411,51 @@ async fn paid_execution_seals_on_chain_and_claims_conserve_fees_and_replay() {
     let mut context = f.test.take().unwrap().start_with_context().await;
     let payer = context.payer.pubkey();
     tx(&mut context, initialize(&f, payer), &[&f.market_signer])
-        .await.unwrap();
+        .await
+        .unwrap();
     let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
     assert_eq!(reserve.next_epoch_id, 0);
-    assert_eq!(bytes(&mut context, f.reserve).await.len(), LAZY_RESERVE_BYTES);
+    assert_eq!(
+        bytes(&mut context, f.reserve).await.len(),
+        LAZY_RESERVE_BYTES
+    );
     tx(&mut context, seal(&f, payer, 150, 151), &[&f.taker])
-        .await.unwrap();
+        .await
+        .unwrap();
     let epoch_bytes = bytes(&mut context, f.epoch).await;
     assert_eq!(epoch_bytes.len(), FROZEN_EPOCH_BYTES);
     let epoch = FrozenEpochView::decode(&epoch_bytes).unwrap();
     assert_eq!(epoch.header.epoch_id, 0);
     assert_eq!(epoch.header.totals, [150, 0, 0, 150, 0, 1]);
     assert_eq!(epoch.remaining, epoch.header.totals);
-    let a = leaf(&epoch.header.commitment, 0, f.maker_a.pubkey(), 100,
-        [50, 0, 0, 50, 0, 0]);
-    let b = leaf(&epoch.header.commitment, 1, f.maker_b.pubkey(), 200,
-        [100, 0, 0, 100, 0, 1]);
-    assert_eq!(hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\0", &a, &b]).to_bytes(),
-        epoch.header.claim_root);
+    let a = leaf(
+        &epoch.header.commitment,
+        0,
+        f.maker_a.pubkey(),
+        100,
+        [50, 0, 0, 50, 0, 0],
+    );
+    let b = leaf(
+        &epoch.header.commitment,
+        1,
+        f.maker_b.pubkey(),
+        200,
+        [100, 0, 0, 100, 0, 1],
+    );
+    assert_eq!(
+        hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\0", &a, &b]).to_bytes(),
+        epoch.header.claim_root
+    );
     let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
-    assert_eq!((reserve.next_epoch_id, reserve.maker_base_debit,
-        reserve.maker_quote_credit, reserve.quote_fees), (1, 150, 150, 1));
+    assert_eq!(
+        (
+            reserve.next_epoch_id,
+            reserve.maker_base_debit,
+            reserve.maker_quote_credit,
+            reserve.quote_fees
+        ),
+        (1, 150, 150, 1)
+    );
     assert_eq!(amount(&bytes(&mut context, f.taker_quote).await), 349);
     assert_eq!(amount(&bytes(&mut context, f.taker_base).await), 150);
     assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), 151);
@@ -336,7 +464,9 @@ async fn paid_execution_seals_on_chain_and_claims_conserve_fees_and_replay() {
     assert_eq!(bal_a.locked_base, 100);
 
     let claim_a = claim(&f, 0, b, f.destination_a);
-    tx(&mut context, claim_a.clone(), &[&f.maker_a]).await.unwrap();
+    tx(&mut context, claim_a.clone(), &[&f.maker_a])
+        .await
+        .unwrap();
     assert_eq!(amount(&bytes(&mut context, f.destination_a).await), 50);
     assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), 101);
     let epoch = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
@@ -345,16 +475,27 @@ async fn paid_execution_seals_on_chain_and_claims_conserve_fees_and_replay() {
     let before = snapshot(&mut context, &f).await;
     assert!(tx(&mut context, claim_a, &[&f.maker_a]).await.is_err());
     assert_eq!(snapshot(&mut context, &f).await, before);
-    tx(&mut context, claim(&f, 1, a, f.destination_b), &[&f.maker_b])
-        .await.unwrap();
+    tx(
+        &mut context,
+        claim(&f, 1, a, f.destination_b),
+        &[&f.maker_b],
+    )
+    .await
+    .unwrap();
     assert_eq!(amount(&bytes(&mut context, f.destination_b).await), 100);
     assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), 1);
     let epoch = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
     assert_eq!(epoch.remaining, [0; 6]);
     assert_eq!(epoch.claimed_count, 2);
     let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
-    assert_eq!((reserve.maker_base_debit, reserve.maker_quote_credit,
-        reserve.quote_fees), (0, 0, 1));
+    assert_eq!(
+        (
+            reserve.maker_base_debit,
+            reserve.maker_quote_credit,
+            reserve.quote_fees
+        ),
+        (0, 0, 1)
+    );
 }
 
 #[tokio::test]
@@ -363,14 +504,26 @@ async fn failed_token_transfer_reverts_bitmap_balances_reserves_and_token_accoun
     let mut context = f.test.take().unwrap().start_with_context().await;
     let payer = context.payer.pubkey();
     tx(&mut context, initialize(&f, payer), &[&f.market_signer])
-        .await.unwrap();
+        .await
+        .unwrap();
     tx(&mut context, seal(&f, payer, 150, 151), &[&f.taker])
-        .await.unwrap();
+        .await
+        .unwrap();
     let epoch = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
-    let sibling = leaf(&epoch.header.commitment, 1, f.maker_b.pubkey(), 200,
-        [100, 0, 0, 100, 0, 1]);
+    let sibling = leaf(
+        &epoch.header.commitment,
+        1,
+        f.maker_b.pubkey(),
+        200,
+        [100, 0, 0, 100, 0, 1],
+    );
     let before = snapshot(&mut context, &f).await;
-    assert!(tx(&mut context, claim(&f, 0, sibling, f.destination_a), &[&f.maker_a])
-        .await.is_err());
+    assert!(tx(
+        &mut context,
+        claim(&f, 0, sibling, f.destination_a),
+        &[&f.maker_a]
+    )
+    .await
+    .is_err());
     assert_eq!(snapshot(&mut context, &f).await, before);
 }
