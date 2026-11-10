@@ -101,22 +101,72 @@ pub(super) fn process_frozen_claim_preflight(
         sibling.copy_from_slice(&data[offset..offset + 32]);
         siblings.push(sibling);
     }
-    let leaf = hybrid_settlement::frozen_claim_gate::PubkeyClaimLeaf {
-        seat,
-        maker: maker.key.to_bytes(),
-        weight,
-        amounts,
-    };
-    let context = hybrid_settlement::frozen_claim_gate::ClaimContext {
-        program: program_id.to_bytes(),
-        market: market.key.to_bytes(),
-        genesis,
-        signer: maker.key.to_bytes(),
-        is_signer: maker.is_signer,
-        maker_balance: &balance,
-        epoch_data: &epoch_data,
-    };
-    hybrid_settlement::frozen_claim_gate::verify_frozen_claim(&context, &leaf, &siblings)
-        .map_err(|_| ProgramError::InvalidArgument)?;
+    // Use Solana's SHA-256 syscall rather than linking the host-side
+    // sha2 verification crate into the executable; preserve byte-for-byte
+    // parity with hybrid-settlement::frozen_claim_gate and the SDK.
+    if epoch.header.genesis != genesis
+        || balance.owner != maker.key.to_bytes()
+        || balance.market != market.key.to_bytes()
+        || seat >= epoch.header.maker_count
+        || weight == 0
+        || epoch.is_claimed(&epoch_data, seat).map_err(|_| ProgramError::InvalidAccountData)?
+    {
+        return Err(ProgramError::InvalidArgument);
+    }
+    if amounts.iter().zip(epoch.header.totals).any(|(amount, total)| *amount > total) {
+        return Err(ProgramError::InvalidArgument);
+    }
+    let base = if epoch.header.side == 0 { amounts[0] } else { amounts[1] };
+    if base == 0
+        || (epoch.header.side == 0 && (amounts[1] != 0 || amounts[2] != 0 || amounts[4] != 0))
+        || (epoch.header.side == 1 && (amounts[0] != 0 || amounts[3] != 0 || amounts[5] != 0))
+    {
+        return Err(ProgramError::InvalidArgument);
+    }
+    let maker_bytes = maker.key.to_bytes();
+    let seat_bytes = seat.to_le_bytes();
+    let weight_bytes = weight.to_le_bytes();
+    let atom_bytes = amounts.map(u64::to_le_bytes);
+    let mut hash = solana_program::hash::hashv(&[
+        b"HYBRID_MAKER_PUBKEY_CLAIM_V1\\0",
+        &epoch.header.commitment,
+        &seat_bytes,
+        &maker_bytes,
+        &weight_bytes,
+        &atom_bytes[0],
+        &atom_bytes[1],
+        &atom_bytes[2],
+        &atom_bytes[3],
+        &atom_bytes[4],
+        &atom_bytes[5],
+    ]).to_bytes();
+    let mut node_count = epoch.header.maker_count;
+    let mut index = seat;
+    let mut used = 0usize;
+    while node_count > 1 {
+        let sibling = siblings.get(used).ok_or(ProgramError::InvalidInstructionData)?;
+        if index.is_multiple_of(2) && index + 1 >= node_count && sibling != &hash {
+            return Err(ProgramError::InvalidArgument);
+        }
+        hash = if index.is_multiple_of(2) {
+            solana_program::hash::hashv(&[
+                b"HYBRID_MAKER_PUBKEY_NODE_V1\\0",
+                &hash,
+                sibling,
+            ]).to_bytes()
+        } else {
+            solana_program::hash::hashv(&[
+                b"HYBRID_MAKER_PUBKEY_NODE_V1\\0",
+                sibling,
+                &hash,
+            ]).to_bytes()
+        };
+        index /= 2;
+        node_count = node_count.div_ceil(2);
+        used += 1;
+    }
+    if used != siblings.len() || hash != epoch.header.claim_root {
+        return Err(ProgramError::InvalidArgument);
+    }
     Ok(())
 }
