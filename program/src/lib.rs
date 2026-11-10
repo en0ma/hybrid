@@ -147,7 +147,9 @@ pub fn process_instruction(
         Some(33) | Some(34) => passive_swap::process(_program_id, _accounts, data),
         Some(35) | Some(36) => passive_multi::process(_program_id, _accounts, data),
         Some(37) => passive_multi::process_batch(_program_id, _accounts, data),
-        Some(38) => frozen_claim_preflight::process_frozen_claim_preflight(_program_id, _accounts, data),
+        Some(38) => {
+            frozen_claim_preflight::process_frozen_claim_preflight(_program_id, _accounts, data)
+        }
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
