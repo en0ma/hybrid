@@ -109,14 +109,24 @@ pub(super) fn process_frozen_claim_preflight(
         || balance.market != market.key.to_bytes()
         || seat >= epoch.header.maker_count
         || weight == 0
-        || epoch.is_claimed(&epoch_data, seat).map_err(|_| ProgramError::InvalidAccountData)?
+        || epoch
+            .is_claimed(&epoch_data, seat)
+            .map_err(|_| ProgramError::InvalidAccountData)?
     {
         return Err(ProgramError::InvalidArgument);
     }
-    if amounts.iter().zip(epoch.header.totals).any(|(amount, total)| *amount > total) {
+    if amounts
+        .iter()
+        .zip(epoch.header.totals)
+        .any(|(amount, total)| *amount > total)
+    {
         return Err(ProgramError::InvalidArgument);
     }
-    let base = if epoch.header.side == 0 { amounts[0] } else { amounts[1] };
+    let base = if epoch.header.side == 0 {
+        amounts[0]
+    } else {
+        amounts[1]
+    };
     if base == 0
         || (epoch.header.side == 0 && (amounts[1] != 0 || amounts[2] != 0 || amounts[4] != 0))
         || (epoch.header.side == 1 && (amounts[0] != 0 || amounts[3] != 0 || amounts[5] != 0))
@@ -139,27 +149,24 @@ pub(super) fn process_frozen_claim_preflight(
         &atom_bytes[3],
         &atom_bytes[4],
         &atom_bytes[5],
-    ]).to_bytes();
+    ])
+    .to_bytes();
     let mut node_count = epoch.header.maker_count;
     let mut index = seat;
     let mut used = 0usize;
     while node_count > 1 {
-        let sibling = siblings.get(used).ok_or(ProgramError::InvalidInstructionData)?;
+        let sibling = siblings
+            .get(used)
+            .ok_or(ProgramError::InvalidInstructionData)?;
         if index.is_multiple_of(2) && index + 1 >= node_count && sibling != &hash {
             return Err(ProgramError::InvalidArgument);
         }
         hash = if index.is_multiple_of(2) {
-            solana_program::hash::hashv(&[
-                b"HYBRID_MAKER_PUBKEY_NODE_V1\\0",
-                &hash,
-                sibling,
-            ]).to_bytes()
+            solana_program::hash::hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\\0", &hash, sibling])
+                .to_bytes()
         } else {
-            solana_program::hash::hashv(&[
-                b"HYBRID_MAKER_PUBKEY_NODE_V1\\0",
-                sibling,
-                &hash,
-            ]).to_bytes()
+            solana_program::hash::hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\\0", sibling, &hash])
+                .to_bytes()
         };
         index /= 2;
         node_count = node_count.div_ceil(2);
