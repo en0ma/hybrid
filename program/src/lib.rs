@@ -40,6 +40,9 @@ pub mod client_trader;
 #[cfg(not(target_os = "solana"))]
 pub mod client_transport;
 mod frozen_claim_preflight;
+mod frozen_claim_payout;
+mod lazy_reserve;
+mod lazy_ask_execute;
 mod linked_maker;
 mod multipage_buy;
 mod multipage_sell;
