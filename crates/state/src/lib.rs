@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod frozen_epoch;
+pub mod lazy_reserve;
 pub mod multipage_ask;
 pub mod multipage_bid;
 pub mod passive;
