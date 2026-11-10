@@ -120,7 +120,7 @@ impl FrozenEpochView {
             || data[8] != FROZEN_EPOCH_VERSION
             || data[10] != FROZEN_STATUS_SEALED
             || data[12..16] != [0; 4]
-            || data[356..CLAIM_BITMAP_OFFSET] != []
+            || data[CLAIM_BITMAP_OFFSET..].len() != CLAIM_BITMAP_BYTES
         {
             return Err(FrozenEpochError::InvalidState);
         }
