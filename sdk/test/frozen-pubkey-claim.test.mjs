@@ -74,6 +74,15 @@ test("on-chain authenticated 2-maker ask epoch has canonical 289-byte digest vec
   };
   assert.equal(hashPubkeyFrozenEpochV1(spec),
     "5f36a8ed5802bab492090c2811ef96aa10e5a129c486d3d2a5ca99ad5ea677c7");
+  const digest=hashPubkeyFrozenEpochV1(spec);
+  const a=hashPubkeyMakerClaim(digest,{seat:0,makerHex:"05".repeat(32),
+    weight:"100",amounts:["50","0","0","50","0","0"]});
+  const b=hashPubkeyMakerClaim(digest,{seat:1,makerHex:"06".repeat(32),
+    weight:"200",amounts:["100","0","0","100","0","1"]});
+  assert.equal(a,"f14a0febecc126d1fdd742155a9569e1b297171ee0b047555837ed12bcb9bca4");
+  assert.equal(b,"a66a8f3da75adc07be0ab5fadef63329d4117a9ed8714d55cd2e3c377c0acd8c");
+  assert.equal(hashPubkeyClaimNode(a,b),
+    "c44b9425f20815d96c14f59c47ba36f997cdfc25a86d2eb5481b701389c94b81");
   assert.notEqual(hashPubkeyFrozenEpochV1({...spec,epochId:"1"}),
     hashPubkeyFrozenEpochV1(spec));
   assert.notEqual(hashPubkeyFrozenEpochV1({...spec,programHex:"09".repeat(32)}),
