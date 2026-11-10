@@ -306,7 +306,7 @@ mod tests {
             Err(FrozenClaimError::InvalidAmount)
         );
         let view = FrozenEpochView::decode(&data).unwrap();
-        view.mark_claimed(&mut data, 0).unwrap();
+        view.record_claim(&mut data, 0, leaf.amounts).unwrap();
         let claimed = ClaimContext {
             program: [2; 32],
             market: [1; 32],
