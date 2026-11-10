@@ -150,6 +150,8 @@ pub fn process_instruction(
         Some(38) => {
             frozen_claim_preflight::process_frozen_claim_preflight(_program_id, _accounts, data)
         }
+        Some(39) => lazy_reserve::initialize_market_lazy_reserve(_program_id, _accounts, data),
+        Some(40) => frozen_claim_payout::process_atomic_frozen_claim(_program_id, _accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
