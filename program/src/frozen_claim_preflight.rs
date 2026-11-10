@@ -21,6 +21,18 @@ pub(super) fn process_frozen_claim_preflight(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
+    verify_claim(program_id, accounts, data, false).map(|_| ())
+}
+
+/// Reusable cryptographic, account/PDA and balance-owner checks.
+/// For the eventual atomic claim path allow ONLY the epoch and maker-balance
+/// accounts to be writable. This check itself never mutates any state.
+pub(super) fn verify_claim(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+    allow_claim_writes: bool,
+) -> Result<(u32, [u64; 6]), ProgramError> {
     if accounts.len() != 4 || data.len() < CLAIM_PREFIX_BYTES || data[0] != 38 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -37,7 +49,10 @@ pub(super) fn process_frozen_claim_preflight(
         return Err(ProgramError::IncorrectProgramId);
     }
     // The preflight cannot mutate any account, even when callers mark them writable.
-    if epoch_account.is_writable || balance_account.is_writable || market.is_writable {
+    if (!allow_claim_writes && (epoch_account.is_writable || balance_account.is_writable))
+        || market.is_writable
+        || (allow_claim_writes && (!epoch_account.is_writable || !balance_account.is_writable))
+    {
         return Err(ProgramError::InvalidAccountData);
     }
     if market.key == epoch_account.key
@@ -175,5 +190,5 @@ pub(super) fn process_frozen_claim_preflight(
     if used != siblings.len() || hash != epoch.header.claim_root {
         return Err(ProgramError::InvalidArgument);
     }
-    Ok(())
+    Ok((seat, amounts))
 }
