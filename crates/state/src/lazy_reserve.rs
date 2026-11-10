@@ -2,7 +2,7 @@
 //! This account is the cross-epoch source of truth. No caller-supplied root
 //! or Merkle proof may mint a liability. Only authenticated execution paths
 //! may add reserves; only atomic claim+SPL paths may release them.
-pub const LAZY_RESERVE_BYTES: usize = 128;
+pub const LAZY_RESERVE_BYTES: usize = 144;
 pub const LAZY_RESERVE_MAGIC: [u8; 8] = *b"HYBLAZY1";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,6 +75,7 @@ impl LazyReserve {
             || data[0..8] != LAZY_RESERVE_MAGIC
             || data[8] != 1
             || data[10..16] != [0; 6]
+            || data[136..144] != [0; 8]
         {
             return Err(LazyReserveError::Invalid);
         }
