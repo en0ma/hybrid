@@ -90,8 +90,8 @@ pub fn verify_frozen_claim(
     leaf: &PubkeyClaimLeaf,
     siblings: &[[u8; 32]],
 ) -> Result<u32, FrozenClaimError> {
-    let view = FrozenEpochView::decode(context.epoch_data)
-        .map_err(|_| FrozenClaimError::InvalidEpoch)?;
+    let view =
+        FrozenEpochView::decode(context.epoch_data).map_err(|_| FrozenClaimError::InvalidEpoch)?;
     let epoch = view.header;
     if epoch.program != context.program {
         return Err(FrozenClaimError::WrongProgram);
@@ -113,7 +113,8 @@ pub fn verify_frozen_claim(
     if leaf.seat >= epoch.maker_count || leaf.weight == 0 {
         return Err(FrozenClaimError::InvalidSeat);
     }
-    if view.is_claimed(context.epoch_data, leaf.seat)
+    if view
+        .is_claimed(context.epoch_data, leaf.seat)
         .map_err(|_| FrozenClaimError::InvalidSeat)?
     {
         return Err(FrozenClaimError::AlreadyClaimed);
@@ -121,10 +122,19 @@ pub fn verify_frozen_claim(
 
     // A member cannot claim more than the entire epoch's asset entitlement.
     // Global allocation correctness still depends on a trusted epoch sealer.
-    if leaf.amounts.iter().zip(epoch.totals).any(|(claim, total)| *claim > total) {
+    if leaf
+        .amounts
+        .iter()
+        .zip(epoch.totals)
+        .any(|(claim, total)| *claim > total)
+    {
         return Err(FrozenClaimError::InvalidAmount);
     }
-    let base = if epoch.side == 0 { leaf.amounts[0] } else { leaf.amounts[1] };
+    let base = if epoch.side == 0 {
+        leaf.amounts[0]
+    } else {
+        leaf.amounts[1]
+    };
     if (base == 0 && leaf.amounts.iter().any(|amount| *amount != 0))
         || (epoch.side == 0
             && (leaf.amounts[1] != 0 || leaf.amounts[2] != 0 || leaf.amounts[4] != 0))
@@ -166,75 +176,179 @@ mod tests {
     fn fixture(root: [u8; 32], count: u32) -> ([u8; FROZEN_EPOCH_BYTES], MakerBalance) {
         let mut data = [0; FROZEN_EPOCH_BYTES];
         FrozenEpochHeader {
-            bump: 1, side: 0, market: [1; 32], authority: [9; 32],
-            program: [2; 32], genesis: [3; 32], epoch_id: 5,
-            tick_sqrt_price_x64: 1u128 << 64, commitment: [4; 32],
-            claim_root: root, maker_count: count, totals: [10, 0, 0, 30, 0, 3],
-            base_vault: [7; 32], quote_vault: [8; 32],
-        }.initialize(&mut data).unwrap();
+            bump: 1,
+            side: 0,
+            market: [1; 32],
+            authority: [9; 32],
+            program: [2; 32],
+            genesis: [3; 32],
+            epoch_id: 5,
+            tick_sqrt_price_x64: 1u128 << 64,
+            commitment: [4; 32],
+            claim_root: root,
+            maker_count: count,
+            totals: [10, 0, 0, 30, 0, 3],
+            base_vault: [7; 32],
+            quote_vault: [8; 32],
+        }
+        .initialize(&mut data)
+        .unwrap();
         (data, MakerBalance::new(1, [1; 32], [5; 32]))
     }
 
     #[test]
     fn single_seat_checks_signer_epoch_and_replay() {
-        let leaf = PubkeyClaimLeaf { seat: 0, maker: [5; 32], weight: 10,
-            amounts: [4, 0, 0, 12, 0, 1] };
+        let leaf = PubkeyClaimLeaf {
+            seat: 0,
+            maker: [5; 32],
+            weight: 10,
+            amounts: [4, 0, 0, 12, 0, 1],
+        };
         let root = pubkey_claim_leaf_hash(&[4; 32], &leaf).unwrap();
         let (mut data, balance) = fixture(root, 1);
         let context = ClaimContext {
-            program: [2; 32], market: [1; 32], genesis: [3; 32],
-            signer: [5; 32], is_signer: true, maker_balance: &balance,
+            program: [2; 32],
+            market: [1; 32],
+            genesis: [3; 32],
+            signer: [5; 32],
+            is_signer: true,
+            maker_balance: &balance,
             epoch_data: &data,
         };
         assert_eq!(verify_frozen_claim(&context, &leaf, &[]), Ok(0));
-        assert_eq!(verify_frozen_claim(&ClaimContext {is_signer:false,..context}, &leaf, &[]),
-            Err(FrozenClaimError::UnauthorizedMaker));
-        assert_eq!(verify_frozen_claim(&ClaimContext {program:[9;32],..context}, &leaf, &[]),
-            Err(FrozenClaimError::WrongProgram));
-        assert_eq!(verify_frozen_claim(&ClaimContext {genesis:[9;32],..context}, &leaf, &[]),
-            Err(FrozenClaimError::WrongCluster));
-        assert_eq!(verify_frozen_claim(&ClaimContext {market:[9;32],..context}, &leaf, &[]),
-            Err(FrozenClaimError::WrongMarket));
-        assert_eq!(verify_frozen_claim(&context, &PubkeyClaimLeaf {
-            amounts:[11,0,0,12,0,1],..leaf
-        }, &[]), Err(FrozenClaimError::InvalidAmount));
-        assert_eq!(verify_frozen_claim(&context, &PubkeyClaimLeaf {
-            maker:[6;32],..leaf
-        }, &[]), Err(FrozenClaimError::UnauthorizedMaker));
+        assert_eq!(
+            verify_frozen_claim(
+                &ClaimContext {
+                    is_signer: false,
+                    ..context
+                },
+                &leaf,
+                &[]
+            ),
+            Err(FrozenClaimError::UnauthorizedMaker)
+        );
+        assert_eq!(
+            verify_frozen_claim(
+                &ClaimContext {
+                    program: [9; 32],
+                    ..context
+                },
+                &leaf,
+                &[]
+            ),
+            Err(FrozenClaimError::WrongProgram)
+        );
+        assert_eq!(
+            verify_frozen_claim(
+                &ClaimContext {
+                    genesis: [9; 32],
+                    ..context
+                },
+                &leaf,
+                &[]
+            ),
+            Err(FrozenClaimError::WrongCluster)
+        );
+        assert_eq!(
+            verify_frozen_claim(
+                &ClaimContext {
+                    market: [9; 32],
+                    ..context
+                },
+                &leaf,
+                &[]
+            ),
+            Err(FrozenClaimError::WrongMarket)
+        );
+        assert_eq!(
+            verify_frozen_claim(
+                &context,
+                &PubkeyClaimLeaf {
+                    amounts: [11, 0, 0, 12, 0, 1],
+                    ..leaf
+                },
+                &[]
+            ),
+            Err(FrozenClaimError::InvalidAmount)
+        );
+        assert_eq!(
+            verify_frozen_claim(
+                &context,
+                &PubkeyClaimLeaf {
+                    maker: [6; 32],
+                    ..leaf
+                },
+                &[]
+            ),
+            Err(FrozenClaimError::UnauthorizedMaker)
+        );
         let view = FrozenEpochView::decode(&data).unwrap();
         view.mark_claimed(&mut data, 0).unwrap();
-        let claimed = ClaimContext {epoch_data:&data,..context};
-        assert_eq!(verify_frozen_claim(&claimed, &leaf, &[]),
-            Err(FrozenClaimError::AlreadyClaimed));
+        let claimed = ClaimContext {
+            epoch_data: &data,
+            ..context
+        };
+        assert_eq!(
+            verify_frozen_claim(&claimed, &leaf, &[]),
+            Err(FrozenClaimError::AlreadyClaimed)
+        );
     }
 
     #[test]
     fn three_seat_proof_cannot_forge_odd_padding_or_amounts() {
         let leaves = [
-            PubkeyClaimLeaf {seat:0,maker:[5;32],weight:3,amounts:[2,0,0,6,0,1]},
-            PubkeyClaimLeaf {seat:1,maker:[6;32],weight:3,amounts:[3,0,0,9,0,1]},
-            PubkeyClaimLeaf {seat:2,maker:[7;32],weight:4,amounts:[5,0,0,15,0,1]},
+            PubkeyClaimLeaf {
+                seat: 0,
+                maker: [5; 32],
+                weight: 3,
+                amounts: [2, 0, 0, 6, 0, 1],
+            },
+            PubkeyClaimLeaf {
+                seat: 1,
+                maker: [6; 32],
+                weight: 3,
+                amounts: [3, 0, 0, 9, 0, 1],
+            },
+            PubkeyClaimLeaf {
+                seat: 2,
+                maker: [7; 32],
+                weight: 4,
+                amounts: [5, 0, 0, 15, 0, 1],
+            },
         ];
-        let hashes = leaves.map(|l| pubkey_claim_leaf_hash(&[4;32], &l).unwrap());
+        let hashes = leaves.map(|l| pubkey_claim_leaf_hash(&[4; 32], &l).unwrap());
         let left = pubkey_claim_node_hash(&hashes[0], &hashes[1]);
         let right = pubkey_claim_node_hash(&hashes[2], &hashes[2]);
         let root = pubkey_claim_node_hash(&left, &right);
         let (data, _) = fixture(root, 3);
-        let balance = MakerBalance::new(1, [1;32], [7;32]);
+        let balance = MakerBalance::new(1, [1; 32], [7; 32]);
         let context = ClaimContext {
-            program:[2;32], market:[1;32], genesis:[3;32],
-            signer:[7;32], is_signer:true, maker_balance:&balance,
-            epoch_data:&data,
+            program: [2; 32],
+            market: [1; 32],
+            genesis: [3; 32],
+            signer: [7; 32],
+            is_signer: true,
+            maker_balance: &balance,
+            epoch_data: &data,
         };
         let siblings = [hashes[2], left];
         assert_eq!(verify_frozen_claim(&context, &leaves[2], &siblings), Ok(2));
-        let forged = [[0xaa;32], left];
-        assert_eq!(verify_frozen_claim(&context, &leaves[2], &forged),
-            Err(FrozenClaimError::InvalidProof));
-        let changed = PubkeyClaimLeaf {amounts:[5,0,0,15,0,2],..leaves[2]};
-        assert_eq!(verify_frozen_claim(&context, &changed, &siblings),
-            Err(FrozenClaimError::InvalidProof));
-        assert_eq!(verify_frozen_claim(&context, &leaves[2], &siblings[..1]),
-            Err(FrozenClaimError::InvalidProof));
+        let forged = [[0xaa; 32], left];
+        assert_eq!(
+            verify_frozen_claim(&context, &leaves[2], &forged),
+            Err(FrozenClaimError::InvalidProof)
+        );
+        let changed = PubkeyClaimLeaf {
+            amounts: [5, 0, 0, 15, 0, 2],
+            ..leaves[2]
+        };
+        assert_eq!(
+            verify_frozen_claim(&context, &changed, &siblings),
+            Err(FrozenClaimError::InvalidProof)
+        );
+        assert_eq!(
+            verify_frozen_claim(&context, &leaves[2], &siblings[..1]),
+            Err(FrozenClaimError::InvalidProof)
+        );
     }
 }
