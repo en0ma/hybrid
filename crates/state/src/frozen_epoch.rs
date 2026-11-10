@@ -5,12 +5,13 @@
 //! market PDA, signer/seat, epoch derivation, custody and token CPI before
 //! using any state transition. Solana's transaction rollback must encompass
 //! both claimed-bit changes and SPL transfers.
-pub const FROZEN_EPOCH_BYTES: usize = 864;
+pub const FROZEN_EPOCH_BYTES: usize = 912;
 pub const MAX_FROZEN_MAKERS: u32 = 4096;
 pub const FROZEN_EPOCH_MAGIC: [u8; 8] = *b"HYBEPOCH";
 pub const FROZEN_EPOCH_VERSION: u8 = 1;
 pub const FROZEN_STATUS_SEALED: u8 = 1;
-const CLAIM_BITMAP_OFFSET: usize = 352;
+const REMAINING_TOTALS_OFFSET: usize = 352;
+const CLAIM_BITMAP_OFFSET: usize = 400;
 const CLAIM_BITMAP_BYTES: usize = 512;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,6 +106,10 @@ impl FrozenEpochHeader {
         }
         data[284..316].copy_from_slice(&self.base_vault);
         data[316..348].copy_from_slice(&self.quote_vault);
+        for (i, total) in self.totals.iter().enumerate() {
+            data[REMAINING_TOTALS_OFFSET + i * 8..REMAINING_TOTALS_OFFSET + (i + 1) * 8]
+                .copy_from_slice(&total.to_le_bytes());
+        }
         Ok(())
     }
 }
@@ -113,6 +118,8 @@ impl FrozenEpochHeader {
 pub struct FrozenEpochView {
     pub header: FrozenEpochHeader,
     pub claimed_count: u32,
+    /// Remaining immutable-epoch asset liabilities, reconciled per claim.
+    pub remaining: [u64; 6],
 }
 
 impl FrozenEpochView {
@@ -189,6 +196,16 @@ impl FrozenEpochView {
         if claimed_count > header.maker_count {
             return Err(FrozenEpochError::InvalidState);
         }
+        let remaining = core::array::from_fn(|i| {
+            let start = REMAINING_TOTALS_OFFSET + i * 8;
+            u64::from_le_bytes(data[start..start + 8].try_into().expect("fixed amount"))
+        });
+        if remaining.iter().zip(header.totals).any(|(left, total)| *left > total) {
+            return Err(FrozenEpochError::InvalidState);
+        }
+        if claimed_count == 0 && remaining != header.totals {
+            return Err(FrozenEpochError::InvalidState);
+        }
         let mut popcount = 0u32;
         for seat in 0..MAX_FROZEN_MAKERS {
             let offset = CLAIM_BITMAP_OFFSET + (seat / 8) as usize;
@@ -206,6 +223,7 @@ impl FrozenEpochView {
         Ok(Self {
             header,
             claimed_count,
+            remaining,
         })
     }
 
@@ -217,29 +235,57 @@ impl FrozenEpochView {
         Ok(data[byte] & (1u8 << (seat % 8)) != 0)
     }
 
-    /// Only call once signer, Merkle inclusion and custody invariants have
-    /// been independently verified. Does NOT transfer or authorize tokens.
-    /// This state update and the token CPI must be in the SAME instruction.
-    pub fn mark_claimed(self, data: &mut [u8], seat: u32) -> Result<(), FrozenEpochError> {
+    /// Atomically update in-account residual liabilities and replay bitmap.
+    ///
+    /// Caller MUST have verified a trusted epoch root, maker signer, claimed
+    /// leaf, and custody before calling. This must be committed in the same
+    /// Solana instruction as every required checked SPL transfer. No token
+    /// movement is performed by the state crate.
+    pub fn record_claim(
+        self,
+        data: &mut [u8],
+        seat: u32,
+        amounts: [u64; 6],
+    ) -> Result<(), FrozenEpochError> {
         if seat >= self.header.maker_count {
             return Err(FrozenEpochError::InvalidSeat);
         }
-        // Caller must not trust a stale decoded view after mutable storage
-        // changes. Re-decode the live account to reject duplicate execution.
         let current = Self::decode(data)?;
-        if current.header != self.header {
+        if current.header != self.header || current.remaining != self.remaining
+            || current.claimed_count != self.claimed_count
+        {
             return Err(FrozenEpochError::InvalidState);
         }
         if current.is_claimed(data, seat)? {
             return Err(FrozenEpochError::AlreadyClaimed);
         }
-        let next = current
-            .claimed_count
+        let base = if self.header.side == 0 { amounts[0] } else { amounts[1] };
+        if base == 0 || amounts.iter().zip(self.header.totals)
+            .any(|(amount, total)| *amount > total)
+            || (self.header.side == 0
+                && (amounts[1] != 0 || amounts[2] != 0 || amounts[4] != 0))
+            || (self.header.side == 1
+                && (amounts[0] != 0 || amounts[3] != 0 || amounts[5] != 0))
+        {
+            return Err(FrozenEpochError::InvalidState);
+        }
+        // Precalculate ALL changes. No partial account writes on an error.
+        let mut remaining = [0u64; 6];
+        for i in 0..6 {
+            remaining[i] = current.remaining[i]
+                .checked_sub(amounts[i])
+                .ok_or(FrozenEpochError::InvalidState)?;
+        }
+        let next_count = current.claimed_count
             .checked_add(1)
             .ok_or(FrozenEpochError::Overflow)?;
+        for (i, total) in remaining.iter().enumerate() {
+            data[REMAINING_TOTALS_OFFSET + i * 8..REMAINING_TOTALS_OFFSET + (i + 1) * 8]
+                .copy_from_slice(&total.to_le_bytes());
+        }
         let byte = CLAIM_BITMAP_OFFSET + (seat / 8) as usize;
         data[byte] |= 1u8 << (seat % 8);
-        data[348..352].copy_from_slice(&next.to_le_bytes());
+        data[348..352].copy_from_slice(&next_count.to_le_bytes());
         Ok(())
     }
 }
@@ -274,15 +320,16 @@ mod tests {
         assert_eq!(view.header, expected);
         assert_eq!(view.claimed_count, 0);
         assert_eq!(view.is_claimed(&account, 2), Ok(false));
-        view.mark_claimed(&mut account, 2).unwrap();
+        view.record_claim(&mut account, 2, [10,0,0,25,0,1]).unwrap();
         assert_eq!(FrozenEpochView::decode(&account).unwrap().claimed_count, 1);
+        assert_eq!(FrozenEpochView::decode(&account).unwrap().remaining, [90,0,0,225,0,2]);
         assert_eq!(view.is_claimed(&account, 2), Ok(true));
         assert_eq!(
-            view.mark_claimed(&mut account, 2),
+            view.record_claim(&mut account, 2, [10,0,0,25,0,1]),
             Err(FrozenEpochError::AlreadyClaimed)
         );
         assert_eq!(
-            view.mark_claimed(&mut account, 3),
+            view.record_claim(&mut account, 3, [10,0,0,25,0,1]),
             Err(FrozenEpochError::InvalidSeat)
         );
     }
@@ -291,10 +338,10 @@ mod tests {
         let mut account = [0u8; FROZEN_EPOCH_BYTES];
         header(MAX_FROZEN_MAKERS).initialize(&mut account).unwrap();
         let view = FrozenEpochView::decode(&account).unwrap();
-        view.mark_claimed(&mut account, 4095).unwrap();
+        view.record_claim(&mut account, 4095, [10,0,0,25,0,1]).unwrap();
         assert_eq!(FrozenEpochView::decode(&account).unwrap().claimed_count, 1);
         assert_eq!(
-            view.mark_claimed(&mut account, 4096),
+            view.record_claim(&mut account, 4096, [10,0,0,25,0,1]),
             Err(FrozenEpochError::InvalidSeat)
         );
         let mut smaller = [0u8; FROZEN_EPOCH_BYTES];
@@ -315,12 +362,12 @@ mod tests {
             header(3).initialize(&mut account),
             Err(FrozenEpochError::InvalidState)
         );
-        initial.mark_claimed(&mut account, 0).unwrap();
+        initial.record_claim(&mut account, 0, [10,0,0,25,0,1]).unwrap();
         // A previously decoded view can only update the current, validated
         // account, never a stale snapshot of a different header.
         account[168] ^= 1;
         assert_eq!(
-            initial.mark_claimed(&mut account, 1),
+            initial.record_claim(&mut account, 1, [10,0,0,25,0,1]),
             Err(FrozenEpochError::InvalidState)
         );
         account[168] ^= 1;
