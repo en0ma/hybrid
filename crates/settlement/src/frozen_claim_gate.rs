@@ -5,7 +5,7 @@
 //! signer, market PDA and vault identities before calling this function.
 //! A trusted sealer must derive the immutable epoch root from verified trades.
 //! No bitmap update and no SPL transfer is performed here.
-use hybrid_state::frozen_epoch::{FrozenEpochError, FrozenEpochView};
+use hybrid_state::frozen_epoch::FrozenEpochView;
 use hybrid_state::MakerBalance;
 use sha2::{Digest, Sha256};
 
@@ -309,7 +309,12 @@ mod tests {
         view.mark_claimed(&mut data, 0).unwrap();
         let claimed = ClaimContext {
             epoch_data: &data,
-            ..context
+            program: context.program,
+            market: context.market,
+            genesis: context.genesis,
+            signer: context.signer,
+            is_signer: context.is_signer,
+            maker_balance: context.maker_balance,
         };
         assert_eq!(
             verify_frozen_claim(&claimed, &leaf, &[]),
