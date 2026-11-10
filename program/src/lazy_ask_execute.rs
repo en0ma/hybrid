@@ -328,3 +328,32 @@ pub(super) fn execute_and_seal_ask(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hex(bytes: [u8; 32]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    #[test]
+    fn on_chain_epoch_root_matches_independent_sdk_vectors() {
+        let owners = [[5u8; 32], [6u8; 32]];
+        let weights = [100u64, 200u64];
+        let totals = [150u64, 0, 0, 150, 0, 1];
+        let epoch = epoch_commitment(
+            &Pubkey::new_from_array([1; 32]),
+            &Pubkey::new_from_array([2; 32]),
+            &[3; 32], 0, 1u128 << 64, &owners, &weights, totals,
+        ).unwrap();
+        assert_eq!(hex(epoch),
+            "5f36a8ed5802bab492090c2811ef96aa10e5a129c486d3d2a5ca99ad5ea677c7");
+        let allocations = hybrid_state::lazy_pro_rata::allocate_ask(
+            &weights, 150, 150, 1,
+        ).unwrap();
+        let root = sealed_claim_root(&epoch, &owners, &weights, &allocations).unwrap();
+        assert_eq!(hex(root),
+            "c44b9425f20815d96c14f59c47ba36f997cdfc25a86d2eb5481b701389c94b81");
+    }
+}
