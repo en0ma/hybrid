@@ -57,8 +57,7 @@ pub(super) fn process_frozen_claim_preflight(
     let epoch_data = epoch_account.try_borrow_data()?;
     let epoch = hybrid_state::frozen_epoch::FrozenEpochView::decode(&epoch_data)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    if epoch.header.market != market.key.to_bytes()
-        || epoch.header.program != program_id.to_bytes()
+    if epoch.header.market != market.key.to_bytes() || epoch.header.program != program_id.to_bytes()
     {
         return Err(ProgramError::InvalidAccountData);
     }
