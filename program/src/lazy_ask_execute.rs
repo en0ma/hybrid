@@ -180,7 +180,7 @@ pub(super) fn execute_and_seal_ask(
         || links.prev_page.is_some()
         || links.next_page.is_some()
         || asks.len() != market.ask_count as usize
-        || asks.len() == 0
+        || asks.is_empty()
         || asks.len() > MAX_LAZY_SEATS
     {
         return Err(ProgramError::InvalidAccountData);
