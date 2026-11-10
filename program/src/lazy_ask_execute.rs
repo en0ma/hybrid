@@ -30,7 +30,7 @@ fn token_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
 
 fn epoch_commitment(
     market: &Pubkey, program: &Pubkey, genesis: &[u8; 32],
-    epoch_id: u64, tick: u128, owners: &[[u8; 32]], weights: &[u64],
+    epoch: (u64, u128), owners: &[[u8; 32]], weights: &[u64],
     totals: [u64; 6],
 ) -> Result<[u8; 32], ProgramError> {
     let count = u32::try_from(weights.len()).map_err(|_| ProgramError::InvalidAccountData)?;
@@ -39,8 +39,8 @@ fn epoch_commitment(
     bytes.extend_from_slice(market.as_ref());
     bytes.extend_from_slice(program.as_ref());
     bytes.extend_from_slice(genesis);
-    bytes.extend_from_slice(&epoch_id.to_le_bytes());
-    bytes.extend_from_slice(&tick.to_le_bytes());
+    bytes.extend_from_slice(&epoch.0.to_le_bytes());
+    bytes.extend_from_slice(&epoch.1.to_le_bytes());
     bytes.push(0); // ask side
     bytes.extend_from_slice(&count.to_le_bytes());
     for (index, (owner, weight)) in owners.iter().zip(weights).enumerate() {
@@ -245,8 +245,7 @@ pub(super) fn execute_and_seal_ask(
     let epoch_id = reserve.next_epoch_id;
     let totals = [base_fill, 0, 0, quote_proceeds, 0, quote_fee];
     let digest = epoch_commitment(
-        market_account.key, program_id, &reserve.genesis, epoch_id,
-        resting_tick, &owners, &weights, totals,
+        market_account.key, program_id, &reserve.genesis, (epoch_id, resting_tick), &owners, &weights, totals,
     )?;
     let root = sealed_claim_root(&digest, &owners, &weights, &allocations)?;
     let id_bytes = epoch_id.to_le_bytes();
@@ -345,7 +344,7 @@ mod tests {
         let epoch = epoch_commitment(
             &Pubkey::new_from_array([1; 32]),
             &Pubkey::new_from_array([2; 32]),
-            &[3; 32], 0, 1u128 << 64, &owners, &weights, totals,
+            &[3; 32], (0, 1u128 << 64), &owners, &weights, totals,
         ).unwrap();
         assert_eq!(hex(epoch),
             "5f36a8ed5802bab492090c2811ef96aa10e5a129c486d3d2a5ca99ad5ea677c7");
