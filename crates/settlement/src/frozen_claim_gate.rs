@@ -308,13 +308,13 @@ mod tests {
         let view = FrozenEpochView::decode(&data).unwrap();
         view.mark_claimed(&mut data, 0).unwrap();
         let claimed = ClaimContext {
+            program: [2; 32],
+            market: [1; 32],
+            genesis: [3; 32],
+            signer: [5; 32],
+            is_signer: true,
+            maker_balance: &balance,
             epoch_data: &data,
-            program: context.program,
-            market: context.market,
-            genesis: context.genesis,
-            signer: context.signer,
-            is_signer: context.is_signer,
-            maker_balance: context.maker_balance,
         };
         assert_eq!(
             verify_frozen_claim(&claimed, &leaf, &[]),
