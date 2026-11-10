@@ -23,9 +23,7 @@ pub(super) fn initialize_market_lazy_reserve(
     if !market.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
-    if market.is_writable || custody_account.is_writable
-        || !reserve_account.is_writable
-    {
+    if market.is_writable || custody_account.is_writable || !reserve_account.is_writable {
         return Err(ProgramError::InvalidAccountData);
     }
     let market_header = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
@@ -34,24 +32,28 @@ pub(super) fn initialize_market_lazy_reserve(
         return Err(ProgramError::InvalidAccountData);
     }
     load_custody(program_id, market, custody_account)?;
-    let (expected, bump) = Pubkey::find_program_address(
-        &[b"lazy-reserve", market.key.as_ref()], program_id,
-    );
+    let (expected, bump) =
+        Pubkey::find_program_address(&[b"lazy-reserve", market.key.as_ref()], program_id);
     if *reserve_account.key != expected {
         return Err(ProgramError::InvalidSeeds);
     }
     let mut genesis = [0; 32];
     genesis.copy_from_slice(&data[1..33]);
-    let state = hybrid_state::lazy_reserve::LazyReserve::new(
-        bump, market.key.to_bytes(), genesis,
-    ).map_err(|_| ProgramError::InvalidInstructionData)?;
+    let state = hybrid_state::lazy_reserve::LazyReserve::new(bump, market.key.to_bytes(), genesis)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
     create_program_pda(
-        program_id, payer, reserve_account, system,
-        &[b"lazy-reserve", market.key.as_ref()], bump,
+        program_id,
+        payer,
+        reserve_account,
+        system,
+        &[b"lazy-reserve", market.key.as_ref()],
+        bump,
         hybrid_state::lazy_reserve::LAZY_RESERVE_BYTES,
     )?;
     let mut bytes = reserve_account.try_borrow_mut_data()?;
-    state.encode(&mut bytes).map_err(|_| ProgramError::InvalidAccountData)
+    state
+        .encode(&mut bytes)
+        .map_err(|_| ProgramError::InvalidAccountData)
 }
 
 /// Strict program ownership, PDA and bump check. This is reused by the
@@ -64,15 +66,13 @@ pub(super) fn load_lazy_reserve(
     if account.owner != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
-    let (expected, bump) = Pubkey::find_program_address(
-        &[b"lazy-reserve", market.key.as_ref()], program_id,
-    );
+    let (expected, bump) =
+        Pubkey::find_program_address(&[b"lazy-reserve", market.key.as_ref()], program_id);
     if *account.key != expected {
         return Err(ProgramError::InvalidSeeds);
     }
-    let state = hybrid_state::lazy_reserve::LazyReserve::decode(
-        &account.try_borrow_data()?
-    ).map_err(|_| ProgramError::InvalidAccountData)?;
+    let state = hybrid_state::lazy_reserve::LazyReserve::decode(&account.try_borrow_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
     if state.market != market.key.to_bytes() || state.bump != bump {
         return Err(ProgramError::InvalidAccountData);
     }
