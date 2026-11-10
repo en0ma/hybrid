@@ -135,7 +135,7 @@ pub fn verify_frozen_claim(
     } else {
         leaf.amounts[1]
     };
-    if (base == 0 && leaf.amounts.iter().any(|amount| *amount != 0))
+    if base == 0
         || (epoch.side == 0
             && (leaf.amounts[1] != 0 || leaf.amounts[2] != 0 || leaf.amounts[4] != 0))
         || (epoch.side == 1
