@@ -305,12 +305,13 @@ async fn snapshot(context: &mut ProgramTestContext, f: &Fixture)
 async fn paid_execution_seals_on_chain_and_claims_conserve_fees_and_replay() {
     let mut f = fixture(false);
     let mut context = f.test.take().unwrap().start_with_context().await;
-    tx(&mut context, initialize(&f, context.payer.pubkey()), &[&f.market_signer])
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
         .await.unwrap();
     let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
     assert_eq!(reserve.next_epoch_id, 0);
     assert_eq!(bytes(&mut context, f.reserve).await.len(), LAZY_RESERVE_BYTES);
-    tx(&mut context, seal(&f, context.payer.pubkey(), 150, 151), &[&f.taker])
+    tx(&mut context, seal(&f, payer, 150, 151), &[&f.taker])
         .await.unwrap();
     let epoch_bytes = bytes(&mut context, f.epoch).await;
     assert_eq!(epoch_bytes.len(), FROZEN_EPOCH_BYTES);
@@ -360,9 +361,10 @@ async fn paid_execution_seals_on_chain_and_claims_conserve_fees_and_replay() {
 async fn failed_token_transfer_reverts_bitmap_balances_reserves_and_token_accounts() {
     let mut f = fixture(true);
     let mut context = f.test.take().unwrap().start_with_context().await;
-    tx(&mut context, initialize(&f, context.payer.pubkey()), &[&f.market_signer])
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
         .await.unwrap();
-    tx(&mut context, seal(&f, context.payer.pubkey(), 150, 151), &[&f.taker])
+    tx(&mut context, seal(&f, payer, 150, 151), &[&f.taker])
         .await.unwrap();
     let epoch = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
     let sibling = leaf(&epoch.header.commitment, 1, f.maker_b.pubkey(), 200,
