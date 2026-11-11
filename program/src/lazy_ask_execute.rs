@@ -76,8 +76,10 @@ fn sealed_claim_root(
     weights: &[u64],
     allocations: &[hybrid_state::lazy_pro_rata::MakerAllocation],
 ) -> Result<[u8; 32], ProgramError> {
-    if owners.is_empty() || owners.len() > MAX_LAZY_SEATS
-        || owners.len() != weights.len() || weights.len() != allocations.len()
+    if owners.is_empty()
+        || owners.len() > MAX_LAZY_SEATS
+        || owners.len() != weights.len()
+        || weights.len() != allocations.len()
     {
         return Err(ProgramError::InvalidAccountData);
     }
@@ -89,15 +91,28 @@ fn sealed_claim_root(
     {
         let seat = (index as u32).to_le_bytes();
         let claim = [
-            allocation.base_fill, 0, 0, allocation.quote_proceeds, 0,
+            allocation.base_fill,
+            0,
+            0,
+            allocation.quote_proceeds,
+            0,
             allocation.quote_fee,
         ];
         let amounts = claim.map(u64::to_le_bytes);
         nodes[index] = solana_program::hash::hashv(&[
-            LEAF_DOMAIN, epoch_commitment, &seat, maker, &weight.to_le_bytes(),
-            &amounts[0], &amounts[1], &amounts[2], &amounts[3],
-            &amounts[4], &amounts[5],
-        ]).to_bytes();
+            LEAF_DOMAIN,
+            epoch_commitment,
+            &seat,
+            maker,
+            &weight.to_le_bytes(),
+            &amounts[0],
+            &amounts[1],
+            &amounts[2],
+            &amounts[3],
+            &amounts[4],
+            &amounts[5],
+        ])
+        .to_bytes();
     }
     let mut count = owners.len();
     while count > 1 {
@@ -109,9 +124,7 @@ fn sealed_claim_root(
             } else {
                 left
             };
-            nodes[index] = solana_program::hash::hashv(
-                &[NODE_DOMAIN, &left, &right],
-            ).to_bytes();
+            nodes[index] = solana_program::hash::hashv(&[NODE_DOMAIN, &left, &right]).to_bytes();
         }
         count = next;
     }
