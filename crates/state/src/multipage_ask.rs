@@ -91,7 +91,12 @@ pub fn apply_linked_ask_fills(
         .max(1)
         .div_ceil(ASKS_PER_PAGE)
         .max(if pages.len() == 2 { 2 } else { 1 });
-    append_compacted_ask_pages(&entries, surviving_page_count, &mut result_pages, &mut result_sidecars)?;
+    append_compacted_ask_pages(
+        &entries,
+        surviving_page_count,
+        &mut result_pages,
+        &mut result_sidecars,
+    )?;
     // The caller must retire the released page/sidecar accounts after a successful write.
     crate::validate_ask_chain(&result_pages)?;
     for (page, owners) in result_pages.iter().zip(&result_sidecars) {
