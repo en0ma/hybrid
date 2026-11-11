@@ -339,8 +339,14 @@ mod tests {
             [90, 0, 0, 225, 0, 2]
         );
         assert_eq!(view.is_claimed(&account, 2), Ok(true));
+        // A stale snapshot is rejected before claim replay assessment.
         assert_eq!(
             view.record_claim(&mut account, 2, [10, 0, 0, 25, 0, 1]),
+            Err(FrozenEpochError::InvalidState)
+        );
+        let current = FrozenEpochView::decode(&account).unwrap();
+        assert_eq!(
+            current.record_claim(&mut account, 2, [10, 0, 0, 25, 0, 1]),
             Err(FrozenEpochError::AlreadyClaimed)
         );
         assert_eq!(
