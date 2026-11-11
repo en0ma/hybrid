@@ -88,7 +88,12 @@ pub fn apply_linked_bid_fills(
     let mut result_pages = Vec::with_capacity(pages.len());
     let mut result_sidecars = Vec::with_capacity(pages.len());
     let surviving_page_count = entries.len().max(1).div_ceil(BIDS_PER_PAGE);
-    append_compacted_bid_pages(&entries, surviving_page_count, &mut result_pages, &mut result_sidecars)?;
+    append_compacted_bid_pages(
+        &entries,
+        surviving_page_count,
+        &mut result_pages,
+        &mut result_sidecars,
+    )?;
     // The caller must retire the released page/sidecar accounts after a successful write.
     crate::validate_bid_chain(&result_pages)?;
     for (page, owners) in result_pages.iter().zip(&result_sidecars) {
