@@ -37,3 +37,12 @@ strip = "symbols"
 # relaxing SBF instruction, compute-unit, or Manifest checks.
 [profile.release.package.hybrid-program]
 opt-level = "z"
+
+# Also optimize the program-linked state and pricing dependencies for SBF
+# size; a per-package program-only setting leaves these at opt-level 3.
+# Preserve the existing strict bytecode and CU comparison gates.
+[profile.release.package.hybrid-state]
+opt-level = "z"
+
+[profile.release.package.hybrid-engine]
+opt-level = "z"
