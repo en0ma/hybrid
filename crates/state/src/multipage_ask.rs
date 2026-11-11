@@ -1,5 +1,36 @@
 use crate::{AskEntry, AskOwnerPage, AskPage, StateError, ASKS_PER_PAGE};
 
+// Keep large page temporaries out of the caller's SBF stack frame.
+#[inline(never)]
+fn append_compacted_ask_pages(
+    entries: &[(AskEntry, [u8; 32])],
+    surviving_page_count: usize,
+    result_pages: &mut Vec<AskPage>,
+    result_sidecars: &mut Vec<AskOwnerPage>,
+) -> Result<(), StateError> {
+    for index in 0..surviving_page_count {
+        let mut page = AskPage::default();
+        let mut owners = AskOwnerPage::default();
+        let links = crate::PageLinks::new(
+            index as u32,
+            index.checked_sub(1).map(|value| value as u32),
+            (index + 1 < surviving_page_count).then_some((index + 1) as u32),
+        );
+        page.set_links(links);
+        owners.set_links(links);
+        let start = index * ASKS_PER_PAGE;
+        let end = entries.len().min(start + ASKS_PER_PAGE);
+        if start < end {
+            for &(entry, owner) in &entries[start..end] {
+                crate::insert_owned_ask(&mut page, &mut owners, entry, owner)?;
+            }
+        }
+        result_pages.push(page);
+        result_sidecars.push(owners);
+    }
+    Ok(())
+}
+
 /// Atomically apply global-index active fills and repack canonical linked pages.
 /// The caller writes the returned pages only after settlement checks succeed.
 pub fn apply_linked_ask_fills(
@@ -60,26 +91,7 @@ pub fn apply_linked_ask_fills(
         .max(1)
         .div_ceil(ASKS_PER_PAGE)
         .max(if pages.len() == 2 { 2 } else { 1 });
-    for index in 0..surviving_page_count {
-        let mut page = AskPage::default();
-        let mut owners = AskOwnerPage::default();
-        let links = crate::PageLinks::new(
-            index as u32,
-            index.checked_sub(1).map(|value| value as u32),
-            (index + 1 < surviving_page_count).then_some((index + 1) as u32),
-        );
-        page.set_links(links);
-        owners.set_links(links);
-        let start = index * ASKS_PER_PAGE;
-        let end = entries.len().min(start + ASKS_PER_PAGE);
-        if start < end {
-            for &(entry, owner) in &entries[start..end] {
-                crate::insert_owned_ask(&mut page, &mut owners, entry, owner)?;
-            }
-        }
-        result_pages.push(page);
-        result_sidecars.push(owners);
-    }
+    append_compacted_ask_pages(&entries, surviving_page_count, &mut result_pages, &mut result_sidecars)?;
     // The caller must retire the released page/sidecar accounts after a successful write.
     crate::validate_ask_chain(&result_pages)?;
     for (page, owners) in result_pages.iter().zip(&result_sidecars) {
