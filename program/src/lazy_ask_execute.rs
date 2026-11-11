@@ -39,25 +39,35 @@ fn epoch_commitment(
     weights: &[u64],
     totals: [u64; 6],
 ) -> Result<[u8; 32], ProgramError> {
-    let count = u32::try_from(weights.len()).map_err(|_| ProgramError::InvalidAccountData)?;
-    let mut bytes = Vec::with_capacity(256 + weights.len() * 44);
-    bytes.extend_from_slice(EPOCH_DOMAIN);
-    bytes.extend_from_slice(market.as_ref());
-    bytes.extend_from_slice(program.as_ref());
-    bytes.extend_from_slice(genesis);
-    bytes.extend_from_slice(&epoch.0.to_le_bytes());
-    bytes.extend_from_slice(&epoch.1.to_le_bytes());
-    bytes.push(0); // ask side
-    bytes.extend_from_slice(&count.to_le_bytes());
+    if weights.is_empty() || weights.len() > MAX_LAZY_SEATS || owners.len() != weights.len() {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    // A complete eight-maker preimage fits in 576 bytes. Avoid Vec growth
+    // logic and heap allocation in the SBF SHA-256 commitment path.
+    let mut bytes = [0u8; 576];
+    let mut used = 0usize;
+    let mut append = |part: &[u8]| {
+        let end = used + part.len();
+        bytes[used..end].copy_from_slice(part);
+        used = end;
+    };
+    append(EPOCH_DOMAIN);
+    append(market.as_ref());
+    append(program.as_ref());
+    append(genesis);
+    append(&epoch.0.to_le_bytes());
+    append(&epoch.1.to_le_bytes());
+    append(&[0]); // ask side
+    append(&(weights.len() as u32).to_le_bytes());
     for (index, (owner, weight)) in owners.iter().zip(weights).enumerate() {
-        bytes.extend_from_slice(&(index as u32).to_le_bytes());
-        bytes.extend_from_slice(owner);
-        bytes.extend_from_slice(&weight.to_le_bytes());
+        append(&(index as u32).to_le_bytes());
+        append(owner);
+        append(&weight.to_le_bytes());
     }
     for amount in totals {
-        bytes.extend_from_slice(&amount.to_le_bytes());
+        append(&amount.to_le_bytes());
     }
-    Ok(solana_program::hash::hash(&bytes).to_bytes())
+    Ok(solana_program::hash::hash(&bytes[..used]).to_bytes())
 }
 
 fn sealed_claim_root(
@@ -66,45 +76,44 @@ fn sealed_claim_root(
     weights: &[u64],
     allocations: &[hybrid_state::lazy_pro_rata::MakerAllocation],
 ) -> Result<[u8; 32], ProgramError> {
-    if owners.is_empty() || owners.len() != weights.len() || weights.len() != allocations.len() {
+    if owners.is_empty() || owners.len() > MAX_LAZY_SEATS
+        || owners.len() != weights.len() || weights.len() != allocations.len()
+    {
         return Err(ProgramError::InvalidAccountData);
     }
-    let mut nodes = Vec::with_capacity(owners.len());
+    // In-place binary Merkle reduction needs only eight fixed hashes.
+    // Odd final leaves are duplicated, matching Rust and SDK proofs.
+    let mut nodes = [[0u8; 32]; MAX_LAZY_SEATS];
     for (index, ((maker, weight), allocation)) in
         owners.iter().zip(weights).zip(allocations).enumerate()
     {
         let seat = (index as u32).to_le_bytes();
         let claim = [
-            allocation.base_fill,
-            0,
-            0,
-            allocation.quote_proceeds,
-            0,
+            allocation.base_fill, 0, 0, allocation.quote_proceeds, 0,
             allocation.quote_fee,
         ];
         let amounts = claim.map(u64::to_le_bytes);
-        let digest = solana_program::hash::hashv(&[
-            LEAF_DOMAIN,
-            epoch_commitment,
-            &seat,
-            maker,
-            &weight.to_le_bytes(),
-            &amounts[0],
-            &amounts[1],
-            &amounts[2],
-            &amounts[3],
-            &amounts[4],
-            &amounts[5],
-        ]);
-        nodes.push(digest.to_bytes());
+        nodes[index] = solana_program::hash::hashv(&[
+            LEAF_DOMAIN, epoch_commitment, &seat, maker, &weight.to_le_bytes(),
+            &amounts[0], &amounts[1], &amounts[2], &amounts[3],
+            &amounts[4], &amounts[5],
+        ]).to_bytes();
     }
-    while nodes.len() > 1 {
-        let mut parents = Vec::with_capacity(nodes.len().div_ceil(2));
-        for pair in nodes.chunks(2) {
-            let right = if pair.len() == 2 { &pair[1] } else { &pair[0] };
-            parents.push(solana_program::hash::hashv(&[NODE_DOMAIN, &pair[0], right]).to_bytes());
+    let mut count = owners.len();
+    while count > 1 {
+        let next = count.div_ceil(2);
+        for index in 0..next {
+            let left = nodes[index * 2];
+            let right = if index * 2 + 1 < count {
+                nodes[index * 2 + 1]
+            } else {
+                left
+            };
+            nodes[index] = solana_program::hash::hashv(
+                &[NODE_DOMAIN, &left, &right],
+            ).to_bytes();
         }
-        nodes = parents;
+        count = next;
     }
     Ok(nodes[0])
 }
