@@ -46,3 +46,8 @@ opt-level = "z"
 
 [profile.release.package.hybrid-engine]
 opt-level = "z"
+
+# Runtime support code is also linked into the SBF ELF. Keep the
+# existing 320 KiB deployment guard instead of enlarging it.
+[profile.release.package.solana-program]
+opt-level = "z"
