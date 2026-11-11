@@ -1,5 +1,36 @@
 use crate::{BidEntry, BidOwnerPage, BidPage, StateError, BIDS_PER_PAGE};
 
+// Keep large page temporaries out of the caller's SBF stack frame.
+#[inline(never)]
+fn append_compacted_bid_pages(
+    entries: &[(BidEntry, [u8; 32])],
+    surviving_page_count: usize,
+    result_pages: &mut Vec<BidPage>,
+    result_sidecars: &mut Vec<BidOwnerPage>,
+) -> Result<(), StateError> {
+    for index in 0..surviving_page_count {
+        let mut page = BidPage::default();
+        let mut owners = BidOwnerPage::default();
+        let links = crate::PageLinks::new(
+            index as u32,
+            index.checked_sub(1).map(|value| value as u32),
+            (index + 1 < surviving_page_count).then_some((index + 1) as u32),
+        );
+        page.set_links(links);
+        owners.set_links(links);
+        let start = index * BIDS_PER_PAGE;
+        let end = entries.len().min(start + BIDS_PER_PAGE);
+        if start < end {
+            for &(entry, owner) in &entries[start..end] {
+                crate::insert_owned_bid(&mut page, &mut owners, entry, owner)?;
+            }
+        }
+        result_pages.push(page);
+        result_sidecars.push(owners);
+    }
+    Ok(())
+}
+
 /// Atomically apply global-index active fills and repack canonical linked pages.
 /// The caller writes the returned pages only after settlement checks succeed.
 pub fn apply_linked_bid_fills(
@@ -57,26 +88,7 @@ pub fn apply_linked_bid_fills(
     let mut result_pages = Vec::with_capacity(pages.len());
     let mut result_sidecars = Vec::with_capacity(pages.len());
     let surviving_page_count = entries.len().max(1).div_ceil(BIDS_PER_PAGE);
-    for index in 0..surviving_page_count {
-        let mut page = BidPage::default();
-        let mut owners = BidOwnerPage::default();
-        let links = crate::PageLinks::new(
-            index as u32,
-            index.checked_sub(1).map(|value| value as u32),
-            (index + 1 < surviving_page_count).then_some((index + 1) as u32),
-        );
-        page.set_links(links);
-        owners.set_links(links);
-        let start = index * BIDS_PER_PAGE;
-        let end = entries.len().min(start + BIDS_PER_PAGE);
-        if start < end {
-            for &(entry, owner) in &entries[start..end] {
-                crate::insert_owned_bid(&mut page, &mut owners, entry, owner)?;
-            }
-        }
-        result_pages.push(page);
-        result_sidecars.push(owners);
-    }
+    append_compacted_bid_pages(&entries, surviving_page_count, &mut result_pages, &mut result_sidecars)?;
     // The caller must retire the released page/sidecar accounts after a successful write.
     crate::validate_bid_chain(&result_pages)?;
     for (page, owners) in result_pages.iter().zip(&result_sidecars) {
