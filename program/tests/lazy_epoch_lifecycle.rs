@@ -319,14 +319,14 @@ fn claim(f: &Fixture, seat: u32, sibling: [u8; 32], destination: Pubkey) -> Inst
             f.maker_a.pubkey(),
             f.balance_a,
             100u64,
-            [50, 0, 0, 50, 0, 0],
+            [50u64, 0, 0, 50, 0, 0],
         )
     } else {
         (
             f.maker_b.pubkey(),
             f.balance_b,
             200u64,
-            [100, 0, 0, 100, 0, 1],
+            [100u64, 0, 0, 100, 0, 1],
         )
     };
     let mut data = vec![40];
