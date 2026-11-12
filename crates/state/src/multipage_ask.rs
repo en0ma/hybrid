@@ -9,8 +9,12 @@ fn append_compacted_ask_pages(
     result_sidecars: &mut Vec<AskOwnerPage>,
 ) -> Result<(), StateError> {
     for index in 0..surviving_page_count {
-        let mut page = AskPage::default();
-        let mut owners = AskOwnerPage::default();
+        // Initialize directly in heap-backed Vec storage: holding both page
+        // structs as stack locals exceeds the 4 KiB SBF frame limit.
+        result_pages.resize_with(index + 1, AskPage::default);
+        result_sidecars.resize_with(index + 1, AskOwnerPage::default);
+        let page = &mut result_pages[index];
+        let owners = &mut result_sidecars[index];
         let links = crate::PageLinks::new(
             index as u32,
             index.checked_sub(1).map(|value| value as u32),
@@ -22,11 +26,9 @@ fn append_compacted_ask_pages(
         let end = entries.len().min(start + ASKS_PER_PAGE);
         if start < end {
             for &(entry, owner) in &entries[start..end] {
-                crate::insert_owned_ask(&mut page, &mut owners, entry, owner)?;
+                crate::insert_owned_ask(page, owners, entry, owner)?;
             }
         }
-        result_pages.push(page);
-        result_sidecars.push(owners);
     }
     Ok(())
 }
