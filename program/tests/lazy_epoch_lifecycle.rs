@@ -365,8 +365,24 @@ async fn tx(
     let blockhash = context.get_new_latest_blockhash().await.unwrap();
     let mut all_signers: Vec<&Keypair> = vec![&context.payer];
     all_signers.extend_from_slice(signers);
+    // A Merkle-authenticated claim includes several PDA checks, SHA-256
+    // syscalls, state updates and a checked SPL CPI. Declare a bounded
+    // transaction compute budget explicitly rather than relying on the
+    // 200_000-CU single-instruction default. Other opcodes retain the default.
+    const CLAIM_CU_LIMIT: u32 = 350_000;
+    let mut instructions = Vec::with_capacity(2);
+    if ix.data.first() == Some(&40) {
+        let mut data = vec![2u8]; // SetComputeUnitLimit, u32 little-endian
+        data.extend_from_slice(&CLAIM_CU_LIMIT.to_le_bytes());
+        instructions.push(Instruction {
+            program_id: solana_program::pubkey!("ComputeBudget111111111111111111111111111111"),
+            accounts: vec![],
+            data,
+        });
+    }
+    instructions.push(ix);
     let signed = Transaction::new_signed_with_payer(
-        &[ix],
+        &instructions,
         Some(&context.payer.pubkey()),
         &all_signers,
         blockhash,
