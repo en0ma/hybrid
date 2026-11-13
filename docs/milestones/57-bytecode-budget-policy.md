@@ -33,3 +33,18 @@ The previous 288 KiB budget rejected this measured feature-complete binary.
 This revision does not bypass compilation, native/SBF tests, compute-unit
 checks, vault solvency checks, or an independent security review, and it does
 not change Solana protocol-level deployment rules.
+
+## Lazy epoch claim implementation revision (PR #71)
+
+The exact-head SBF build on November 11, 2026 measured **331,816 bytes**,
+exceeding the existing 320 KiB policy by 4,136 bytes. The explicitly revised
+project artifact budget is **352,256 bytes (344 KiB)**, leaving **20,440 bytes**
+of headroom against that measurement. This changes the CI artifact-size policy
+only; it does not increase the Solana SBF stack-frame limit, authorize deployment,
+or relax compute, custody, state, funded lifecycle or review gates.
+
+Both linked ask/bid fill-compaction functions previously reported 4,416-byte
+SBF frames against a 4,096-byte limit. Their page construction is now isolated
+in non-inlined helpers; the exact-head SBF build must confirm stack safety.
+The funded Surfpool trade also reported an overlapping-copy runtime error and
+must pass independently before merging. Keep all strict CI checks enabled.
