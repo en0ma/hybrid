@@ -153,7 +153,7 @@ pub(super) fn verify_claim(
     let weight_bytes = weight.to_le_bytes();
     let atom_bytes = amounts.map(u64::to_le_bytes);
     let mut hash = solana_program::hash::hashv(&[
-        b"HYBRID_MAKER_PUBKEY_CLAIM_V1\\0",
+        b"HYBRID_MAKER_PUBKEY_CLAIM_V1\0",
         &epoch.header.commitment,
         &seat_bytes,
         &maker_bytes,
@@ -177,10 +177,10 @@ pub(super) fn verify_claim(
             return Err(ProgramError::InvalidArgument);
         }
         hash = if index.is_multiple_of(2) {
-            solana_program::hash::hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\\0", &hash, sibling])
+            solana_program::hash::hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\0", &hash, sibling])
                 .to_bytes()
         } else {
-            solana_program::hash::hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\\0", sibling, &hash])
+            solana_program::hash::hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\0", sibling, &hash])
                 .to_bytes()
         };
         index /= 2;
