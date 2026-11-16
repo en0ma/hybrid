@@ -224,11 +224,15 @@ pub(super) fn execute_and_seal_ask(
             return Err(ProgramError::InvalidAccountData);
         }
     }
-    if hybrid_engine::spot_price_x64(resting_tick).map_err(|_| ProgramError::InvalidAccountData)?
-        != resting_price
-    {
-        return Err(ProgramError::InvalidAccountData);
-    }
+    // Resting orders are admitted using the canonical floor-sqrt interval,
+    // not exact equality with the truncated Q64 square. Keep settlement
+    // consistent with the limit-ask placement and engine validation rules.
+    hybrid_engine::validate_limit_ask(hybrid_engine::LimitAsk {
+        price_x64: resting_price,
+        sqrt_price_x64: resting_tick,
+        base_qty: asks.as_slice()[0].base_qty,
+    })
+    .map_err(|_| ProgramError::InvalidAccountData)?;
 
     let quote_proceeds = hybrid_engine::quote_for_base_at_price(base_fill, resting_price)
         .map_err(|_| ProgramError::InvalidInstructionData)?;
