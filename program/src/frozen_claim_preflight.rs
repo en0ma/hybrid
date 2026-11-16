@@ -25,8 +25,9 @@ pub(super) fn process_frozen_claim_preflight(
 }
 
 /// Reusable cryptographic, account/PDA and balance-owner checks.
-/// For the eventual atomic claim path allow ONLY the epoch and maker-balance
-/// accounts to be writable. This check itself never mutates any state.
+/// For an atomic payout, epoch and maker-balance must be writable. Other
+/// accounts may inherit transaction-wide writable privileges (e.g. a claim
+/// followed by a deposit), but this verifier never mutates them.
 pub(super) fn verify_claim(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
