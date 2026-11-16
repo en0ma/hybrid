@@ -479,7 +479,12 @@ async fn paid_execution_seals_on_chain_and_claims_conserve_fees_and_replay() {
     let bal_a = MakerBalance::decode_from(&bytes(&mut context, f.balance_a).await).unwrap();
     assert_eq!(bal_a.locked_base, 100);
 
-    let claim_a = claim(&f, 0, b, f.destination_a);
+    // Solana combines account privileges across a transaction. A claim may
+    // therefore see market/custody as writable when paired with deposit or
+    // order placement, even though claim itself never changes those accounts.
+    let mut claim_a = claim(&f, 0, b, f.destination_a);
+    claim_a.accounts[0].is_writable = true; // market
+    claim_a.accounts[4].is_writable = true; // custody
     tx(&mut context, claim_a.clone(), &[&f.maker_a])
         .await
         .unwrap();
