@@ -49,9 +49,10 @@ pub(super) fn verify_claim(
     {
         return Err(ProgramError::IncorrectProgramId);
     }
-    // The preflight cannot mutate any account, even when callers mark them writable.
-    if (!allow_claim_writes && (epoch_account.is_writable || balance_account.is_writable))
-        || market.is_writable
+    // Opcode 38 retains its read-only account-meta policy. Opcode 40 may
+    // inherit market writability from other instructions in the transaction.
+    if (!allow_claim_writes
+        && (market.is_writable || epoch_account.is_writable || balance_account.is_writable))
         || (allow_claim_writes && (!epoch_account.is_writable || !balance_account.is_writable))
     {
         return Err(ProgramError::InvalidAccountData);
