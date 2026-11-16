@@ -34,8 +34,6 @@ pub(super) fn process_atomic_frozen_claim(
         || !reserve_account.is_writable
         || !vault.is_writable
         || !destination.is_writable
-        || market.is_writable
-        || custody_account.is_writable
     {
         return Err(ProgramError::InvalidAccountData);
     }
