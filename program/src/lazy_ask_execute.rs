@@ -20,6 +20,16 @@ const EPOCH_DOMAIN: &[u8] = b"HYBRID_LAZY_PUBKEY_EPOCH_V1\0";
 const LEAF_DOMAIN: &[u8] = b"HYBRID_MAKER_PUBKEY_CLAIM_V1\0";
 const NODE_DOMAIN: &[u8] = b"HYBRID_MAKER_PUBKEY_NODE_V1\0";
 
+// Use the same canonical floor-sqrt interval accepted by order placement.
+fn validate_resting_ask_price(price_x64: u128, sqrt_price_x64: u128) -> ProgramResult {
+    hybrid_engine::validate_limit_ask(hybrid_engine::LimitAsk {
+        price_x64,
+        sqrt_price_x64,
+        base_qty: 1,
+    })
+    .map_err(|_| ProgramError::InvalidAccountData)
+}
+
 fn token_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     token_account_fields(account)?;
     let data = account.try_borrow_data()?;
@@ -227,12 +237,7 @@ pub(super) fn execute_and_seal_ask(
     // Resting orders are admitted using the canonical floor-sqrt interval,
     // not exact equality with the truncated Q64 square. Keep settlement
     // consistent with the limit-ask placement and engine validation rules.
-    hybrid_engine::validate_limit_ask(hybrid_engine::LimitAsk {
-        price_x64: resting_price,
-        sqrt_price_x64: resting_tick,
-        base_qty: asks.as_slice()[0].base_qty,
-    })
-    .map_err(|_| ProgramError::InvalidAccountData)?;
+    validate_resting_ask_price(resting_price, resting_tick)?;
 
     let quote_proceeds = hybrid_engine::quote_for_base_at_price(base_fill, resting_price)
         .map_err(|_| ProgramError::InvalidInstructionData)?;
@@ -449,6 +454,16 @@ mod tests {
 
     fn hex(bytes: [u8; 32]) -> String {
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    #[test]
+    fn resting_ask_accepts_canonical_floor_sqrt_with_rounding_gap() {
+        let price = 4 * hybrid_engine::Q64 - 1;
+        let sqrt = 2 * hybrid_engine::Q64 - 1;
+        assert!(validate_resting_ask_price(price, sqrt).is_ok());
+        // Noncanonical cached roots must still be rejected.
+        assert!(validate_resting_ask_price(price, 2 * hybrid_engine::Q64).is_err());
+        assert!(validate_resting_ask_price(price, sqrt - 1).is_err());
     }
 
     #[test]
