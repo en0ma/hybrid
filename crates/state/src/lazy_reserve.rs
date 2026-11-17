@@ -250,7 +250,7 @@ mod tests {
         // A failed overclaim must not change any cross-epoch accounting.
         let before = reserve;
         assert_eq!(
-            reserve.release_claim([11, 0, 0, 30, 0, 0]),
+            reserve.release_claim([15, 0, 0, 30, 0, 0]),
             Err(LazyReserveError::Underflow)
         );
         assert_eq!(reserve, before);
