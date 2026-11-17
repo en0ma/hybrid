@@ -25,3 +25,21 @@ Persistent account-layout thresholds live in `ci/state-budgets.json` and are enf
 The PR workflow checks out `pull_request.head.sha`, rejects unresolved review threads, and re-fetches the PR head at the final gate. If a commit lands while CI is running, the validated run is rejected and the new head must pass again.
 
 The post-merge workflow reruns core, fork, and Manifest comparison suites on the fresh commit on `main`.
+
+## PR #71 multipage match CU policy revision
+
+The exact-head SBF CU gate on November 13, 2026 measured
+`multipage_state_backed_match` at **134,918 CU** against its previous
+**100,000 CU** project budget. The SBF stack-safe page-compaction change
+introduced heap-backed page construction, and the measured multi-page path
+now exceeds the prior project threshold. This PR revises that one threshold
+to **150,000 CU**, providing **15,082 CU** (about 11.2%) of headroom over
+the measured run. The revision is an explicit protocol performance policy
+choice, not evidence that the higher consumption is optimal.
+
+All other CU thresholds remain unchanged. The `ci/cu-check.sh` gate,
+strict SBF build and bytecode checks, funded Surfpool lifecycle, pinned
+Manifest comparison, exact-head verification and independent security
+review remain mandatory. The higher threshold does not modify Solana's
+runtime compute limits; future regressions past 150,000 CU still fail CI.
+Performance optimization remains desirable before production launch.

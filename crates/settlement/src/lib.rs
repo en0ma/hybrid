@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 // Isolated read-only protocol proof verifier; no live settlement dispatch.
+pub mod frozen_claim_gate;
 pub mod lazy_claim_proof;
 pub mod lazy_epoch_abi;
 

@@ -10,5 +10,7 @@
   "boundary_page": 1040,
   "maker_balance_account": 64,
   "custody_state": 192,
-  "maker_balance": 112
+  "maker_balance": 112,
+  "frozen_epoch": 912,
+  "lazy_reserve": 144
 }

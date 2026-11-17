@@ -6,4 +6,5 @@ license.workspace = true
 
 [dependencies]
 hybrid-engine.workspace = true
+hybrid-state.workspace = true
 sha2 = "0.10"

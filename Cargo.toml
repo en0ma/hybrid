@@ -27,8 +27,11 @@ tools-version = "v1.57"
 # Solana's executable account limit is much larger than this repository's
 # historical 160 KiB CI guard. Prefer low execution CU over minimizing ELF
 # bytes, while retaining LTO and a separate deploy-size regression guard.
+# Optimize the entire linked SBF dependency graph for size. Package-only
+# overrides left transitive Solana support crates optimized for speed and
+# exceeded the unchanged 320 KiB ELF hard limit.
 [profile.release]
-opt-level = 3
+opt-level = "z"
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
@@ -36,4 +39,18 @@ strip = "symbols"
 # Keep the deployed program within the strict 256 KiB ELF guard without
 # relaxing SBF instruction, compute-unit, or Manifest checks.
 [profile.release.package.hybrid-program]
+opt-level = "z"
+
+# Also optimize the program-linked state and pricing dependencies for SBF
+# size; a per-package program-only setting leaves these at opt-level 3.
+# Preserve the existing strict bytecode and CU comparison gates.
+[profile.release.package.hybrid-state]
+opt-level = "z"
+
+[profile.release.package.hybrid-engine]
+opt-level = "z"
+
+# Runtime support code is also linked into the SBF ELF. Keep the
+# existing 320 KiB deployment guard instead of enlarging it.
+[profile.release.package.solana-program]
 opt-level = "z"

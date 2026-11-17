@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+pub mod frozen_epoch;
+pub mod lazy_pro_rata;
+pub mod lazy_reserve;
 pub mod multipage_ask;
 pub mod multipage_bid;
 pub mod passive;
@@ -1891,6 +1894,13 @@ mod tests {
             println!("HYBRID_STATE_BYTES {name} {actual}");
             assert_eq!(actual, expected);
         }
+        for (name, actual, expected) in [
+            ("frozen_epoch", frozen_epoch::FROZEN_EPOCH_BYTES, 912usize),
+            ("lazy_reserve", lazy_reserve::LAZY_RESERVE_BYTES, 144usize),
+        ] {
+            println!("HYBRID_STATE_BYTES {name} {actual}");
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]
@@ -2210,4 +2220,42 @@ mod bid_settlement_tests {
             .is_err());
         assert_eq!(balance, before);
     }
+}
+
+/// Apply sealed pro-rata asks to the canonical resting book while deferring
+/// maker-balance writes. All quantities are prevalidated, and both the page
+/// and owner sidecar must remain parallel after removing fully filled orders.
+/// The future claim instruction debits historical maker locked collateral.
+pub fn apply_lazy_ask_fills(
+    asks: &mut AskPage,
+    owners: &mut AskOwnerPage,
+    fills: &[u64],
+) -> Result<usize, StateError> {
+    owners.validate_parallel(asks)?;
+    if fills.len() != asks.len() || !fills.iter().any(|amount| *amount > 0) {
+        return Err(StateError::Corrupt);
+    }
+    for (order, fill) in asks.as_slice().iter().zip(fills) {
+        if *fill > order.base_qty {
+            return Err(StateError::Corrupt);
+        }
+    }
+    let mut removed = 0;
+    for index in (0..fills.len()).rev() {
+        let amount = fills[index];
+        if amount == 0 {
+            continue;
+        }
+        if amount == asks.entries[index].base_qty {
+            let sequence = asks.entries[index].sequence;
+            asks.remove_by_sequence(sequence)?;
+            owners.remove_at(index)?;
+            removed += 1;
+        } else {
+            asks.entries[index].base_qty -= amount;
+        }
+    }
+    owners.validate_parallel(asks)?;
+    asks.validate_order()?;
+    Ok(removed)
 }
