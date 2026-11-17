@@ -232,7 +232,6 @@ mod tests {
         assert_eq!(LazyReserve::decode(&bytes), Err(LazyReserveError::Invalid));
     }
 
-
     /// Cross-epoch liabilities must remain segregated while claims arrive
     /// out of seal order, including mixed ASK and BID settlement.
     #[test]
