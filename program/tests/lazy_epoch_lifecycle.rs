@@ -636,6 +636,37 @@ async fn failed_bid_claim_to_frozen_destination_rolls_back_all_balances() {
 }
 
 #[tokio::test]
+async fn bid_epoch_rejects_overfill_slippage_and_wrong_mint_without_state_changes() {
+    let mut f = fixture_bid(false);
+    let mut context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+        .await
+        .unwrap();
+    let before = snapshot(&mut context, &f).await;
+    assert!(tx(&mut context, seal_bid(&f, payer, 301, 1), &[&f.taker])
+        .await
+        .is_err());
+    assert_eq!(snapshot(&mut context, &f).await, before);
+    assert!(tx(&mut context, seal_bid(&f, payer, 150, 151), &[&f.taker])
+        .await
+        .is_err());
+    assert_eq!(snapshot(&mut context, &f).await, before);
+
+    let mut wrong_mint = seal_bid(&f, payer, 150, 150);
+    wrong_mint.accounts[11] = AccountMeta::new_readonly(f.base_mint, false);
+    assert!(tx(&mut context, wrong_mint, &[&f.taker]).await.is_err());
+    assert_eq!(snapshot(&mut context, &f).await, before);
+
+    let mut wrong_sidecar = seal_bid(&f, payer, 150, 150);
+    wrong_sidecar.accounts[5] = AccountMeta::new_readonly(f.maker_a.pubkey(), false);
+    assert!(tx(&mut context, wrong_sidecar, &[&f.taker])
+        .await
+        .is_err());
+    assert_eq!(snapshot(&mut context, &f).await, before);
+}
+
+#[tokio::test]
 async fn paid_execution_seals_on_chain_and_claims_conserve_fees_and_replay() {
     let mut f = fixture(false);
     let mut context = f.test.take().unwrap().start_with_context().await;
