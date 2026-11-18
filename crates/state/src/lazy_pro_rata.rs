@@ -440,13 +440,19 @@ mod tests {
         let half = hybrid_engine::Q64 / 2;
         // The 2-base resting order locked 1 quote. Filling only 1 base
         // releases 1 - ceil(1/2) = 0, so paying 1 quote is forbidden.
-        assert_eq!(allocate_bid_at_price(&[2], 1, half, 0), Err(ProRataError::Invalid));
+        assert_eq!(
+            allocate_bid_at_price(&[2], 1, half, 0),
+            Err(ProRataError::Invalid)
+        );
         // The same order can fully fill and release the whole locked quote.
         let full = allocate_bid_at_price(&[2], 2, half, 0).unwrap();
         assert_eq!(full[0].quote_spent, 1);
         // Even when a different maker has spare quote collateral, the
         // un-released amount cannot be assigned to this partial-fill seat.
-        assert_eq!(allocate_bid_at_price(&[2, 2], 1, half, 0), Err(ProRataError::Invalid));
+        assert_eq!(
+            allocate_bid_at_price(&[2, 2], 1, half, 0),
+            Err(ProRataError::Invalid)
+        );
     }
 
     #[test]
