@@ -72,14 +72,22 @@ struct Fixture {
     vault_authority: Pubkey,
 }
 fn fixture(freeze_destination: bool) -> Fixture {
-    fixture_for_side(freeze_destination, false)
+    fixture_for_side(freeze_destination, false, None)
 }
 
 fn fixture_bid(freeze_destination: bool) -> Fixture {
-    fixture_for_side(freeze_destination, true)
+    fixture_for_side(freeze_destination, true, None)
 }
 
-fn fixture_for_side(freeze_destination: bool, bid_side: bool) -> Fixture {
+fn fixture_bid_fractional(qty_per_maker: u64) -> Fixture {
+    fixture_for_side(false, true, Some(qty_per_maker))
+}
+
+fn fixture_for_side(
+    freeze_destination: bool,
+    bid_side: bool,
+    fractional_bid_qty: Option<u64>,
+) -> Fixture {
     let market_signer = Keypair::new();
     let market = market_signer.pubkey();
     let maker_a = Keypair::new();
@@ -118,6 +126,21 @@ fn fixture_for_side(freeze_destination: bool, bid_side: bool) -> Fixture {
     let destination_a = Pubkey::new_unique();
     let destination_b = Pubkey::new_unique();
 
+    let quantity_a = fractional_bid_qty.unwrap_or(100);
+    let quantity_b = fractional_bid_qty.unwrap_or(200);
+    let price = if fractional_bid_qty.is_some() {
+        Q64 / 2
+    } else {
+        Q64
+    };
+    // Canonical floor(sqrt(price_x64 * Q64)) for price 1/2.
+    let sqrt_price = if fractional_bid_qty.is_some() {
+        13_043_817_825_332_782_212u128
+    } else {
+        Q64
+    };
+    let quote_a = hybrid_engine::quote_for_base_at_price(quantity_a, price).unwrap();
+    let quote_b = hybrid_engine::quote_for_base_at_price(quantity_b, price).unwrap();
     let mut header = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
     header.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
     header.ask_count = if bid_side { 0 } else { 2 };
@@ -136,16 +159,16 @@ fn fixture_for_side(freeze_destination: bool, bid_side: bool) -> Fixture {
     let mut asks = AskPage::default();
     asks.set_links(PageLinks::new(0, None, None));
     asks.insert(AskEntry {
-        price_x64: Q64,
-        sqrt_price_x64: Q64,
-        base_qty: 100,
+        price_x64: price,
+        sqrt_price_x64: sqrt_price,
+        base_qty: quantity_a,
         sequence: 1,
     })
     .unwrap();
     asks.insert(AskEntry {
-        price_x64: Q64,
-        sqrt_price_x64: Q64,
-        base_qty: 200,
+        price_x64: price,
+        sqrt_price_x64: sqrt_price,
+        base_qty: quantity_b,
         sequence: 2,
     })
     .unwrap();
@@ -188,8 +211,8 @@ fn fixture_for_side(freeze_destination: bool, bid_side: bool) -> Fixture {
         quote_mint: quote_mint.to_bytes(),
         base_vault: base_vault.to_bytes(),
         quote_vault: quote_vault.to_bytes(),
-        total_base: if bid_side { 0 } else { 300 },
-        total_quote: if bid_side { 300 } else { 0 },
+        total_base: if bid_side { 0 } else { quantity_a + quantity_b },
+        total_quote: if bid_side { quote_a + quote_b } else { 0 },
     };
     let mut custody_data = vec![0; CUSTODY_STATE_BYTES];
     custody_state.encode_into(&mut custody_data).unwrap();
@@ -197,18 +220,18 @@ fn fixture_for_side(freeze_destination: bool, bid_side: bool) -> Fixture {
     let mut balance_a_state =
         MakerBalance::new(bump_a, market.to_bytes(), maker_a.pubkey().to_bytes());
     if bid_side {
-        balance_a_state.locked_quote = 100;
+        balance_a_state.locked_quote = quote_a;
     } else {
-        balance_a_state.locked_base = 100;
+        balance_a_state.locked_base = quantity_a;
     }
     let mut balance_a_data = vec![0; MAKER_BALANCE_BYTES];
     balance_a_state.encode_into(&mut balance_a_data).unwrap();
     let mut balance_b_state =
         MakerBalance::new(bump_b, market.to_bytes(), maker_b.pubkey().to_bytes());
     if bid_side {
-        balance_b_state.locked_quote = 200;
+        balance_b_state.locked_quote = quote_b;
     } else {
-        balance_b_state.locked_base = 200;
+        balance_b_state.locked_base = quantity_b;
     }
     let mut balance_b_data = vec![0; MAKER_BALANCE_BYTES];
     balance_b_state.encode_into(&mut balance_b_data).unwrap();
@@ -246,7 +269,7 @@ fn fixture_for_side(freeze_destination: bool, bid_side: bool) -> Fixture {
             token_data(
                 base_mint,
                 vault_authority,
-                if bid_side { 0 } else { 300 },
+                if bid_side { 0 } else { quantity_a + quantity_b },
                 false,
             ),
             TOKEN,
@@ -258,7 +281,7 @@ fn fixture_for_side(freeze_destination: bool, bid_side: bool) -> Fixture {
             token_data(
                 quote_mint,
                 vault_authority,
-                if bid_side { 300 } else { 0 },
+                if bid_side { quote_a + quote_b } else { 0 },
                 false,
             ),
             TOKEN,
@@ -386,6 +409,8 @@ fn seal(f: &Fixture, payer: Pubkey, base: u64, limit: u64) -> Instruction {
 fn seal_bid(f: &Fixture, payer: Pubkey, base: u64, min_quote: u64) -> Instruction {
     let mut instruction = seal(f, payer, base, min_quote);
     instruction.data[0] = 42;
+    instruction.accounts.push(AccountMeta::new(f.balance_a, false));
+    instruction.accounts.push(AccountMeta::new(f.balance_b, false));
     instruction
 }
 
@@ -661,6 +686,74 @@ async fn bid_epoch_rejects_overfill_slippage_and_wrong_mint_without_state_change
     let mut wrong_sidecar = seal_bid(&f, payer, 150, 150);
     wrong_sidecar.accounts[5] = AccountMeta::new_readonly(f.maker_a.pubkey(), false);
     assert!(tx(&mut context, wrong_sidecar, &[&f.taker]).await.is_err());
+    assert_eq!(snapshot(&mut context, &f).await, before);
+}
+
+#[tokio::test]
+async fn fractional_bid_full_fill_refunds_surplus_and_claims_do_not_strand_quote() {
+    let mut f = fixture_bid_fractional(3);
+    let mut context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+        .await
+        .unwrap();
+    tx(&mut context, seal_bid(&f, payer, 6, 3), &[&f.taker])
+        .await
+        .unwrap();
+
+    let epoch = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
+    assert_eq!(epoch.header.totals, [0, 6, 3, 0, 0, 0]);
+    let balance_a = MakerBalance::decode_from(&bytes(&mut context, f.balance_a).await).unwrap();
+    let balance_b = MakerBalance::decode_from(&bytes(&mut context, f.balance_b).await).unwrap();
+    assert_eq!((balance_a.locked_quote, balance_a.free_quote), (1, 1));
+    assert_eq!((balance_b.locked_quote, balance_b.free_quote), (2, 0));
+    assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), 1);
+
+    let claim_a = [0, 3, 1, 0, 0, 0];
+    let claim_b = [0, 3, 2, 0, 0, 0];
+    let leaf_a = leaf(&epoch.header.commitment, 0, f.maker_a.pubkey(), 3, claim_a);
+    let leaf_b = leaf(&epoch.header.commitment, 1, f.maker_b.pubkey(), 3, claim_b);
+    assert_eq!(
+        epoch.header.claim_root,
+        hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\0", &leaf_a, &leaf_b]).to_bytes()
+    );
+
+    let mut first = claim_bid(&f, 0, leaf_b, f.destination_a);
+    first.data[37..45].copy_from_slice(&3u64.to_le_bytes());
+    for (index, amount) in claim_a.iter().enumerate() {
+        first.data[45 + index * 8..53 + index * 8].copy_from_slice(&amount.to_le_bytes());
+    }
+    tx(&mut context, first, &[&f.maker_a]).await.unwrap();
+
+    let mut second = claim_bid(&f, 1, leaf_a, f.destination_b);
+    second.data[37..45].copy_from_slice(&3u64.to_le_bytes());
+    for (index, amount) in claim_b.iter().enumerate() {
+        second.data[45 + index * 8..53 + index * 8].copy_from_slice(&amount.to_le_bytes());
+    }
+    tx(&mut context, second, &[&f.maker_b]).await.unwrap();
+    let balance_a = MakerBalance::decode_from(&bytes(&mut context, f.balance_a).await).unwrap();
+    let balance_b = MakerBalance::decode_from(&bytes(&mut context, f.balance_b).await).unwrap();
+    assert_eq!((balance_a.locked_quote, balance_a.free_quote), (0, 1));
+    assert_eq!((balance_b.locked_quote, balance_b.free_quote), (0, 0));
+    let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
+    assert_eq!(reserve.vault_floor(0, 1), Ok((0, 1)));
+}
+
+#[tokio::test]
+async fn fractional_bid_partial_fill_cannot_spend_still_locked_quote() {
+    let mut f = fixture_bid_fractional(2);
+    let mut context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+        .await
+        .unwrap();
+    let before = snapshot(&mut context, &f).await;
+    // Each 2-base order locks one quote. Filling 1 base from the second
+    // order cannot release quote while its remaining 1-base order still
+    // needs the full original 1 quote atom.
+    assert!(tx(&mut context, seal_bid(&f, payer, 1, 1), &[&f.taker])
+        .await
+        .is_err());
     assert_eq!(snapshot(&mut context, &f).await, before);
 }
 
