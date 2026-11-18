@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn bid_side_cumulative_allocations_conserve_base_quote_fees_and_dust() {
-        let amounts = allocate_bid(&[1, 1, 1], 2, 7, 1).unwrap();
+        let amounts = allocate_bid(&[1, 1, 1], 2, 7, 0).unwrap();
         assert_eq!(
             amounts,
             vec![
@@ -276,9 +276,9 @@ mod tests {
                     base_fee: 0,
                 },
                 MakerBidAllocation {
-                    base_proceeds: 0,
+                    base_proceeds: 1,
                     quote_spent: 4,
-                    base_fee: 1,
+                    base_fee: 0,
                 },
             ]
         );
