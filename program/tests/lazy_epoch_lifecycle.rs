@@ -660,9 +660,7 @@ async fn bid_epoch_rejects_overfill_slippage_and_wrong_mint_without_state_change
 
     let mut wrong_sidecar = seal_bid(&f, payer, 150, 150);
     wrong_sidecar.accounts[5] = AccountMeta::new_readonly(f.maker_a.pubkey(), false);
-    assert!(tx(&mut context, wrong_sidecar, &[&f.taker])
-        .await
-        .is_err());
+    assert!(tx(&mut context, wrong_sidecar, &[&f.taker]).await.is_err());
     assert_eq!(snapshot(&mut context, &f).await, before);
 }
 
