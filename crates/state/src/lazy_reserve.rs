@@ -232,6 +232,59 @@ mod tests {
         assert_eq!(LazyReserve::decode(&bytes), Err(LazyReserveError::Invalid));
     }
 
+    /// Cross-epoch liabilities must remain segregated while claims arrive
+    /// out of seal order, including mixed ASK and BID settlement.
+    #[test]
+    fn three_epochs_interleaved_claims_preserve_global_vault_floors() {
+        let mut reserve = LazyReserve::new(7, [1; 32], [3; 32]).unwrap();
+        let first_ask = [10, 0, 0, 30, 0, 2];
+        let bid = [0, 7, 21, 0, 1, 0];
+        let later_ask = [4, 0, 0, 8, 0, 1];
+        reserve.reserve_execution(0, first_ask).unwrap();
+        reserve.reserve_execution(1, bid).unwrap();
+        reserve.reserve_execution(2, later_ask).unwrap();
+        assert_eq!(reserve.next_epoch_id, 3);
+        assert_eq!(reserve.vault_floor(100, 200), Ok((108, 241)));
+
+        // A failed overclaim must not change any cross-epoch accounting.
+        let before = reserve;
+        assert_eq!(
+            reserve.release_claim([15, 0, 0, 30, 0, 0]),
+            Err(LazyReserveError::Underflow)
+        );
+        assert_eq!(reserve, before);
+        assert_eq!(
+            reserve.reserve_execution(1, bid),
+            Err(LazyReserveError::Invalid)
+        );
+        assert_eq!(reserve, before);
+
+        // Claim part of epoch 0, then all of epoch 2, then epoch 1, and
+        // finally the remainder of epoch 0. Fees remain in vault custody.
+        reserve.release_claim([3, 0, 0, 10, 0, 0]).unwrap();
+        assert_eq!(reserve.vault_floor(100, 200), Ok((108, 231)));
+        reserve.release_claim([4, 0, 0, 8, 0, 0]).unwrap();
+        assert_eq!(reserve.vault_floor(100, 200), Ok((108, 223)));
+        reserve.release_claim([0, 7, 21, 0, 0, 0]).unwrap();
+        assert_eq!(reserve.vault_floor(100, 200), Ok((101, 223)));
+        reserve.release_claim([7, 0, 0, 20, 0, 0]).unwrap();
+        assert_eq!(reserve.vault_floor(100, 200), Ok((101, 203)));
+        assert_eq!(reserve.maker_base_credit, 0);
+        assert_eq!(reserve.maker_quote_credit, 0);
+        assert_eq!(reserve.maker_base_debit, 0);
+        assert_eq!(reserve.maker_quote_debit, 0);
+        assert_eq!(reserve.base_fees, 1);
+        assert_eq!(reserve.quote_fees, 3);
+
+        let mut data = [0u8; LAZY_RESERVE_BYTES];
+        reserve.encode(&mut data).unwrap();
+        assert_eq!(LazyReserve::decode(&data), Ok(reserve));
+        assert_eq!(
+            reserve.release_claim([1, 0, 0, 1, 0, 0]),
+            Err(LazyReserveError::Underflow)
+        );
+    }
+
     #[test]
     fn replay_underflow_overflow_and_epoch_reuse_preserve_state() {
         let mut reserve = LazyReserve::new(2, [1; 32], [3; 32]).unwrap();
