@@ -150,12 +150,12 @@ pub fn allocate_bid(
         let filled = next_fill
             .checked_sub(fill_prefix)
             .ok_or(ProRataError::Invalid)?;
-        let quote_before = ((u128::from(quote_paid) * u128::from(fill_prefix))
-            / u128::from(filled_base)) as u64;
-        let quote_after = ((u128::from(quote_paid) * u128::from(next_fill))
-            / u128::from(filled_base)) as u64;
-        let fee_before = ((u128::from(base_fee) * u128::from(fill_prefix))
-            / u128::from(filled_base)) as u64;
+        let quote_before =
+            ((u128::from(quote_paid) * u128::from(fill_prefix)) / u128::from(filled_base)) as u64;
+        let quote_after =
+            ((u128::from(quote_paid) * u128::from(next_fill)) / u128::from(filled_base)) as u64;
+        let fee_before =
+            ((u128::from(base_fee) * u128::from(fill_prefix)) / u128::from(filled_base)) as u64;
         let fee_after =
             ((u128::from(base_fee) * u128::from(next_fill)) / u128::from(filled_base)) as u64;
         let fee = fee_after
@@ -297,7 +297,10 @@ mod tests {
                 u128::from(fill)
             );
             assert_eq!(
-                claims.iter().map(|x| u128::from(x.quote_spent)).sum::<u128>(),
+                claims
+                    .iter()
+                    .map(|x| u128::from(x.quote_spent))
+                    .sum::<u128>(),
                 u128::from(quote)
             );
             assert_eq!(
@@ -319,7 +322,10 @@ mod tests {
         assert_eq!(allocate_bid(&[1], 1, 1, 1), Err(ProRataError::Invalid));
         assert_eq!(allocate_bid(&[1, 1], 2, 1, 0), Err(ProRataError::Invalid));
         assert_eq!(allocate_bid(&[1, 1], 2, 2, 1), Err(ProRataError::Invalid));
-        assert_eq!(allocate_bid(&[1; 33], 33, 33, 0), Err(ProRataError::Invalid));
+        assert_eq!(
+            allocate_bid(&[1; 33], 33, 33, 0),
+            Err(ProRataError::Invalid)
+        );
     }
 
     #[test]
