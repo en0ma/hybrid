@@ -457,7 +457,7 @@ fn claim_bid(f: &Fixture, seat: u32, sibling: [u8; 32], destination: Pubkey) -> 
     let amounts: [u64; 6] = if seat == 0 {
         [0, 50, 50, 0, 0, 0]
     } else {
-        [0, 100, 100, 0, 0, 0]
+        [0, 99, 100, 0, 1, 0]
     };
     for (index, amount) in amounts.iter().enumerate() {
         instruction.data[45 + index * 8..53 + index * 8].copy_from_slice(&amount.to_le_bytes());
@@ -547,7 +547,7 @@ async fn paid_bid_execution_seals_and_claims_base_without_spending_other_reserve
     let epoch = FrozenEpochView::decode(&epoch_data).unwrap();
     assert_eq!(epoch.header.side, 1);
     assert_eq!(epoch.header.epoch_id, 0);
-    assert_eq!(epoch.header.totals, [0, 150, 150, 0, 0, 0]);
+    assert_eq!(epoch.header.totals, [0, 149, 150, 0, 1, 0]);
     let a = leaf(
         &epoch.header.commitment,
         0,
@@ -560,7 +560,7 @@ async fn paid_bid_execution_seals_and_claims_base_without_spending_other_reserve
         1,
         f.maker_b.pubkey(),
         200,
-        [0, 100, 100, 0, 0, 0],
+        [0, 99, 100, 0, 1, 0],
     );
     assert_eq!(
         epoch.header.claim_root,
@@ -588,9 +588,9 @@ async fn paid_bid_execution_seals_and_claims_base_without_spending_other_reserve
     .await
     .unwrap();
     assert_eq!(amount(&bytes(&mut context, f.destination_a).await), 50);
-    assert_eq!(amount(&bytes(&mut context, f.destination_b).await), 100);
+    assert_eq!(amount(&bytes(&mut context, f.destination_b).await), 99);
     let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
-    assert_eq!(reserve.vault_floor(0, 150), Ok((0, 150)));
+    assert_eq!(reserve.vault_floor(0, 150), Ok((1, 150)));
     assert_eq!(reserve.maker_base_credit, 0);
     assert_eq!(reserve.maker_quote_debit, 0);
 
@@ -622,7 +622,7 @@ async fn failed_bid_claim_to_frozen_destination_rolls_back_all_balances() {
         1,
         f.maker_b.pubkey(),
         200,
-        [0, 100, 100, 0, 0, 0],
+        [0, 99, 100, 0, 1, 0],
     );
     let before = snapshot(&mut context, &f).await;
     assert!(tx(
@@ -746,7 +746,7 @@ async fn paid_execution_seals_on_chain_and_claims_conserve_fees_and_replay() {
     )
     .await
     .unwrap();
-    assert_eq!(amount(&bytes(&mut context, f.destination_b).await), 100);
+    assert_eq!(amount(&bytes(&mut context, f.destination_b).await), 99);
     assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), 1);
     let epoch = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
     assert_eq!(epoch.remaining, [0; 6]);
