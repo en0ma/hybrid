@@ -42,6 +42,7 @@ pub mod client_transport;
 mod frozen_claim_payout;
 mod frozen_claim_preflight;
 mod lazy_ask_execute;
+mod lazy_bid_execute;
 mod lazy_reserve;
 mod linked_maker;
 mod multipage_buy;
@@ -156,6 +157,7 @@ pub fn process_instruction(
         Some(39) => lazy_reserve::initialize_market_lazy_reserve(_program_id, _accounts, data),
         Some(40) => frozen_claim_payout::process_atomic_frozen_claim(_program_id, _accounts, data),
         Some(41) => lazy_ask_execute::execute_and_seal_ask(_program_id, _accounts, data),
+        Some(42) => lazy_bid_execute::execute_and_seal_bid(_program_id, _accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
