@@ -384,7 +384,10 @@ mod tests {
         assert_eq!(capped[0].quote_spent, 2);
         assert_eq!(capped[1].quote_spent, 1);
         assert_eq!(
-            capped.iter().map(|c| u128::from(c.quote_spent)).sum::<u128>(),
+            capped
+                .iter()
+                .map(|c| u128::from(c.quote_spent))
+                .sum::<u128>(),
             3
         );
         for (weights, fill, price, fee) in [
@@ -400,8 +403,8 @@ mod tests {
             let total: u64 = weights.iter().sum();
             for (weight, allocation) in weights.iter().zip(&allocations) {
                 weight_prefix += weight;
-                let next_fill = ((u128::from(fill) * u128::from(weight_prefix))
-                    / u128::from(total)) as u64;
+                let next_fill =
+                    ((u128::from(fill) * u128::from(weight_prefix)) / u128::from(total)) as u64;
                 let filled = next_fill - filled_prefix;
                 let locked = hybrid_engine::quote_for_base_at_price(*weight, price).unwrap();
                 assert!(allocation.quote_spent <= locked);
