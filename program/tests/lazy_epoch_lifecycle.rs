@@ -5,9 +5,8 @@ use hybrid_program::ID;
 use hybrid_state::frozen_epoch::{FrozenEpochView, FROZEN_EPOCH_BYTES};
 use hybrid_state::lazy_reserve::{LazyReserve, LAZY_RESERVE_BYTES};
 use hybrid_state::{
-    AskEntry, AskOwnerPage, AskPage, BidPage, CustodyState, MakerBalance, MarketHeader,
-    PageLinks, ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES, BID_PAGE_BYTES, CUSTODY_STATE_BYTES,
-    MAKER_BALANCE_BYTES,
+    AskEntry, AskOwnerPage, AskPage, BidPage, CustodyState, MakerBalance, MarketHeader, PageLinks,
+    ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES, BID_PAGE_BYTES, CUSTODY_STATE_BYTES, MAKER_BALANCE_BYTES,
     MARKET_FLAG_COLLATERALIZED_ACTIVE, MARKET_HEADER_BYTES,
 };
 use solana_account::Account;
@@ -92,7 +91,11 @@ fn fixture_for_side(freeze_destination: bool, bid_side: bool) -> Fixture {
         &[b"frozen-epoch", market.as_ref(), &0u64.to_le_bytes()],
         &ID,
     );
-    let page_seed = if bid_side { b"bid-page".as_slice() } else { b"ask-page".as_slice() };
+    let page_seed = if bid_side {
+        b"bid-page".as_slice()
+    } else {
+        b"ask-page".as_slice()
+    };
     let (ask, _) =
         Pubkey::find_program_address(&[page_seed, market.as_ref(), &0u32.to_le_bytes()], &ID);
     let (balance_a, bump_a) = Pubkey::find_program_address(
@@ -146,7 +149,14 @@ fn fixture_for_side(freeze_destination: bool, bid_side: bool) -> Fixture {
         sequence: 2,
     })
     .unwrap();
-    let mut ask_data = vec![0; if bid_side { BID_PAGE_BYTES } else { ASK_PAGE_BYTES }];
+    let mut ask_data = vec![
+        0;
+        if bid_side {
+            BID_PAGE_BYTES
+        } else {
+            ASK_PAGE_BYTES
+        }
+    ];
     if bid_side {
         let mut bids = BidPage::default();
         bids.set_links(PageLinks::new(0, None, None));
@@ -232,30 +242,75 @@ fn fixture_for_side(freeze_destination: bool, bid_side: bool) -> Fixture {
     test.add_account(quote_mint, account(mint_data(), TOKEN));
     test.add_account(
         base_vault,
-        account(token_data(base_mint, vault_authority, if bid_side { 0 } else { 300 }, false), TOKEN),
+        account(
+            token_data(
+                base_mint,
+                vault_authority,
+                if bid_side { 0 } else { 300 },
+                false,
+            ),
+            TOKEN,
+        ),
     );
     test.add_account(
         quote_vault,
-        account(token_data(quote_mint, vault_authority, if bid_side { 300 } else { 0 }, false), TOKEN),
+        account(
+            token_data(
+                quote_mint,
+                vault_authority,
+                if bid_side { 300 } else { 0 },
+                false,
+            ),
+            TOKEN,
+        ),
     );
     test.add_account(
         taker_base,
-        account(token_data(base_mint, taker.pubkey(), if bid_side { 500 } else { 0 }, false), TOKEN),
+        account(
+            token_data(
+                base_mint,
+                taker.pubkey(),
+                if bid_side { 500 } else { 0 },
+                false,
+            ),
+            TOKEN,
+        ),
     );
     test.add_account(
         taker_quote,
-        account(token_data(quote_mint, taker.pubkey(), if bid_side { 0 } else { 500 }, false), TOKEN),
+        account(
+            token_data(
+                quote_mint,
+                taker.pubkey(),
+                if bid_side { 0 } else { 500 },
+                false,
+            ),
+            TOKEN,
+        ),
     );
     test.add_account(
         destination_a,
         account(
-            token_data(if bid_side { base_mint } else { quote_mint }, maker_a.pubkey(), 0, freeze_destination),
+            token_data(
+                if bid_side { base_mint } else { quote_mint },
+                maker_a.pubkey(),
+                0,
+                freeze_destination,
+            ),
             TOKEN,
         ),
     );
     test.add_account(
         destination_b,
-        account(token_data(if bid_side { base_mint } else { quote_mint }, maker_b.pubkey(), 0, false), TOKEN),
+        account(
+            token_data(
+                if bid_side { base_mint } else { quote_mint },
+                maker_b.pubkey(),
+                0,
+                false,
+            ),
+            TOKEN,
+        ),
     );
 
     Fixture {
@@ -518,12 +573,20 @@ async fn paid_bid_execution_seals_and_claims_base_without_spending_other_reserve
     let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
     assert_eq!(reserve.vault_floor(0, 150), Ok((150, 150)));
 
-    tx(&mut context, claim_bid(&f, 1, a, f.destination_b), &[&f.maker_b])
-        .await
-        .unwrap();
-    tx(&mut context, claim_bid(&f, 0, b, f.destination_a), &[&f.maker_a])
-        .await
-        .unwrap();
+    tx(
+        &mut context,
+        claim_bid(&f, 1, a, f.destination_b),
+        &[&f.maker_b],
+    )
+    .await
+    .unwrap();
+    tx(
+        &mut context,
+        claim_bid(&f, 0, b, f.destination_a),
+        &[&f.maker_a],
+    )
+    .await
+    .unwrap();
     assert_eq!(amount(&bytes(&mut context, f.destination_a).await), 50);
     assert_eq!(amount(&bytes(&mut context, f.destination_b).await), 100);
     let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
@@ -532,9 +595,13 @@ async fn paid_bid_execution_seals_and_claims_base_without_spending_other_reserve
     assert_eq!(reserve.maker_quote_debit, 0);
 
     let before = snapshot(&mut context, &f).await;
-    assert!(tx(&mut context, claim_bid(&f, 0, b, f.destination_a), &[&f.maker_a])
-        .await
-        .is_err());
+    assert!(tx(
+        &mut context,
+        claim_bid(&f, 0, b, f.destination_a),
+        &[&f.maker_a]
+    )
+    .await
+    .is_err());
     assert_eq!(snapshot(&mut context, &f).await, before);
 }
 
@@ -558,9 +625,13 @@ async fn failed_bid_claim_to_frozen_destination_rolls_back_all_balances() {
         [0, 100, 100, 0, 0, 0],
     );
     let before = snapshot(&mut context, &f).await;
-    assert!(tx(&mut context, claim_bid(&f, 0, sibling, f.destination_a), &[&f.maker_a])
-        .await
-        .is_err());
+    assert!(tx(
+        &mut context,
+        claim_bid(&f, 0, sibling, f.destination_a),
+        &[&f.maker_a]
+    )
+    .await
+    .is_err());
     assert_eq!(snapshot(&mut context, &f).await, before);
 }
 
