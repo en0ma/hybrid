@@ -199,9 +199,7 @@ pub(super) fn execute_and_seal_bid(
         &[b"bid-page", market_account.key.as_ref(), &page_id],
         program_id,
     );
-    if *bid_account.key != expected_page
-        || market.bid_owner_tag() != owner_tag(owner_account.key)
-    {
+    if *bid_account.key != expected_page || market.bid_owner_tag() != owner_tag(owner_account.key) {
         return Err(ProgramError::InvalidSeeds);
     }
     let mut bids = load_active_bid_page(bid_account)?;
@@ -249,8 +247,7 @@ pub(super) fn execute_and_seal_bid(
     if quote_paid < min_quote_out {
         return Err(ProgramError::InsufficientFunds);
     }
-    let base_fee =
-        ((u128::from(base_fill) * u128::from(PASSIVE_FEE_BPS)) / 10_000u128) as u64;
+    let base_fee = ((u128::from(base_fill) * u128::from(PASSIVE_FEE_BPS)) / 10_000u128) as u64;
     let allocations =
         hybrid_state::lazy_pro_rata::allocate_bid(&weights, base_fill, quote_paid, base_fee)
             .map_err(|_| ProgramError::InvalidInstructionData)?;
