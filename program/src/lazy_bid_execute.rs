@@ -248,9 +248,13 @@ pub(super) fn execute_and_seal_bid(
         return Err(ProgramError::InsufficientFunds);
     }
     let base_fee = ((u128::from(base_fill) * u128::from(PASSIVE_FEE_BPS)) / 10_000u128) as u64;
-    let allocations =
-        hybrid_state::lazy_pro_rata::allocate_bid_at_price(&weights, base_fill, resting_price, base_fee)
-            .map_err(|_| ProgramError::InvalidInstructionData)?;
+    let allocations = hybrid_state::lazy_pro_rata::allocate_bid_at_price(
+        &weights,
+        base_fill,
+        resting_price,
+        base_fee,
+    )
+    .map_err(|_| ProgramError::InvalidInstructionData)?;
 
     let mut custody = load_custody(program_id, market_account, custody_account)?;
     let mut reserve = lazy_reserve::load_lazy_reserve(program_id, market_account, reserve_account)?;
