@@ -409,8 +409,12 @@ fn seal(f: &Fixture, payer: Pubkey, base: u64, limit: u64) -> Instruction {
 fn seal_bid(f: &Fixture, payer: Pubkey, base: u64, min_quote: u64) -> Instruction {
     let mut instruction = seal(f, payer, base, min_quote);
     instruction.data[0] = 42;
-    instruction.accounts.push(AccountMeta::new(f.balance_a, false));
-    instruction.accounts.push(AccountMeta::new(f.balance_b, false));
+    instruction
+        .accounts
+        .push(AccountMeta::new(f.balance_a, false));
+    instruction
+        .accounts
+        .push(AccountMeta::new(f.balance_b, false));
     instruction
 }
 
