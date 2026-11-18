@@ -1,7 +1,7 @@
 use super::*;
 
 /// Opcode 42: atomic one-tick BID pro-rata execution and on-chain epoch seal.
-/// This is deliberately narrow: only a single canonical ask page, at most 8
+/// This is deliberately narrow: only a single canonical bid page, at most 8
 /// distinct maker seats, all resting at the same authenticated Q64 price.
 /// No sealer-supplied root or allocation is trusted: every leaf and the root
 /// are derived from program-owned resting orders and the paid taker fill.
@@ -10,10 +10,12 @@ use super::*;
 /// Accounts: market, custody, lazy reserve, fresh frozen epoch PDA,
 ///           bid page 0, bid owner sidecar, taker signer, taker quote SPL,
 ///           taker base SPL, quote vault, base vault, quote mint, base mint,
-///           vault authority PDA, SPL token program, payer, system program.
+///           vault authority PDA, SPL token program, payer, system program,
+///           then one writable maker balance PDA per canonical maker seat.
 ///
-/// At execution, maker balances are deliberately untouched; historical
-/// locked collateral is debited only once when its maker later claims.
+/// At execution, maker balances unlock only surplus quote collateral
+/// released by rounded-up BID order reductions. Historical quote debits
+/// remain locked until a maker's authenticated claim.
 /// Maker base proceeds and base fees become segregated on-chain liabilities.
 const MAX_LAZY_SEATS: usize = 8;
 const EPOCH_DOMAIN: &[u8] = b"HYBRID_LAZY_PUBKEY_EPOCH_V1\0";
@@ -147,11 +149,12 @@ pub(super) fn execute_and_seal_bid(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    if data.len() != 17 || data[0] != 42 || accounts.len() != 17 {
+    if data.len() != 17 || data[0] != 42 || accounts.len() < 18 || accounts.len() > 25 {
         return Err(ProgramError::InvalidInstructionData);
     }
+    let (fixed_accounts, maker_balance_accounts) = accounts.split_at(17);
     let [market_account, custody_account, reserve_account, epoch_account, bid_account, owner_account, taker, taker_quote, taker_base, quote_vault, base_vault, quote_mint, base_mint, vault_authority, token_program, payer, system_program] =
-        accounts
+        fixed_accounts
     else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
@@ -229,6 +232,9 @@ pub(super) fn execute_and_seal_bid(
     }
     let weights: Vec<u64> = bids.as_slice().iter().map(|entry| entry.base_qty).collect();
     let owners: Vec<[u8; 32]> = owner_page.as_slice().to_vec();
+    if maker_balance_accounts.len() != weights.len() {
+        return Err(ProgramError::NotEnoughAccountKeys);
+    }
     for (index, entry) in bids.as_slice().iter().enumerate() {
         if entry.sqrt_price_x64 != resting_tick
             || entry.price_x64 != resting_price
@@ -255,6 +261,53 @@ pub(super) fn execute_and_seal_bid(
         base_fee,
     )
     .map_err(|_| ProgramError::InvalidInstructionData)?;
+
+    // Authenticate every maker balance against the program-owned sidecar.
+    // Release is old ceil-quote collateral minus remaining ceil collateral.
+    // Only unused collateral is unlocked now; debited quote remains locked
+    // for the maker's eventual Merkle-authenticated claim.
+    let mut updated_maker_balances = Vec::with_capacity(weights.len());
+    for (index, (account, owner)) in maker_balance_accounts.iter().zip(&owners).enumerate() {
+        if !account.is_writable
+            || fixed_accounts.iter().any(|fixed| fixed.key == account.key)
+            || maker_balance_accounts[..index]
+                .iter()
+                .any(|previous| previous.key == account.key)
+        {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        let mut balance =
+            load_maker_balance_for_owner(program_id, market_account, account, *owner)?;
+        let original = weights[index];
+        let filled = allocations[index]
+            .base_proceeds
+            .checked_add(allocations[index].base_fee)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        let remaining = original
+            .checked_sub(filled)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        let old_lock = hybrid_engine::quote_for_base_at_price(original, resting_price)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        let new_lock = if remaining == 0 {
+            0
+        } else {
+            hybrid_engine::quote_for_base_at_price(remaining, resting_price)
+                .map_err(|_| ProgramError::InvalidAccountData)?
+        };
+        let released = old_lock
+            .checked_sub(new_lock)
+            .ok_or(ProgramError::InvalidAccountData)?;
+        let surplus = released
+            .checked_sub(allocations[index].quote_spent)
+            .ok_or(ProgramError::InsufficientFunds)?;
+        balance
+            .unlock_quote(surplus)
+            .map_err(|_| ProgramError::InsufficientFunds)?;
+        if balance.locked_quote < allocations[index].quote_spent {
+            return Err(ProgramError::InsufficientFunds);
+        }
+        updated_maker_balances.push(balance);
+    }
 
     let mut custody = load_custody(program_id, market_account, custody_account)?;
     let mut reserve = lazy_reserve::load_lazy_reserve(program_id, market_account, reserve_account)?;
@@ -435,6 +488,10 @@ pub(super) fn execute_and_seal_bid(
         owner_page
             .encode_into(&mut bytes)
             .map_err(|_| ProgramError::InvalidAccountData)?;
+    }
+    // Refunds only reclassify free/locked quote, never move SPL tokens.
+    for (account, balance) in maker_balance_accounts.iter().zip(&updated_maker_balances) {
+        store_maker_balance(account, balance)?;
     }
     store_custody(custody_account, &custody)?;
     {
