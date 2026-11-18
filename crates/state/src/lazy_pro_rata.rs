@@ -225,12 +225,26 @@ pub fn allocate_bid_at_price(
             .base_proceeds
             .checked_add(claim.base_fee)
             .ok_or(ProRataError::Overflow)?;
-        let cap = if filled == 0 {
+        // The release cap is the difference in the resting order's
+        // rounded-up collateral obligations, not ceil(filled * price).
+        // The latter can overdraw an order after a fractional partial fill.
+        let original_lock = hybrid_engine::quote_for_base_at_price(
+            *weights.get(capacities.len()).ok_or(ProRataError::Invalid)?,
+            price_x64,
+        )
+        .map_err(|_| ProRataError::Overflow)?;
+        let remaining = weights[capacities.len()]
+            .checked_sub(filled)
+            .ok_or(ProRataError::Invalid)?;
+        let remaining_lock = if remaining == 0 {
             0
         } else {
-            hybrid_engine::quote_for_base_at_price(filled, price_x64)
+            hybrid_engine::quote_for_base_at_price(remaining, price_x64)
                 .map_err(|_| ProRataError::Overflow)?
         };
+        let cap = original_lock
+            .checked_sub(remaining_lock)
+            .ok_or(ProRataError::Invalid)?;
         capacities.push(cap);
         if claim.quote_spent > cap {
             spill = spill
@@ -419,6 +433,37 @@ mod tests {
                 u128::from(quote_paid)
             );
         }
+    }
+
+    #[test]
+    fn bid_partial_fill_must_not_debit_quote_still_locked_for_remaining_order() {
+        let half = hybrid_engine::Q64 / 2;
+        // The 2-base resting order locked 1 quote. Filling only 1 base
+        // releases 1 - ceil(1/2) = 0, so paying 1 quote is forbidden.
+        assert_eq!(allocate_bid_at_price(&[2], 1, half, 0), Err(ProRataError::Invalid));
+        // The same order can fully fill and release the whole locked quote.
+        let full = allocate_bid_at_price(&[2], 2, half, 0).unwrap();
+        assert_eq!(full[0].quote_spent, 1);
+        // Even when a different maker has spare quote collateral, the
+        // un-released amount cannot be assigned to this partial-fill seat.
+        assert_eq!(allocate_bid_at_price(&[2, 2], 1, half, 0), Err(ProRataError::Invalid));
+    }
+
+    #[test]
+    fn bid_full_fill_releases_more_quote_collateral_than_debited_when_rounding_down() {
+        let half = hybrid_engine::Q64 / 2;
+        // Each 3-base maker locked ceil(3/2) = 2 quote. Aggregate payout
+        // ceil(6/2) = 3, leaving one atom to unlock into maker free quote.
+        let fills = allocate_bid_at_price(&[3, 3], 6, half, 0).unwrap();
+        assert_eq!(fills[0].quote_spent + fills[1].quote_spent, 3);
+        let releases = [2u64, 2u64];
+        let refunds: Vec<u64> = releases
+            .iter()
+            .zip(&fills)
+            .map(|(released, claim)| released - claim.quote_spent)
+            .collect();
+        assert_eq!(refunds.iter().sum::<u64>(), 1);
+        assert!(refunds.iter().any(|refund| *refund == 1));
     }
 
     #[test]
