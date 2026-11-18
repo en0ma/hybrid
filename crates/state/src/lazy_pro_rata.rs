@@ -469,7 +469,7 @@ mod tests {
             .map(|(released, claim)| released - claim.quote_spent)
             .collect();
         assert_eq!(refunds.iter().sum::<u64>(), 1);
-        assert!(refunds.iter().any(|refund| *refund == 1));
+        assert!(refunds.contains(&1));
     }
 
     #[test]
