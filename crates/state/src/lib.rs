@@ -720,9 +720,9 @@ impl AskPage {
         }
         page.len = len as u16;
         page.reserved.copy_from_slice(&input[2..16]);
-        for index in 0..ASKS_PER_PAGE {
+        for (index, entry) in page.entries.iter_mut().enumerate() {
             let start = PAGE_HEADER_BYTES + index * ASK_ENTRY_BYTES;
-            page.entries[index] = AskEntry::decode_from(&input[start..start + ASK_ENTRY_BYTES]);
+            *entry = AskEntry::decode_from(&input[start..start + ASK_ENTRY_BYTES]);
         }
         page.validate_order()
     }
@@ -874,9 +874,9 @@ impl AskOwnerPage {
         }
         page.len = len as u16;
         page.reserved.copy_from_slice(&input[2..16]);
-        for index in 0..ASKS_PER_PAGE {
+        for (index, owner) in page.owners.iter_mut().enumerate() {
             let start = PAGE_HEADER_BYTES + index * ASK_OWNER_BYTES;
-            page.owners[index].copy_from_slice(&input[start..start + ASK_OWNER_BYTES]);
+            owner.copy_from_slice(&input[start..start + ASK_OWNER_BYTES]);
         }
         if page.owners[page.len()..]
             .iter()
@@ -1102,9 +1102,9 @@ impl BidPage {
         }
         page.len = len as u16;
         page.reserved.copy_from_slice(&input[2..16]);
-        for index in 0..BIDS_PER_PAGE {
+        for (index, entry) in page.entries.iter_mut().enumerate() {
             let start = PAGE_HEADER_BYTES + index * BID_ENTRY_BYTES;
-            page.entries[index] = BidEntry::decode_from(&input[start..start + BID_ENTRY_BYTES]);
+            *entry = BidEntry::decode_from(&input[start..start + BID_ENTRY_BYTES]);
         }
         page.validate_order()
     }
@@ -1461,10 +1461,9 @@ impl BoundaryPage {
             ..Self::default()
         };
         page.reserved.copy_from_slice(&input[2..16]);
-        for index in 0..BOUNDARIES_PER_PAGE {
+        for (index, entry) in page.entries.iter_mut().enumerate() {
             let start = PAGE_HEADER_BYTES + index * BOUNDARY_ENTRY_BYTES;
-            page.entries[index] =
-                BoundaryEntry::decode_from(&input[start..start + BOUNDARY_ENTRY_BYTES]);
+            *entry = BoundaryEntry::decode_from(&input[start..start + BOUNDARY_ENTRY_BYTES]);
         }
         page.validate_order()?;
         Ok(page)
