@@ -48,3 +48,20 @@ SBF frames against a 4,096-byte limit. Their page construction is now isolated
 in non-inlined helpers; the exact-head SBF build must confirm stack safety.
 The funded Surfpool trade also reported an overlapping-copy runtime error and
 must pass independently before merging. Keep all strict CI checks enabled.
+
+## BID lazy epoch settlement revision (PR #73)
+
+The exact-head SBF build on November 18, 2026 measured **366,696 bytes**,
+exceeding the previous **352,256-byte (344 KiB)** project artifact-size
+budget by **14,440 bytes**. The revised policy limit is **393,216 bytes
+(384 KiB)**, providing **26,520 bytes** of headroom (approximately 7.2%
+of the measured ELF) for this BID settlement implementation.
+
+This is a versioned repository CI policy revision, **not** a change to
+Solana's runtime limits or proof of deployability. The mandatory
+`ci/bytecode-check.sh` gate remains enabled, as do strict Rust and SBF
+builds, state/compute budgets, fuzz tests, funded lifecycle verification,
+pinned Manifest comparison, exact-head validation and security review.
+Future bytecode growth above 384 KiB must fail CI and receive a separate
+reviewed policy change. Measurements describe the previous PR head and
+must be reconfirmed on the new exact head.
