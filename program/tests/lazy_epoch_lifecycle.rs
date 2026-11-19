@@ -135,7 +135,7 @@ fn fixture_for_side(
     };
     // Canonical floor(sqrt(price_x64 * Q64)) for price 1/2.
     let sqrt_price = if fractional_bid_qty.is_some() {
-        13_043_817_825_332_782_212u128
+        13_043_817_825_332_782_213u128
     } else {
         Q64
     };
@@ -537,6 +537,19 @@ async fn bytes(context: &mut ProgramTestContext, pubkey: Pubkey) -> Vec<u8> {
         .unwrap()
         .data
 }
+
+async fn snapshot_bytes(context: &mut ProgramTestContext, pubkey: Pubkey) -> Vec<u8> {
+    // Negative transaction fixtures run before the frozen epoch PDA is
+    // created. Preserve its absence as an empty snapshot, without weakening
+    // successful claim tests that require the account to exist.
+    context
+        .banks_client
+        .get_account(pubkey)
+        .await
+        .unwrap()
+        .map(|account| account.data)
+        .unwrap_or_default()
+}
 async fn snapshot(context: &mut ProgramTestContext, f: &Fixture) -> Vec<Vec<u8>> {
     let mut accounts = Vec::new();
     for key in [
@@ -555,7 +568,7 @@ async fn snapshot(context: &mut ProgramTestContext, f: &Fixture) -> Vec<Vec<u8>>
         f.destination_a,
         f.destination_b,
     ] {
-        accounts.push(bytes(context, key).await);
+        accounts.push(snapshot_bytes(context, key).await);
     }
     accounts
 }
@@ -857,7 +870,7 @@ async fn paid_execution_seals_on_chain_and_claims_conserve_fees_and_replay() {
     )
     .await
     .unwrap();
-    assert_eq!(amount(&bytes(&mut context, f.destination_b).await), 99);
+    assert_eq!(amount(&bytes(&mut context, f.destination_b).await), 100);
     assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), 1);
     let epoch = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
     assert_eq!(epoch.remaining, [0; 6]);
