@@ -10,12 +10,18 @@ use hybrid_state::{
     MARKET_FLAG_COLLATERALIZED_ACTIVE, MARKET_HEADER_BYTES,
 };
 use solana_account::Account;
+use solana_address_lookup_table_interface::{
+    program as lookup_table_program,
+    state::{AddressLookupTable, LookupTableMeta},
+};
+use solana_message::{v0, AddressLookupTableAccount, VersionedMessage};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
 use solana_program::{hash::hashv, pubkey::Pubkey};
 use solana_program_test::{processor, ProgramTest, ProgramTestContext};
 use solana_signer::Signer;
-use solana_transaction::Transaction;
+use solana_transaction::{versioned::VersionedTransaction, Transaction};
+use std::borrow::Cow;
 
 const TOKEN: Pubkey = solana_program::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const GENESIS: [u8; 32] = [3; 32];
@@ -65,6 +71,7 @@ struct Fixture {
     extra_makers: Vec<Keypair>,
     extra_balances: Vec<Pubkey>,
     extra_destinations: Vec<Pubkey>,
+    lookup_table: Option<Pubkey>,
     taker: Keypair,
     taker_quote: Pubkey,
     taker_base: Pubkey,
@@ -357,6 +364,7 @@ fn fixture_for_side(
         extra_makers: Vec::new(),
         extra_balances: Vec::new(),
         extra_destinations: Vec::new(),
+        lookup_table: None,
         taker,
         taker_quote,
         taker_base,
@@ -467,6 +475,47 @@ fn fixture_bid_extended(count: usize) -> Fixture {
             TOKEN,
         ),
     );
+    if count == 16 {
+        // Preload a real, active lookup-table account. All nonsigner BID
+        // accounts are eligible for v0 lookup compression; signer keys remain
+        // static as required by the Solana message compiler.
+        let table_key = Pubkey::new_unique();
+        let mut table_keys = vec![
+            f.market,
+            f.custody,
+            f.reserve,
+            f.epoch,
+            f.ask,
+            f.owners,
+            f.taker_quote,
+            f.taker_base,
+            f.quote_vault,
+            f.base_vault,
+            f.quote_mint,
+            f.base_mint,
+            f.vault_authority,
+            TOKEN,
+            Pubkey::default(),
+            f.balance_a,
+            f.balance_b,
+        ];
+        table_keys.extend(&f.extra_balances);
+        let table = AddressLookupTable {
+            meta: LookupTableMeta::default(),
+            addresses: Cow::Owned(table_keys),
+        };
+        test.add_account(
+            table_key,
+            Account {
+                lamports: 50_000_000,
+                data: table.serialize_for_tests().unwrap(),
+                owner: lookup_table_program::id(),
+                executable: false,
+                rent_epoch: 0,
+            },
+        );
+        f.lookup_table = Some(table_key);
+    }
     f
 }
 
@@ -644,6 +693,58 @@ async fn tx(
     );
     context.banks_client.process_transaction(signed).await
 }
+// A 16-seat BID cannot fit into a legacy network packet. Resolve the
+// authenticated account list through a real v0 Address Lookup Table and
+// reject any transaction exceeding the 1,232-byte Solana packet limit.
+async fn tx_bid_v0(
+    context: &mut ProgramTestContext,
+    f: &Fixture,
+    ix: Instruction,
+) -> Result<(), solana_program_test::BanksClientError> {
+    let blockhash = context.get_new_latest_blockhash().await.unwrap();
+    let mut data = vec![2u8]; // SetComputeUnitLimit
+    data.extend_from_slice(&1_400_000u32.to_le_bytes());
+    let budget = Instruction {
+        program_id: solana_program::pubkey!("ComputeBudget111111111111111111111111111111"),
+        accounts: vec![],
+        data,
+    };
+    let table_key = f.lookup_table.expect("16-seat fixture must have a real ALT");
+    let raw_table = context
+        .banks_client
+        .get_account(table_key)
+        .await
+        .unwrap()
+        .expect("lookup table must exist in the bank");
+    assert_eq!(raw_table.owner, lookup_table_program::id());
+    let table = AddressLookupTable::deserialize(&raw_table.data).unwrap();
+    let address_table = AddressLookupTableAccount {
+        key: table_key,
+        addresses: table.addresses.to_vec(),
+    };
+    let message = v0::Message::try_compile(
+        &context.payer.pubkey(),
+        &[budget, ix],
+        &[address_table],
+        blockhash,
+    )
+    .unwrap();
+    assert!(!message.address_table_lookups.is_empty());
+    let signed = VersionedTransaction::try_new(
+        VersionedMessage::V0(message),
+        &[&context.payer, &f.taker],
+    )
+    .unwrap();
+    const SOLANA_PACKET_BYTES: usize = 1_232;
+    let wire_bytes = bincode::serialize(&signed).unwrap();
+    assert!(
+        wire_bytes.len() <= SOLANA_PACKET_BYTES,
+        "16-seat BID v0 transaction exceeds network packet limit: {} bytes",
+        wire_bytes.len()
+    );
+    context.banks_client.process_transaction(signed).await
+}
+
 async fn bytes(context: &mut ProgramTestContext, pubkey: Pubkey) -> Vec<u8> {
     context
         .banks_client
@@ -747,9 +848,12 @@ async fn extended_bid_rosters_seal_and_pay_every_maker_with_odd_merkle_proofs() 
 
         let weights = [vec![100u64, 200u64], vec![100u64; count - 2]].concat();
         let total: u64 = weights.iter().sum();
-        tx(&mut context, seal_bid(&f, payer, total, total), &[&f.taker])
-            .await
-            .unwrap();
+        let seal_ix = seal_bid(&f, payer, total, total);
+        if count == 16 {
+            tx_bid_v0(&mut context, &f, seal_ix).await.unwrap();
+        } else {
+            tx(&mut context, seal_ix, &[&f.taker]).await.unwrap();
+        }
         let epoch = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
         let fee = total / 100;
         assert_eq!(epoch.header.side, 1);
