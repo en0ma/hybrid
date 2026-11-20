@@ -455,11 +455,17 @@ fn fixture_bid_extended(count: usize) -> Fixture {
     test.add_account(f.custody, account(custody_data, ID));
     test.add_account(
         f.quote_vault,
-        account(token_data(f.quote_mint, f.vault_authority, collateral, false), TOKEN),
+        account(
+            token_data(f.quote_mint, f.vault_authority, collateral, false),
+            TOKEN,
+        ),
     );
     test.add_account(
         f.taker_base,
-        account(token_data(f.base_mint, f.taker.pubkey(), 2_000, false), TOKEN),
+        account(
+            token_data(f.base_mint, f.taker.pubkey(), 2_000, false),
+            TOKEN,
+        ),
     );
     f
 }
@@ -705,13 +711,8 @@ async fn extended_bid_rosters_seal_and_pay_every_maker_with_odd_merkle_proofs() 
         assert_eq!(epoch.header.totals, [0, total - fee, total, 0, fee, 0]);
         let mut makers = vec![f.maker_a.pubkey(), f.maker_b.pubkey()];
         makers.extend(f.extra_makers.iter().map(|maker| maker.pubkey()));
-        let allocations = hybrid_state::lazy_pro_rata::allocate_bid_at_price(
-            &weights,
-            total,
-            Q64,
-            fee,
-        )
-        .unwrap();
+        let allocations =
+            hybrid_state::lazy_pro_rata::allocate_bid_at_price(&weights, total, Q64, fee).unwrap();
         let claims: Vec<[u64; 6]> = allocations
             .iter()
             .map(|allocation| {
@@ -725,21 +726,19 @@ async fn extended_bid_rosters_seal_and_pay_every_maker_with_odd_merkle_proofs() 
                 ]
             })
             .collect();
-        let mut levels = vec![
-            makers
-                .iter()
-                .enumerate()
-                .map(|(i, maker)| {
-                    leaf(
-                        &epoch.header.commitment,
-                        i as u32,
-                        *maker,
-                        weights[i],
-                        claims[i],
-                    )
-                })
-                .collect::<Vec<_>>(),
-        ];
+        let mut levels = vec![makers
+            .iter()
+            .enumerate()
+            .map(|(i, maker)| {
+                leaf(
+                    &epoch.header.commitment,
+                    i as u32,
+                    *maker,
+                    weights[i],
+                    claims[i],
+                )
+            })
+            .collect::<Vec<_>>()];
         while levels.last().unwrap().len() > 1 {
             let previous = levels.last().unwrap();
             let next = previous
