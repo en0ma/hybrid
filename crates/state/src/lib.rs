@@ -2,6 +2,7 @@
 
 pub mod frozen_epoch;
 pub mod lazy_pro_rata;
+pub mod lazy_multilevel_bid;
 pub mod lazy_reserve;
 pub mod multipage_ask;
 pub mod multipage_bid;
