@@ -684,6 +684,140 @@ async fn snapshot(context: &mut ProgramTestContext, f: &Fixture) -> Vec<Vec<u8>>
 }
 
 #[tokio::test]
+async fn extended_bid_rosters_seal_and_pay_every_maker_with_odd_merkle_proofs() {
+    for count in [9usize, 16usize] {
+        let mut f = fixture_bid_extended(count);
+        let mut context = f.test.take().unwrap().start_with_context().await;
+        let payer = context.payer.pubkey();
+        tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+            .await
+            .unwrap();
+
+        let weights = [vec![100u64, 200u64], vec![100u64; count - 2]].concat();
+        let total: u64 = weights.iter().sum();
+        tx(&mut context, seal_bid(&f, payer, total, total), &[&f.taker])
+            .await
+            .unwrap();
+        let epoch = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
+        let fee = total / 100;
+        assert_eq!(epoch.header.side, 1);
+        assert_eq!(epoch.header.maker_count, count as u32);
+        assert_eq!(epoch.header.totals, [0, total - fee, total, 0, fee, 0]);
+        let mut makers = vec![f.maker_a.pubkey(), f.maker_b.pubkey()];
+        makers.extend(f.extra_makers.iter().map(|maker| maker.pubkey()));
+        let allocations = hybrid_state::lazy_pro_rata::allocate_bid_at_price(
+            &weights,
+            total,
+            Q64,
+            fee,
+        )
+        .unwrap();
+        let claims: Vec<[u64; 6]> = allocations
+            .iter()
+            .map(|allocation| {
+                [
+                    0,
+                    allocation.base_proceeds,
+                    allocation.quote_spent,
+                    0,
+                    allocation.base_fee,
+                    0,
+                ]
+            })
+            .collect();
+        let mut levels = vec![
+            makers
+                .iter()
+                .enumerate()
+                .map(|(i, maker)| {
+                    leaf(
+                        &epoch.header.commitment,
+                        i as u32,
+                        *maker,
+                        weights[i],
+                        claims[i],
+                    )
+                })
+                .collect::<Vec<_>>(),
+        ];
+        while levels.last().unwrap().len() > 1 {
+            let previous = levels.last().unwrap();
+            let next = previous
+                .chunks(2)
+                .map(|chunk| {
+                    hashv(&[
+                        b"HYBRID_MAKER_PUBKEY_NODE_V1\0",
+                        &chunk[0],
+                        chunk.get(1).unwrap_or(&chunk[0]),
+                    ])
+                    .to_bytes()
+                })
+                .collect::<Vec<_>>();
+            levels.push(next);
+        }
+        assert_eq!(epoch.header.claim_root, levels.last().unwrap()[0]);
+
+        // All claims, including the odd terminal leaf at nine seats, use
+        // the unchanged opcode 40 Merkle verifier and SPL payout path.
+        for seat in (0..count).rev() {
+            let maker = if seat == 0 {
+                &f.maker_a
+            } else if seat == 1 {
+                &f.maker_b
+            } else {
+                &f.extra_makers[seat - 2]
+            };
+            let balance = if seat == 0 {
+                f.balance_a
+            } else if seat == 1 {
+                f.balance_b
+            } else {
+                f.extra_balances[seat - 2]
+            };
+            let destination = if seat == 0 {
+                f.destination_a
+            } else if seat == 1 {
+                f.destination_b
+            } else {
+                f.extra_destinations[seat - 2]
+            };
+            let mut instruction = claim_bid(&f, seat as u32, [0; 32], destination);
+            instruction.accounts[2] = AccountMeta::new(balance, false);
+            instruction.accounts[3] = AccountMeta::new_readonly(maker.pubkey(), true);
+            instruction.data[37..45].copy_from_slice(&weights[seat].to_le_bytes());
+            for (index, amount) in claims[seat].iter().enumerate() {
+                instruction.data[45 + index * 8..53 + index * 8]
+                    .copy_from_slice(&amount.to_le_bytes());
+            }
+            instruction.data.truncate(93);
+            instruction.data.push((levels.len() - 1) as u8);
+            let mut index = seat;
+            for level in levels.iter().take(levels.len() - 1) {
+                let sibling = level.get(index ^ 1).unwrap_or(&level[index]);
+                instruction.data.extend_from_slice(sibling);
+                index /= 2;
+            }
+            tx(&mut context, instruction, &[maker]).await.unwrap();
+            assert_eq!(
+                amount(&bytes(&mut context, destination).await),
+                claims[seat][1]
+            );
+            let balance = MakerBalance::decode_from(&bytes(&mut context, balance).await).unwrap();
+            assert_eq!(balance.locked_quote, 0);
+            assert_eq!(balance.free_quote, 0);
+        }
+        let epoch = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
+        assert_eq!(epoch.claimed_count, count as u32);
+        assert_eq!(epoch.remaining, [0; 6]);
+        assert_eq!(amount(&bytes(&mut context, f.base_vault).await), fee);
+        assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), 0);
+        let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
+        assert_eq!(reserve.maker_base_credit, 0);
+        assert_eq!(reserve.maker_quote_debit, 0);
+    }
+}
+
+#[tokio::test]
 async fn paid_bid_execution_seals_and_claims_base_without_spending_other_reserves() {
     let mut f = fixture_bid(false);
     let mut context = f.test.take().unwrap().start_with_context().await;
