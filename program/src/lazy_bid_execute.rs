@@ -54,9 +54,9 @@ fn epoch_commitment(
     if weights.is_empty() || weights.len() > MAX_LAZY_SEATS || owners.len() != weights.len() {
         return Err(ProgramError::InvalidAccountData);
     }
-    // 16 maker rows at 44 bytes each plus the 169-byte epoch envelope
-    // require 873 bytes. Keep fixed capacity for bounded SBF hashing.
-    let mut bytes = [0u8; 896];
+    // 16 maker rows at 44 bytes each plus the 201-byte epoch envelope
+    // require 905 bytes. Keep fixed capacity for bounded SBF hashing.
+    let mut bytes = [0u8; 928];
     let mut used = 0usize;
     let mut append = |part: &[u8]| {
         let end = used + part.len();
