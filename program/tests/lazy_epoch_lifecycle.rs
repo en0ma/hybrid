@@ -698,9 +698,18 @@ async fn extended_bid_roster_rejects_malformed_maker_account_lists_atomically() 
         .await
         .unwrap();
     let mut keys = vec![
-        f.market, f.custody, f.reserve, f.epoch, f.ask, f.owners,
-        f.balance_a, f.balance_b, f.quote_vault, f.base_vault,
-        f.taker_base, f.taker_quote,
+        f.market,
+        f.custody,
+        f.reserve,
+        f.epoch,
+        f.ask,
+        f.owners,
+        f.balance_a,
+        f.balance_b,
+        f.quote_vault,
+        f.base_vault,
+        f.taker_base,
+        f.taker_quote,
     ];
     keys.extend(&f.extra_balances);
     let mut before = Vec::new();
