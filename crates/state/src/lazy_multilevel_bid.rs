@@ -198,7 +198,7 @@ mod tests {
         for index in 0..33usize {
             let page = usize::from(index >= 32);
             let (price, sqrt) = if index < 16 {
-                (Q64 * 2, 26_087_635_650_665_564_426u128)
+                (Q64 * 2, 26_087_635_650_665_564_425u128)
             } else if index < 32 {
                 (Q64, Q64)
             } else {
