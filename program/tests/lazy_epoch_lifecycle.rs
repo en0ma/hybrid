@@ -690,6 +690,43 @@ async fn snapshot(context: &mut ProgramTestContext, f: &Fixture) -> Vec<Vec<u8>>
 }
 
 #[tokio::test]
+async fn extended_bid_roster_rejects_malformed_maker_account_lists_atomically() {
+    let mut f = fixture_bid_extended(9);
+    let mut context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+        .await
+        .unwrap();
+    let mut keys = vec![
+        f.market, f.custody, f.reserve, f.epoch, f.ask, f.owners,
+        f.balance_a, f.balance_b, f.quote_vault, f.base_vault,
+        f.taker_base, f.taker_quote,
+    ];
+    keys.extend(&f.extra_balances);
+    let mut before = Vec::new();
+    for key in &keys {
+        before.push(snapshot_bytes(&mut context, *key).await);
+    }
+    let total = 1_000;
+    let mut swapped = seal_bid(&f, payer, total, total);
+    swapped.accounts.swap(17, 18);
+    let mut missing = seal_bid(&f, payer, total, total);
+    missing.accounts.pop();
+    let mut duplicate = seal_bid(&f, payer, total, total);
+    duplicate.accounts[18] = duplicate.accounts[17].clone();
+    let mut readonly = seal_bid(&f, payer, total, total);
+    readonly.accounts[25].is_writable = false;
+    for instruction in [swapped, missing, duplicate, readonly] {
+        assert!(tx(&mut context, instruction, &[&f.taker]).await.is_err());
+        let mut after = Vec::new();
+        for key in &keys {
+            after.push(snapshot_bytes(&mut context, *key).await);
+        }
+        assert_eq!(after, before);
+    }
+}
+
+#[tokio::test]
 async fn extended_bid_rosters_seal_and_pay_every_maker_with_odd_merkle_proofs() {
     for count in [9usize, 16usize] {
         let mut f = fixture_bid_extended(count);
