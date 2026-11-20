@@ -203,7 +203,7 @@ mod tests {
         for page in 0..2usize {
             let links = PageLinks::new(
                 page as u32,
-                (page > 0).then_some((page - 1) as u32),
+                page.checked_sub(1).map(|previous| previous as u32),
                 (page == 0).then_some(1),
             );
             pages[page].set_links(links);
