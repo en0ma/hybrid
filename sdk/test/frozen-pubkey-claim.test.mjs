@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {hashPubkeyMakerClaim,hashPubkeyClaimNode,encodeFrozenClaimPreflight,hashPubkeyFrozenEpochV1,encodeLazyReserveInit,encodeLazyAskExecute,encodeAtomicFrozenMakerClaim} from "../src/frozen-pubkey-claim.mjs";
+import {hashPubkeyMakerClaim,hashPubkeyClaimNode,encodeFrozenClaimPreflight,hashPubkeyFrozenEpochV1,hashPubkeyFrozenBidEpochV1,encodeLazyReserveInit,encodeLazyAskExecute,encodeAtomicFrozenMakerClaim} from "../src/frozen-pubkey-claim.mjs";
 
 const epoch="04".repeat(32);
 const leaf={seat:0,makerHex:"05".repeat(32),weight:"10",
@@ -105,4 +105,30 @@ test("execution and atomic claim instruction discriminators and bounds",()=>{
     amounts:["50","0","0","50","0","0"],siblings:["aa".repeat(32)],
   });
   assert.equal(claim[0],40);assert.equal(claim.length,126);
+});
+
+test("9/16-seat authenticated BID digests preserve the v1 owner/seat binding",()=>{
+  const spec=(count)=>({
+    marketHex:"11".repeat(32),programHex:"22".repeat(32),
+    genesisHex:"33".repeat(32),epochId:"7",
+    tickSqrtPriceX64:(1n<<64n).toString(),
+    makers:Array.from({length:count},(_,i)=>({
+      makerHex:(i+1).toString(16).padStart(2,"0").repeat(32),
+      weight:"1",
+    })),
+    totals:["0",String(count),String(count),"0","0","0"],
+  });
+  assert.equal(hashPubkeyFrozenBidEpochV1(spec(9)),
+    "81eaae5151672a4b1fb6a0cb1f41dcfc5173003cc6759024fcf91686550733c6");
+  assert.equal(hashPubkeyFrozenBidEpochV1(spec(16)),
+    "6c753eed7dd4ab15711ec2d48b77c4d3315b7d2839186e9a98a50738cbe14959");
+  assert.throws(()=>hashPubkeyFrozenBidEpochV1(spec(17)),/roster/);
+  assert.throws(()=>hashPubkeyFrozenBidEpochV1({...spec(9),
+    makers:[...spec(9).makers.slice(0,8),spec(9).makers[0]]}),/Duplicate/);
+  assert.throws(()=>hashPubkeyFrozenBidEpochV1({...spec(9),
+    totals:["1","9","9","0","0","0"]}),/totals/);
+  assert.throws(()=>hashPubkeyFrozenBidEpochV1({...spec(9),
+    totals:["0","10","9","0","0","0"]}),/Overfilled/);
+  assert.notEqual(hashPubkeyFrozenBidEpochV1({...spec(9),epochId:"8"}),
+    hashPubkeyFrozenBidEpochV1(spec(9)));
 });
