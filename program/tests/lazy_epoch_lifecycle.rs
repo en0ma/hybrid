@@ -10,12 +10,18 @@ use hybrid_state::{
     MARKET_FLAG_COLLATERALIZED_ACTIVE, MARKET_HEADER_BYTES,
 };
 use solana_account::Account;
+use solana_address_lookup_table_interface::{
+    program as lookup_table_program,
+    state::{AddressLookupTable, LookupTableMeta},
+};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
+use solana_message::{v0, AddressLookupTableAccount, VersionedMessage};
 use solana_program::{hash::hashv, pubkey::Pubkey};
 use solana_program_test::{processor, ProgramTest, ProgramTestContext};
 use solana_signer::Signer;
-use solana_transaction::Transaction;
+use solana_transaction::{versioned::VersionedTransaction, Transaction};
+use std::borrow::Cow;
 
 const TOKEN: Pubkey = solana_program::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const GENESIS: [u8; 32] = [3; 32];
@@ -62,6 +68,10 @@ struct Fixture {
     balance_b: Pubkey,
     destination_a: Pubkey,
     destination_b: Pubkey,
+    extra_makers: Vec<Keypair>,
+    extra_balances: Vec<Pubkey>,
+    extra_destinations: Vec<Pubkey>,
+    lookup_table: Option<Pubkey>,
     taker: Keypair,
     taker_quote: Pubkey,
     taker_base: Pubkey,
@@ -351,6 +361,10 @@ fn fixture_for_side(
         balance_b,
         destination_a,
         destination_b,
+        extra_makers: Vec::new(),
+        extra_balances: Vec::new(),
+        extra_destinations: Vec::new(),
+        lookup_table: None,
         taker,
         taker_quote,
         taker_base,
@@ -360,6 +374,149 @@ fn fixture_for_side(
         base_mint,
         vault_authority,
     }
+}
+
+/// Rebuild the canonical page, sidecar and custody around 9 or 16 distinct
+/// maker PDAs. The first two makers retain their original 100/200 base bids.
+fn fixture_bid_extended(count: usize) -> Fixture {
+    assert!((9..=16).contains(&count));
+    let mut f = fixture_bid(false);
+    let mut header = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    header.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
+    header.set_bid_count(count as u32);
+    header.next_sequence = count as u64 + 1;
+    let mut tag = [0u8; 16];
+    tag.copy_from_slice(&f.owners.to_bytes()[..16]);
+    header.set_bid_owner_tag(tag);
+    let mut market_data = vec![0; MARKET_HEADER_BYTES];
+    header.encode_into(&mut market_data).unwrap();
+
+    let mut bids = BidPage::default();
+    bids.set_links(PageLinks::new(0, None, None));
+    let mut owners = AskOwnerPage::default();
+    owners.set_links(PageLinks::new(0, None, None));
+    let mut owner_keys = vec![f.maker_a.pubkey(), f.maker_b.pubkey()];
+    let mut weights = vec![100u64, 200u64];
+    let test = f.test.as_mut().unwrap();
+    for _ in 2..count {
+        let maker = Keypair::new();
+        let (balance_key, bump) = Pubkey::find_program_address(
+            &[b"maker-balance", f.market.as_ref(), maker.pubkey().as_ref()],
+            &ID,
+        );
+        let destination = Pubkey::new_unique();
+        let mut balance = MakerBalance::new(bump, f.market.to_bytes(), maker.pubkey().to_bytes());
+        balance.locked_quote = 100;
+        let mut data = vec![0; MAKER_BALANCE_BYTES];
+        balance.encode_into(&mut data).unwrap();
+        test.add_account(balance_key, account(data, ID));
+        test.add_account(maker.pubkey(), account(Vec::new(), Pubkey::default()));
+        test.add_account(
+            destination,
+            account(token_data(f.base_mint, maker.pubkey(), 0, false), TOKEN),
+        );
+        owner_keys.push(maker.pubkey());
+        weights.push(100);
+        f.extra_makers.push(maker);
+        f.extra_balances.push(balance_key);
+        f.extra_destinations.push(destination);
+    }
+    for (i, (owner, qty)) in owner_keys.iter().zip(&weights).enumerate() {
+        bids.insert(AskEntry {
+            price_x64: Q64,
+            sqrt_price_x64: Q64,
+            base_qty: *qty,
+            sequence: i as u64 + 1,
+        })
+        .unwrap();
+        owners.owners[i] = owner.to_bytes();
+    }
+    owners.len = count as u16;
+    let mut bid_data = vec![0; BID_PAGE_BYTES];
+    bids.encode_into(&mut bid_data).unwrap();
+    let mut owner_data = vec![0; ASK_OWNER_PAGE_BYTES];
+    owners.encode_into(&mut owner_data).unwrap();
+
+    let collateral: u64 = weights.iter().sum();
+    let (custody, bump) = Pubkey::find_program_address(&[b"custody", f.market.as_ref()], &ID);
+    assert_eq!(custody, f.custody);
+    let custody_state = CustodyState {
+        magic: hybrid_state::CUSTODY_MAGIC,
+        version: hybrid_state::STATE_VERSION,
+        bump,
+        base_decimals: 6,
+        quote_decimals: 6,
+        reserved: [0; 4],
+        market: f.market.to_bytes(),
+        base_mint: f.base_mint.to_bytes(),
+        quote_mint: f.quote_mint.to_bytes(),
+        base_vault: f.base_vault.to_bytes(),
+        quote_vault: f.quote_vault.to_bytes(),
+        total_base: 0,
+        total_quote: collateral,
+    };
+    let mut custody_data = vec![0; CUSTODY_STATE_BYTES];
+    custody_state.encode_into(&mut custody_data).unwrap();
+    test.add_account(f.market, account(market_data, ID));
+    test.add_account(f.ask, account(bid_data, ID));
+    test.add_account(f.owners, account(owner_data, ID));
+    test.add_account(f.custody, account(custody_data, ID));
+    test.add_account(
+        f.quote_vault,
+        account(
+            token_data(f.quote_mint, f.vault_authority, collateral, false),
+            TOKEN,
+        ),
+    );
+    test.add_account(
+        f.taker_base,
+        account(
+            token_data(f.base_mint, f.taker.pubkey(), 2_000, false),
+            TOKEN,
+        ),
+    );
+    if count == 16 {
+        // Preload a real, active lookup-table account. All nonsigner BID
+        // accounts are eligible for v0 lookup compression; signer keys remain
+        // static as required by the Solana message compiler.
+        let table_key = Pubkey::new_unique();
+        let mut table_keys = vec![
+            f.market,
+            f.custody,
+            f.reserve,
+            f.epoch,
+            f.ask,
+            f.owners,
+            f.taker_quote,
+            f.taker_base,
+            f.quote_vault,
+            f.base_vault,
+            f.quote_mint,
+            f.base_mint,
+            f.vault_authority,
+            TOKEN,
+            Pubkey::default(),
+            f.balance_a,
+            f.balance_b,
+        ];
+        table_keys.extend(&f.extra_balances);
+        let table = AddressLookupTable {
+            meta: LookupTableMeta::default(),
+            addresses: Cow::Owned(table_keys),
+        };
+        test.add_account(
+            table_key,
+            Account {
+                lamports: 50_000_000,
+                data: table.serialize_for_tests().unwrap(),
+                owner: lookup_table_program::id(),
+                executable: false,
+                rent_epoch: 0,
+            },
+        );
+        f.lookup_table = Some(table_key);
+    }
+    f
 }
 
 fn initialize(f: &Fixture, payer: Pubkey) -> Instruction {
@@ -415,6 +572,9 @@ fn seal_bid(f: &Fixture, payer: Pubkey, base: u64, min_quote: u64) -> Instructio
     instruction
         .accounts
         .push(AccountMeta::new(f.balance_b, false));
+    for balance in &f.extra_balances {
+        instruction.accounts.push(AccountMeta::new(*balance, false));
+    }
     instruction
 }
 
@@ -510,9 +670,14 @@ async fn tx(
     // 200_000-CU single-instruction default. Other opcodes retain the default.
     const CLAIM_CU_LIMIT: u32 = 350_000;
     let mut instructions = Vec::with_capacity(2);
-    if ix.data.first() == Some(&40) {
+    if ix.data.first() == Some(&40) || ix.data.first() == Some(&42) {
         let mut data = vec![2u8]; // SetComputeUnitLimit, u32 little-endian
-        data.extend_from_slice(&CLAIM_CU_LIMIT.to_le_bytes());
+        let limit = if ix.data.first() == Some(&42) {
+            1_400_000u32
+        } else {
+            CLAIM_CU_LIMIT
+        };
+        data.extend_from_slice(&limit.to_le_bytes());
         instructions.push(Instruction {
             program_id: solana_program::pubkey!("ComputeBudget111111111111111111111111111111"),
             accounts: vec![],
@@ -528,6 +693,58 @@ async fn tx(
     );
     context.banks_client.process_transaction(signed).await
 }
+// A 16-seat BID cannot fit into a legacy network packet. Resolve the
+// authenticated account list through a real v0 Address Lookup Table and
+// reject any transaction exceeding the 1,232-byte Solana packet limit.
+async fn tx_bid_v0(
+    context: &mut ProgramTestContext,
+    f: &Fixture,
+    ix: Instruction,
+) -> Result<(), solana_program_test::BanksClientError> {
+    let blockhash = context.get_new_latest_blockhash().await.unwrap();
+    let mut data = vec![2u8]; // SetComputeUnitLimit
+    data.extend_from_slice(&1_400_000u32.to_le_bytes());
+    let budget = Instruction {
+        program_id: solana_program::pubkey!("ComputeBudget111111111111111111111111111111"),
+        accounts: vec![],
+        data,
+    };
+    let table_key = f
+        .lookup_table
+        .expect("16-seat fixture must have a real ALT");
+    let raw_table = context
+        .banks_client
+        .get_account(table_key)
+        .await
+        .unwrap()
+        .expect("lookup table must exist in the bank");
+    assert_eq!(raw_table.owner, lookup_table_program::id());
+    let table = AddressLookupTable::deserialize(&raw_table.data).unwrap();
+    let address_table = AddressLookupTableAccount {
+        key: table_key,
+        addresses: table.addresses.to_vec(),
+    };
+    let message = v0::Message::try_compile(
+        &context.payer.pubkey(),
+        &[budget, ix],
+        &[address_table],
+        blockhash,
+    )
+    .unwrap();
+    assert!(!message.address_table_lookups.is_empty());
+    let signed =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.payer, &f.taker])
+            .unwrap();
+    const SOLANA_PACKET_BYTES: usize = 1_232;
+    let wire_bytes = bincode::serialize(&signed).unwrap();
+    assert!(
+        wire_bytes.len() <= SOLANA_PACKET_BYTES,
+        "16-seat BID v0 transaction exceeds network packet limit: {} bytes",
+        wire_bytes.len()
+    );
+    context.banks_client.process_transaction(signed).await
+}
+
 async fn bytes(context: &mut ProgramTestContext, pubkey: Pubkey) -> Vec<u8> {
     context
         .banks_client
@@ -571,6 +788,182 @@ async fn snapshot(context: &mut ProgramTestContext, f: &Fixture) -> Vec<Vec<u8>>
         accounts.push(snapshot_bytes(context, key).await);
     }
     accounts
+}
+
+#[tokio::test]
+async fn extended_bid_roster_rejects_malformed_maker_account_lists_atomically() {
+    let mut f = fixture_bid_extended(9);
+    let mut context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+        .await
+        .unwrap();
+    let mut keys = vec![
+        f.market,
+        f.custody,
+        f.reserve,
+        f.epoch,
+        f.ask,
+        f.owners,
+        f.balance_a,
+        f.balance_b,
+        f.quote_vault,
+        f.base_vault,
+        f.taker_base,
+        f.taker_quote,
+    ];
+    keys.extend(&f.extra_balances);
+    let mut before = Vec::new();
+    for key in &keys {
+        before.push(snapshot_bytes(&mut context, *key).await);
+    }
+    let total = 1_000;
+    let mut swapped = seal_bid(&f, payer, total, total);
+    swapped.accounts.swap(17, 18);
+    let mut missing = seal_bid(&f, payer, total, total);
+    missing.accounts.pop();
+    let mut duplicate = seal_bid(&f, payer, total, total);
+    duplicate.accounts[18] = duplicate.accounts[17].clone();
+    let mut readonly = seal_bid(&f, payer, total, total);
+    readonly.accounts[25].is_writable = false;
+    for instruction in [swapped, missing, duplicate, readonly] {
+        assert!(tx(&mut context, instruction, &[&f.taker]).await.is_err());
+        let mut after = Vec::new();
+        for key in &keys {
+            after.push(snapshot_bytes(&mut context, *key).await);
+        }
+        assert_eq!(after, before);
+    }
+}
+
+#[tokio::test]
+async fn extended_bid_rosters_seal_and_pay_every_maker_with_odd_merkle_proofs() {
+    for count in [9usize, 16usize] {
+        let mut f = fixture_bid_extended(count);
+        let mut context = f.test.take().unwrap().start_with_context().await;
+        let payer = context.payer.pubkey();
+        tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+            .await
+            .unwrap();
+
+        let weights = [vec![100u64, 200u64], vec![100u64; count - 2]].concat();
+        let total: u64 = weights.iter().sum();
+        let seal_ix = seal_bid(&f, payer, total, total);
+        if count == 16 {
+            tx_bid_v0(&mut context, &f, seal_ix).await.unwrap();
+        } else {
+            tx(&mut context, seal_ix, &[&f.taker]).await.unwrap();
+        }
+        let epoch = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
+        let fee = total / 100;
+        assert_eq!(epoch.header.side, 1);
+        assert_eq!(epoch.header.maker_count, count as u32);
+        assert_eq!(epoch.header.totals, [0, total - fee, total, 0, fee, 0]);
+        let mut makers = vec![f.maker_a.pubkey(), f.maker_b.pubkey()];
+        makers.extend(f.extra_makers.iter().map(|maker| maker.pubkey()));
+        let allocations =
+            hybrid_state::lazy_pro_rata::allocate_bid_at_price(&weights, total, Q64, fee).unwrap();
+        let claims: Vec<[u64; 6]> = allocations
+            .iter()
+            .map(|allocation| {
+                [
+                    0,
+                    allocation.base_proceeds,
+                    allocation.quote_spent,
+                    0,
+                    allocation.base_fee,
+                    0,
+                ]
+            })
+            .collect();
+        let mut levels = vec![makers
+            .iter()
+            .enumerate()
+            .map(|(i, maker)| {
+                leaf(
+                    &epoch.header.commitment,
+                    i as u32,
+                    *maker,
+                    weights[i],
+                    claims[i],
+                )
+            })
+            .collect::<Vec<_>>()];
+        while levels.last().unwrap().len() > 1 {
+            let previous = levels.last().unwrap();
+            let next = previous
+                .chunks(2)
+                .map(|chunk| {
+                    hashv(&[
+                        b"HYBRID_MAKER_PUBKEY_NODE_V1\0",
+                        &chunk[0],
+                        chunk.get(1).unwrap_or(&chunk[0]),
+                    ])
+                    .to_bytes()
+                })
+                .collect::<Vec<_>>();
+            levels.push(next);
+        }
+        assert_eq!(epoch.header.claim_root, levels.last().unwrap()[0]);
+
+        // All claims, including the odd terminal leaf at nine seats, use
+        // the unchanged opcode 40 Merkle verifier and SPL payout path.
+        for seat in (0..count).rev() {
+            let maker = if seat == 0 {
+                &f.maker_a
+            } else if seat == 1 {
+                &f.maker_b
+            } else {
+                &f.extra_makers[seat - 2]
+            };
+            let balance = if seat == 0 {
+                f.balance_a
+            } else if seat == 1 {
+                f.balance_b
+            } else {
+                f.extra_balances[seat - 2]
+            };
+            let destination = if seat == 0 {
+                f.destination_a
+            } else if seat == 1 {
+                f.destination_b
+            } else {
+                f.extra_destinations[seat - 2]
+            };
+            let mut instruction = claim_bid(&f, seat as u32, [0; 32], destination);
+            instruction.accounts[2] = AccountMeta::new(balance, false);
+            instruction.accounts[3] = AccountMeta::new_readonly(maker.pubkey(), true);
+            instruction.data[37..45].copy_from_slice(&weights[seat].to_le_bytes());
+            for (index, amount) in claims[seat].iter().enumerate() {
+                instruction.data[45 + index * 8..53 + index * 8]
+                    .copy_from_slice(&amount.to_le_bytes());
+            }
+            instruction.data.truncate(93);
+            instruction.data.push((levels.len() - 1) as u8);
+            let mut index = seat;
+            for level in levels.iter().take(levels.len() - 1) {
+                let sibling = level.get(index ^ 1).unwrap_or(&level[index]);
+                instruction.data.extend_from_slice(sibling);
+                index /= 2;
+            }
+            tx(&mut context, instruction, &[maker]).await.unwrap();
+            assert_eq!(
+                amount(&bytes(&mut context, destination).await),
+                claims[seat][1]
+            );
+            let balance = MakerBalance::decode_from(&bytes(&mut context, balance).await).unwrap();
+            assert_eq!(balance.locked_quote, 0);
+            assert_eq!(balance.free_quote, 0);
+        }
+        let epoch = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
+        assert_eq!(epoch.claimed_count, count as u32);
+        assert_eq!(epoch.remaining, [0; 6]);
+        assert_eq!(amount(&bytes(&mut context, f.base_vault).await), fee);
+        assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), 0);
+        let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
+        assert_eq!(reserve.maker_base_credit, 0);
+        assert_eq!(reserve.maker_quote_debit, 0);
+    }
 }
 
 #[tokio::test]

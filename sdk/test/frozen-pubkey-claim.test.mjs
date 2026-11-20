@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {hashPubkeyMakerClaim,hashPubkeyClaimNode,encodeFrozenClaimPreflight,hashPubkeyFrozenEpochV1,encodeLazyReserveInit,encodeLazyAskExecute,encodeAtomicFrozenMakerClaim} from "../src/frozen-pubkey-claim.mjs";
+import {hashPubkeyMakerClaim,hashPubkeyClaimNode,encodeFrozenClaimPreflight,hashPubkeyFrozenEpochV1,hashPubkeyFrozenBidEpochV1,encodeLazyReserveInit,encodeLazyAskExecute,encodeAtomicFrozenMakerClaim} from "../src/frozen-pubkey-claim.mjs";
 
 const epoch="04".repeat(32);
 const leaf={seat:0,makerHex:"05".repeat(32),weight:"10",
@@ -105,4 +105,53 @@ test("execution and atomic claim instruction discriminators and bounds",()=>{
     amounts:["50","0","0","50","0","0"],siblings:["aa".repeat(32)],
   });
   assert.equal(claim[0],40);assert.equal(claim.length,126);
+});
+
+test("9/16-seat authenticated BID digests preserve the v1 owner/seat binding",()=>{
+  const spec=(count)=>({
+    marketHex:"11".repeat(32),programHex:"22".repeat(32),
+    genesisHex:"33".repeat(32),epochId:"7",
+    tickSqrtPriceX64:(1n<<64n).toString(),
+    makers:Array.from({length:count},(_,i)=>({
+      makerHex:(i+1).toString(16).padStart(2,"0").repeat(32),
+      weight:"1",
+    })),
+    totals:["0",String(count),String(count),"0","0","0"],
+  });
+  assert.equal(hashPubkeyFrozenBidEpochV1(spec(9)),
+    "81eaae5151672a4b1fb6a0cb1f41dcfc5173003cc6759024fcf91686550733c6");
+  assert.equal(hashPubkeyFrozenBidEpochV1(spec(16)),
+    "6c753eed7dd4ab15711ec2d48b77c4d3315b7d2839186e9a98a50738cbe14959");
+  for(const [count,root] of [
+    [9,"06e7d26453d0aaa9b13b40f2afb5c2136be470326d0e1a2a44e48f443d62a025"],
+    [16,"7d6f22035f78d5898824a267180132f69fa6bb7c1539b480f88bf41d0551c9e2"],
+  ]){
+    const record=spec(count);
+    const digest=hashPubkeyFrozenBidEpochV1(record);
+    let nodes=record.makers.map((maker,seat)=>
+      hashPubkeyMakerClaim(digest,{seat,makerHex:maker.makerHex,weight:maker.weight,
+        amounts:["0","1","1","0","0","0"]}));
+    while(nodes.length>1){
+      const parents=[];
+      for(let i=0;i<nodes.length;i+=2)
+        parents.push(hashPubkeyClaimNode(nodes[i],nodes[i+1]??nodes[i]));
+      nodes=parents;
+    }
+    assert.equal(nodes[0],root);
+  }
+  assert.throws(()=>hashPubkeyFrozenBidEpochV1(spec(17)),/roster/);
+  assert.throws(()=>hashPubkeyFrozenBidEpochV1({...spec(9),
+    makers:[...spec(9).makers.slice(0,8),spec(9).makers[0]]}),/Duplicate/);
+  assert.throws(()=>hashPubkeyFrozenBidEpochV1({...spec(9),
+    totals:["1","9","9","0","0","0"]}),/totals/);
+  assert.throws(()=>hashPubkeyFrozenBidEpochV1({...spec(9),
+    totals:["0","10","9","0","0","0"]}),/Overfilled/);
+  // Net proceeds alone fit weight, but proceeds plus fee overfill it.
+  assert.throws(()=>hashPubkeyFrozenBidEpochV1({...spec(9),
+    totals:["0","9","10","0","1","0"]}),/Overfilled/);
+  // The combined base proceeds and fee exactly fit the roster.
+  assert.doesNotThrow(()=>hashPubkeyFrozenBidEpochV1({...spec(9),
+    totals:["0","8","9","0","1","0"]}));
+  assert.notEqual(hashPubkeyFrozenBidEpochV1({...spec(9),epochId:"8"}),
+    hashPubkeyFrozenBidEpochV1(spec(9)));
 });

@@ -1,8 +1,8 @@
 use super::*;
 
 /// Opcode 42: atomic one-tick BID pro-rata execution and on-chain epoch seal.
-/// This is deliberately narrow: only a single canonical bid page, at most 8
-/// distinct maker seats, all resting at the same authenticated Q64 price.
+/// Single canonical BID page, up to 16 authenticated maker seats, all at
+/// the same Q64 price. Multipage/multitick execution is a separate ABI.
 /// No sealer-supplied root or allocation is trusted: every leaf and the root
 /// are derived from program-owned resting orders and the paid taker fill.
 ///
@@ -17,7 +17,7 @@ use super::*;
 /// released by rounded-up BID order reductions. Historical quote debits
 /// remain locked until a maker's authenticated claim.
 /// Maker base proceeds and base fees become segregated on-chain liabilities.
-const MAX_LAZY_SEATS: usize = 8;
+const MAX_LAZY_SEATS: usize = 16;
 const EPOCH_DOMAIN: &[u8] = b"HYBRID_LAZY_PUBKEY_EPOCH_V1\0";
 const LEAF_DOMAIN: &[u8] = b"HYBRID_MAKER_PUBKEY_CLAIM_V1\0";
 const NODE_DOMAIN: &[u8] = b"HYBRID_MAKER_PUBKEY_NODE_V1\0";
@@ -54,9 +54,9 @@ fn epoch_commitment(
     if weights.is_empty() || weights.len() > MAX_LAZY_SEATS || owners.len() != weights.len() {
         return Err(ProgramError::InvalidAccountData);
     }
-    // A complete eight-maker preimage fits in 576 bytes. Avoid Vec growth
-    // logic and heap allocation in the SBF SHA-256 commitment path.
-    let mut bytes = [0u8; 576];
+    // 16 maker rows at 44 bytes each plus the 201-byte epoch envelope
+    // require 905 bytes. Keep fixed capacity for bounded SBF hashing.
+    let mut bytes = [0u8; 928];
     let mut used = 0usize;
     let mut append = |part: &[u8]| {
         let end = used + part.len();
@@ -95,7 +95,7 @@ fn sealed_claim_root(
     {
         return Err(ProgramError::InvalidAccountData);
     }
-    // In-place binary Merkle reduction needs only eight fixed hashes.
+    // In-place binary Merkle reduction needs only sixteen fixed hashes.
     // Odd final leaves are duplicated, matching Rust and SDK proofs.
     let mut nodes = [[0u8; 32]; MAX_LAZY_SEATS];
     for (index, ((maker, weight), allocation)) in
@@ -149,7 +149,7 @@ pub(super) fn execute_and_seal_bid(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    if data.len() != 17 || data[0] != 42 || accounts.len() < 18 || accounts.len() > 25 {
+    if data.len() != 17 || data[0] != 42 || accounts.len() < 18 || accounts.len() > 33 {
         return Err(ProgramError::InvalidInstructionData);
     }
     let (fixed_accounts, maker_balance_accounts) = accounts.split_at(17);
@@ -501,4 +501,75 @@ pub(super) fn execute_and_seal_bid(
             .map_err(|_| ProgramError::InvalidAccountData)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod extended_roster_tests {
+    use super::*;
+
+    fn as_hex(bytes: [u8; 32]) -> String {
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    #[test]
+    fn nine_and_sixteen_seat_bid_roots_match_sdk_v1_and_duplicate_odd_leaves() {
+        let market = Pubkey::new_from_array([0x11; 32]);
+        let program = Pubkey::new_from_array([0x22; 32]);
+        for (count, expected_digest, expected_root) in [
+            (
+                9usize,
+                "81eaae5151672a4b1fb6a0cb1f41dcfc5173003cc6759024fcf91686550733c6",
+                "06e7d26453d0aaa9b13b40f2afb5c2136be470326d0e1a2a44e48f443d62a025",
+            ),
+            (
+                16usize,
+                "6c753eed7dd4ab15711ec2d48b77c4d3315b7d2839186e9a98a50738cbe14959",
+                "7d6f22035f78d5898824a267180132f69fa6bb7c1539b480f88bf41d0551c9e2",
+            ),
+        ] {
+            let owners: Vec<[u8; 32]> = (1..=count).map(|i| [i as u8; 32]).collect();
+            let weights = vec![1u64; count];
+            let totals = [0, count as u64, count as u64, 0, 0, 0];
+            let digest = epoch_commitment(
+                &market,
+                &program,
+                &[0x33; 32],
+                (7, hybrid_engine::Q64),
+                &owners,
+                &weights,
+                totals,
+            )
+            .unwrap();
+            assert_eq!(as_hex(digest), expected_digest);
+            let allocations = hybrid_state::lazy_pro_rata::allocate_bid_at_price(
+                &weights,
+                count as u64,
+                hybrid_engine::Q64,
+                0,
+            )
+            .unwrap();
+            let root = sealed_claim_root(&digest, &owners, &weights, &allocations).unwrap();
+            assert_eq!(as_hex(root), expected_root);
+        }
+    }
+
+    #[test]
+    fn seventeen_seats_are_rejected_before_commitment_or_merkle_hashing() {
+        let owners: Vec<[u8; 32]> = (1..=17).map(|i| [i; 32]).collect();
+        let weights = vec![1; owners.len()];
+        let market = Pubkey::new_from_array([0x11; 32]);
+        let program = Pubkey::new_from_array([0x22; 32]);
+        assert_eq!(
+            epoch_commitment(
+                &market,
+                &program,
+                &[0x33; 32],
+                (7, hybrid_engine::Q64),
+                &owners,
+                &weights,
+                [0, 17, 17, 0, 0, 0],
+            ),
+            Err(ProgramError::InvalidAccountData)
+        );
+    }
 }
