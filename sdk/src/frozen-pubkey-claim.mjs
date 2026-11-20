@@ -59,18 +59,19 @@ export function encodeFrozenClaimPreflight({
   ]);
 }
 
-/** Program-derived single-tick ASK epoch commitment, distinct from the
+/** Program-derived single-tick epoch commitment, distinct from the
  * earlier experimental text-identity commitment. No arbitrary-root sealing.
  * Preimage: domain, market[32], program[32], genesis[32], epoch u64LE,
- * tick sqrt Q64 u128LE, side 0, count u32LE, maker rows
+ * tick sqrt Q64 u128LE, side u8, count u32LE, maker rows
  * (index u32LE, maker pubkey[32], weight u64LE), six u64LE totals.
  */
-export function hashPubkeyFrozenEpochV1({
+function hashPubkeyFrozenEpochSideV1({
   marketHex,programHex,genesisHex,epochId,tickSqrtPriceX64,makers,totals,
-}){
-  if(!Array.isArray(makers)||makers.length<1||makers.length>8||
+},side){
+  const cap=side===0?8:16;
+  if(!Array.isArray(makers)||makers.length<1||makers.length>cap||
       !Array.isArray(totals)||totals.length!==6)
-    throw new Error("Invalid on-chain frozen ask epoch");
+    throw new Error("Invalid on-chain frozen epoch roster");
   const le128=(value)=>{
     if(typeof value!=="string"||!/^(0|[1-9][0-9]*)$/.test(value)||
         BigInt(value)===0n||BigInt(value)>=(1n<<128n))
@@ -89,17 +90,32 @@ export function hashPubkeyFrozenEpochV1({
       u64(maker.weight,"weight",{positive:true})]);
   });
   const totalBytes=totals.map((v,i)=>u64(v,"total "+i));
-  if(totals[0]==="0"||totals[1]!=="0"||totals[2]!=="0"||totals[4]!=="0")
-    throw new Error("Invalid ask epoch totals");
+  if(side===0
+      ? totals[0]==="0"||totals[1]!=="0"||totals[2]!=="0"||totals[4]!=="0"
+      : totals[1]==="0"||totals[0]!=="0"||totals[3]!=="0"||totals[5]!=="0")
+    throw new Error("Invalid frozen epoch totals");
   const W=makers.reduce((n,m)=>n+BigInt(m.weight),0n);
-  if(W>(1n<<64n)-1n||BigInt(totals[0])>W)throw new Error("Overfilled roster");
+  if(W>(1n<<64n)-1n||BigInt(totals[side===0?0:1])>W)
+    throw new Error("Overfilled roster");
   return sha(Buffer.concat([
     Buffer.from("HYBRID_LAZY_PUBKEY_EPOCH_V1\0","utf8"),
     pubkey(marketHex,"market"),pubkey(programHex,"program"),
     pubkey(genesisHex,"genesis"),u64(epochId,"epoch ID"),
-    le128(tickSqrtPriceX64),Buffer.from([0]),count,
+    le128(tickSqrtPriceX64),Buffer.from([side]),count,
     ...rows,...totalBytes,
   ]));
+}
+
+/** Existing 8-seat ASK commitment ABI; unchanged. */
+export function hashPubkeyFrozenEpochV1(spec){
+  return hashPubkeyFrozenEpochSideV1(spec,0);
+}
+
+/** Extended one-tick BID roster commitment, 1..16 maker seats.
+ * Uses the unchanged v1 domain and existing opcode-40 claim verifier.
+ */
+export function hashPubkeyFrozenBidEpochV1(spec){
+  return hashPubkeyFrozenEpochSideV1(spec,1);
 }
 
 /** Market signer initializes the only market-wide cross-epoch liability PDA.
