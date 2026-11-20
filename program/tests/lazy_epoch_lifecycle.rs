@@ -14,9 +14,9 @@ use solana_address_lookup_table_interface::{
     program as lookup_table_program,
     state::{AddressLookupTable, LookupTableMeta},
 };
-use solana_message::{v0, AddressLookupTableAccount, VersionedMessage};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_keypair::Keypair;
+use solana_message::{v0, AddressLookupTableAccount, VersionedMessage};
 use solana_program::{hash::hashv, pubkey::Pubkey};
 use solana_program_test::{processor, ProgramTest, ProgramTestContext};
 use solana_signer::Signer;
@@ -709,7 +709,9 @@ async fn tx_bid_v0(
         accounts: vec![],
         data,
     };
-    let table_key = f.lookup_table.expect("16-seat fixture must have a real ALT");
+    let table_key = f
+        .lookup_table
+        .expect("16-seat fixture must have a real ALT");
     let raw_table = context
         .banks_client
         .get_account(table_key)
@@ -730,11 +732,9 @@ async fn tx_bid_v0(
     )
     .unwrap();
     assert!(!message.address_table_lookups.is_empty());
-    let signed = VersionedTransaction::try_new(
-        VersionedMessage::V0(message),
-        &[&context.payer, &f.taker],
-    )
-    .unwrap();
+    let signed =
+        VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.payer, &f.taker])
+            .unwrap();
     const SOLANA_PACKET_BYTES: usize = 1_232;
     let wire_bytes = bincode::serialize(&signed).unwrap();
     assert!(
