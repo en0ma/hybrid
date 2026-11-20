@@ -83,6 +83,13 @@ pub fn plan_multilevel_bid(
     if requested_base == 0 || min_quote_out == 0 {
         return Err(BidPlanError::InvalidFill);
     }
+    // Public state structs can be fabricated in native callers. Reject
+    // impossible lengths before as_slice() or the chain validator indexes.
+    if pages.iter().any(|page| page.len() > crate::BIDS_PER_PAGE)
+        || sidecars.iter().any(|page| page.len() > crate::BIDS_PER_PAGE)
+    {
+        return Err(BidPlanError::InvalidChain);
+    }
     validate_bid_chain(pages).map_err(|_| BidPlanError::InvalidChain)?;
     let mut rows = Vec::new();
     let mut makers_seen = Vec::new();
