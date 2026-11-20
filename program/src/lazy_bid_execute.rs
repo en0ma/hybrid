@@ -1,8 +1,8 @@
 use super::*;
 
 /// Opcode 42: atomic one-tick BID pro-rata execution and on-chain epoch seal.
-/// This is deliberately narrow: only a single canonical bid page, at most 8
-/// distinct maker seats, all resting at the same authenticated Q64 price.
+/// Single canonical BID page, up to 16 authenticated maker seats, all at
+/// the same Q64 price. Multipage/multitick execution is a separate ABI.
 /// No sealer-supplied root or allocation is trusted: every leaf and the root
 /// are derived from program-owned resting orders and the paid taker fill.
 ///
@@ -17,7 +17,7 @@ use super::*;
 /// released by rounded-up BID order reductions. Historical quote debits
 /// remain locked until a maker's authenticated claim.
 /// Maker base proceeds and base fees become segregated on-chain liabilities.
-const MAX_LAZY_SEATS: usize = 8;
+const MAX_LAZY_SEATS: usize = 16;
 const EPOCH_DOMAIN: &[u8] = b"HYBRID_LAZY_PUBKEY_EPOCH_V1\0";
 const LEAF_DOMAIN: &[u8] = b"HYBRID_MAKER_PUBKEY_CLAIM_V1\0";
 const NODE_DOMAIN: &[u8] = b"HYBRID_MAKER_PUBKEY_NODE_V1\0";
@@ -54,9 +54,9 @@ fn epoch_commitment(
     if weights.is_empty() || weights.len() > MAX_LAZY_SEATS || owners.len() != weights.len() {
         return Err(ProgramError::InvalidAccountData);
     }
-    // A complete eight-maker preimage fits in 576 bytes. Avoid Vec growth
-    // logic and heap allocation in the SBF SHA-256 commitment path.
-    let mut bytes = [0u8; 576];
+    // 16 maker rows at 44 bytes each plus the 169-byte epoch envelope
+    // require 873 bytes. Keep fixed capacity for bounded SBF hashing.
+    let mut bytes = [0u8; 896];
     let mut used = 0usize;
     let mut append = |part: &[u8]| {
         let end = used + part.len();
@@ -95,7 +95,7 @@ fn sealed_claim_root(
     {
         return Err(ProgramError::InvalidAccountData);
     }
-    // In-place binary Merkle reduction needs only eight fixed hashes.
+    // In-place binary Merkle reduction needs only sixteen fixed hashes.
     // Odd final leaves are duplicated, matching Rust and SDK proofs.
     let mut nodes = [[0u8; 32]; MAX_LAZY_SEATS];
     for (index, ((maker, weight), allocation)) in
@@ -149,7 +149,7 @@ pub(super) fn execute_and_seal_bid(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    if data.len() != 17 || data[0] != 42 || accounts.len() < 18 || accounts.len() > 25 {
+    if data.len() != 17 || data[0] != 42 || accounts.len() < 18 || accounts.len() > 33 {
         return Err(ProgramError::InvalidInstructionData);
     }
     let (fixed_accounts, maker_balance_accounts) = accounts.split_at(17);
