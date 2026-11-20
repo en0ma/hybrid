@@ -62,6 +62,9 @@ struct Fixture {
     balance_b: Pubkey,
     destination_a: Pubkey,
     destination_b: Pubkey,
+    extra_makers: Vec<Keypair>,
+    extra_balances: Vec<Pubkey>,
+    extra_destinations: Vec<Pubkey>,
     taker: Keypair,
     taker_quote: Pubkey,
     taker_base: Pubkey,
@@ -351,6 +354,9 @@ fn fixture_for_side(
         balance_b,
         destination_a,
         destination_b,
+        extra_makers: Vec::new(),
+        extra_balances: Vec::new(),
+        extra_destinations: Vec::new(),
         taker,
         taker_quote,
         taker_base,
@@ -360,6 +366,102 @@ fn fixture_for_side(
         base_mint,
         vault_authority,
     }
+}
+
+/// Rebuild the canonical page, sidecar and custody around 9 or 16 distinct
+/// maker PDAs. The first two makers retain their original 100/200 base bids.
+fn fixture_bid_extended(count: usize) -> Fixture {
+    assert!((9..=16).contains(&count));
+    let mut f = fixture_bid(false);
+    let mut header = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    header.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
+    header.set_bid_count(count as u32);
+    header.next_sequence = count as u64 + 1;
+    let mut tag = [0u8; 16];
+    tag.copy_from_slice(&f.owners.to_bytes()[..16]);
+    header.set_bid_owner_tag(tag);
+    let mut market_data = vec![0; MARKET_HEADER_BYTES];
+    header.encode_into(&mut market_data).unwrap();
+
+    let mut bids = BidPage::default();
+    bids.set_links(PageLinks::new(0, None, None));
+    let mut owners = AskOwnerPage::default();
+    owners.set_links(PageLinks::new(0, None, None));
+    let mut owner_keys = vec![f.maker_a.pubkey(), f.maker_b.pubkey()];
+    let mut weights = vec![100u64, 200u64];
+    let test = f.test.as_mut().unwrap();
+    for _ in 2..count {
+        let maker = Keypair::new();
+        let (balance_key, bump) = Pubkey::find_program_address(
+            &[b"maker-balance", f.market.as_ref(), maker.pubkey().as_ref()],
+            &ID,
+        );
+        let destination = Pubkey::new_unique();
+        let mut balance = MakerBalance::new(bump, f.market.to_bytes(), maker.pubkey().to_bytes());
+        balance.locked_quote = 100;
+        let mut data = vec![0; MAKER_BALANCE_BYTES];
+        balance.encode_into(&mut data).unwrap();
+        test.add_account(balance_key, account(data, ID));
+        test.add_account(maker.pubkey(), account(Vec::new(), Pubkey::default()));
+        test.add_account(
+            destination,
+            account(token_data(f.base_mint, maker.pubkey(), 0, false), TOKEN),
+        );
+        owner_keys.push(maker.pubkey());
+        weights.push(100);
+        f.extra_makers.push(maker);
+        f.extra_balances.push(balance_key);
+        f.extra_destinations.push(destination);
+    }
+    for (i, (owner, qty)) in owner_keys.iter().zip(&weights).enumerate() {
+        bids.insert(AskEntry {
+            price_x64: Q64,
+            sqrt_price_x64: Q64,
+            base_qty: *qty,
+            sequence: i as u64 + 1,
+        })
+        .unwrap();
+        owners.owners[i] = owner.to_bytes();
+    }
+    owners.len = count as u16;
+    let mut bid_data = vec![0; BID_PAGE_BYTES];
+    bids.encode_into(&mut bid_data).unwrap();
+    let mut owner_data = vec![0; ASK_OWNER_PAGE_BYTES];
+    owners.encode_into(&mut owner_data).unwrap();
+
+    let collateral: u64 = weights.iter().sum();
+    let (custody, bump) = Pubkey::find_program_address(&[b"custody", f.market.as_ref()], &ID);
+    assert_eq!(custody, f.custody);
+    let custody_state = CustodyState {
+        magic: hybrid_state::CUSTODY_MAGIC,
+        version: hybrid_state::STATE_VERSION,
+        bump,
+        base_decimals: 6,
+        quote_decimals: 6,
+        reserved: [0; 4],
+        market: f.market.to_bytes(),
+        base_mint: f.base_mint.to_bytes(),
+        quote_mint: f.quote_mint.to_bytes(),
+        base_vault: f.base_vault.to_bytes(),
+        quote_vault: f.quote_vault.to_bytes(),
+        total_base: 0,
+        total_quote: collateral,
+    };
+    let mut custody_data = vec![0; CUSTODY_STATE_BYTES];
+    custody_state.encode_into(&mut custody_data).unwrap();
+    test.add_account(f.market, account(market_data, ID));
+    test.add_account(f.ask, account(bid_data, ID));
+    test.add_account(f.owners, account(owner_data, ID));
+    test.add_account(f.custody, account(custody_data, ID));
+    test.add_account(
+        f.quote_vault,
+        account(token_data(f.quote_mint, f.vault_authority, collateral, false), TOKEN),
+    );
+    test.add_account(
+        f.taker_base,
+        account(token_data(f.base_mint, f.taker.pubkey(), 2_000, false), TOKEN),
+    );
+    f
 }
 
 fn initialize(f: &Fixture, payer: Pubkey) -> Instruction {
@@ -415,6 +517,9 @@ fn seal_bid(f: &Fixture, payer: Pubkey, base: u64, min_quote: u64) -> Instructio
     instruction
         .accounts
         .push(AccountMeta::new(f.balance_b, false));
+    for balance in &f.extra_balances {
+        instruction.accounts.push(AccountMeta::new(*balance, false));
+    }
     instruction
 }
 
@@ -510,9 +615,14 @@ async fn tx(
     // 200_000-CU single-instruction default. Other opcodes retain the default.
     const CLAIM_CU_LIMIT: u32 = 350_000;
     let mut instructions = Vec::with_capacity(2);
-    if ix.data.first() == Some(&40) {
+    if ix.data.first() == Some(&40) || ix.data.first() == Some(&42) {
         let mut data = vec![2u8]; // SetComputeUnitLimit, u32 little-endian
-        data.extend_from_slice(&CLAIM_CU_LIMIT.to_le_bytes());
+        let limit = if ix.data.first() == Some(&42) {
+            1_400_000u32
+        } else {
+            CLAIM_CU_LIMIT
+        };
+        data.extend_from_slice(&limit.to_le_bytes());
         instructions.push(Instruction {
             program_id: solana_program::pubkey!("ComputeBudget111111111111111111111111111111"),
             accounts: vec![],
