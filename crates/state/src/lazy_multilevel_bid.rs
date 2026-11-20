@@ -86,7 +86,9 @@ pub fn plan_multilevel_bid(
     // Public state structs can be fabricated in native callers. Reject
     // impossible lengths before as_slice() or the chain validator indexes.
     if pages.iter().any(|page| page.len() > crate::BIDS_PER_PAGE)
-        || sidecars.iter().any(|page| page.len() > crate::BIDS_PER_PAGE)
+        || sidecars
+            .iter()
+            .any(|page| page.len() > crate::BIDS_PER_PAGE)
     {
         return Err(BidPlanError::InvalidChain);
     }
@@ -97,7 +99,9 @@ pub fn plan_multilevel_bid(
         if page.is_empty()
             || sidecar.len() != page.len()
             || sidecar.links() != page.links()
-            || sidecar.owners[sidecar.len()..].iter().any(|owner| *owner != [0; 32])
+            || sidecar.owners[sidecar.len()..]
+                .iter()
+                .any(|owner| *owner != [0; 32])
         {
             return Err(BidPlanError::InvalidRoster);
         }
@@ -115,7 +119,12 @@ pub fn plan_multilevel_bid(
             {
                 return Err(BidPlanError::InvalidPrice);
             }
-            rows.push((entry.price_x64, entry.sqrt_price_x64, entry.base_qty, *maker));
+            rows.push((
+                entry.price_x64,
+                entry.sqrt_price_x64,
+                entry.base_qty,
+                *maker,
+            ));
         }
     }
 
@@ -237,11 +246,20 @@ mod tests {
         assert_eq!(plan.ticks[1].quote_paid, 50);
         assert_eq!(plan.quote_paid, 3_250);
         assert_eq!(plan.base_fee, 16);
-        assert_eq!(plan.ticks.iter().map(|tick| tick.totals()[1]).sum::<u64>(), 1_634);
+        assert_eq!(
+            plan.ticks.iter().map(|tick| tick.totals()[1]).sum::<u64>(),
+            1_634
+        );
         for tick in &plan.ticks {
-            assert_eq!(tick.allocations.iter().map(|a| a.quote_spent).sum::<u64>(), tick.quote_paid);
             assert_eq!(
-                tick.allocations.iter().map(|a| a.base_proceeds + a.base_fee).sum::<u64>(),
+                tick.allocations.iter().map(|a| a.quote_spent).sum::<u64>(),
+                tick.quote_paid
+            );
+            assert_eq!(
+                tick.allocations
+                    .iter()
+                    .map(|a| a.base_proceeds + a.base_fee)
+                    .sum::<u64>(),
                 tick.filled_base
             );
         }
