@@ -95,7 +95,10 @@ function hashPubkeyFrozenEpochSideV1({
       : totals[1]==="0"||totals[0]!=="0"||totals[3]!=="0"||totals[5]!=="0")
     throw new Error("Invalid frozen epoch totals");
   const W=makers.reduce((n,m)=>n+BigInt(m.weight),0n);
-  if(W>(1n<<64n)-1n||BigInt(totals[side===0?0:1])>W)
+  // BID maker weight pays both net base proceeds and the base fee.
+  // Comparing only net credit would accept impossible execution totals.
+  const filledBase=side===0?BigInt(totals[0]):BigInt(totals[1])+BigInt(totals[4]);
+  if(W>(1n<<64n)-1n||filledBase>W)
     throw new Error("Overfilled roster");
   return sha(Buffer.concat([
     Buffer.from("HYBRID_LAZY_PUBKEY_EPOCH_V1\0","utf8"),
