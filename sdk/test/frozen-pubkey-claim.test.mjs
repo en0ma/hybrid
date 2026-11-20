@@ -146,6 +146,12 @@ test("9/16-seat authenticated BID digests preserve the v1 owner/seat binding",()
     totals:["1","9","9","0","0","0"]}),/totals/);
   assert.throws(()=>hashPubkeyFrozenBidEpochV1({...spec(9),
     totals:["0","10","9","0","0","0"]}),/Overfilled/);
+  // Net proceeds alone fit weight, but proceeds plus fee overfill it.
+  assert.throws(()=>hashPubkeyFrozenBidEpochV1({...spec(9),
+    totals:["0","9","10","0","1","0"]}),/Overfilled/);
+  // The combined base proceeds and fee exactly fit the roster.
+  assert.doesNotThrow(()=>hashPubkeyFrozenBidEpochV1({...spec(9),
+    totals:["0","8","9","0","1","0"]}));
   assert.notEqual(hashPubkeyFrozenBidEpochV1({...spec(9),epochId:"8"}),
     hashPubkeyFrozenBidEpochV1(spec(9)));
 });
