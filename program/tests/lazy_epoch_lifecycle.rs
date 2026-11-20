@@ -5,8 +5,8 @@ use hybrid_program::ID;
 use hybrid_state::frozen_epoch::{FrozenEpochView, FROZEN_EPOCH_BYTES};
 use hybrid_state::lazy_reserve::{LazyReserve, LAZY_RESERVE_BYTES};
 use hybrid_state::{
-    AskEntry, AskOwnerPage, AskPage, CustodyState, MakerBalance, MarketHeader, PageLinks,
-    ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES, CUSTODY_STATE_BYTES, MAKER_BALANCE_BYTES,
+    AskEntry, AskOwnerPage, AskPage, BidPage, CustodyState, MakerBalance, MarketHeader, PageLinks,
+    ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES, BID_PAGE_BYTES, CUSTODY_STATE_BYTES, MAKER_BALANCE_BYTES,
     MARKET_FLAG_COLLATERALIZED_ACTIVE, MARKET_HEADER_BYTES,
 };
 use solana_account::Account;
@@ -72,6 +72,22 @@ struct Fixture {
     vault_authority: Pubkey,
 }
 fn fixture(freeze_destination: bool) -> Fixture {
+    fixture_for_side(freeze_destination, false, None)
+}
+
+fn fixture_bid(freeze_destination: bool) -> Fixture {
+    fixture_for_side(freeze_destination, true, None)
+}
+
+fn fixture_bid_fractional(qty_per_maker: u64) -> Fixture {
+    fixture_for_side(false, true, Some(qty_per_maker))
+}
+
+fn fixture_for_side(
+    freeze_destination: bool,
+    bid_side: bool,
+    fractional_bid_qty: Option<u64>,
+) -> Fixture {
     let market_signer = Keypair::new();
     let market = market_signer.pubkey();
     let maker_a = Keypair::new();
@@ -83,8 +99,13 @@ fn fixture(freeze_destination: bool) -> Fixture {
         &[b"frozen-epoch", market.as_ref(), &0u64.to_le_bytes()],
         &ID,
     );
+    let page_seed = if bid_side {
+        b"bid-page".as_slice()
+    } else {
+        b"ask-page".as_slice()
+    };
     let (ask, _) =
-        Pubkey::find_program_address(&[b"ask-page", market.as_ref(), &0u32.to_le_bytes()], &ID);
+        Pubkey::find_program_address(&[page_seed, market.as_ref(), &0u32.to_le_bytes()], &ID);
     let (balance_a, bump_a) = Pubkey::find_program_address(
         &[b"maker-balance", market.as_ref(), maker_a.pubkey().as_ref()],
         &ID,
@@ -105,32 +126,70 @@ fn fixture(freeze_destination: bool) -> Fixture {
     let destination_a = Pubkey::new_unique();
     let destination_b = Pubkey::new_unique();
 
+    let quantity_a = fractional_bid_qty.unwrap_or(100);
+    let quantity_b = fractional_bid_qty.unwrap_or(200);
+    let price = if fractional_bid_qty.is_some() {
+        Q64 / 2
+    } else {
+        Q64
+    };
+    // Canonical floor(sqrt(price_x64 * Q64)) for price 1/2.
+    let sqrt_price = if fractional_bid_qty.is_some() {
+        13_043_817_825_332_782_213u128
+    } else {
+        Q64
+    };
+    let quote_a = hybrid_engine::quote_for_base_at_price(quantity_a, price).unwrap();
+    let quote_b = hybrid_engine::quote_for_base_at_price(quantity_b, price).unwrap();
     let mut header = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
     header.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
-    header.ask_count = 2;
+    header.ask_count = if bid_side { 0 } else { 2 };
+    if bid_side {
+        header.set_bid_count(2);
+        let mut tag = [0u8; 16];
+        tag.copy_from_slice(&owners.to_bytes()[..16]);
+        header.set_bid_owner_tag(tag);
+    } else {
+        header.reserved2 = owners.to_bytes();
+    }
     header.next_sequence = 3;
-    header.reserved2 = owners.to_bytes();
     let mut market_data = vec![0; MARKET_HEADER_BYTES];
     header.encode_into(&mut market_data).unwrap();
 
     let mut asks = AskPage::default();
     asks.set_links(PageLinks::new(0, None, None));
     asks.insert(AskEntry {
-        price_x64: Q64,
-        sqrt_price_x64: Q64,
-        base_qty: 100,
+        price_x64: price,
+        sqrt_price_x64: sqrt_price,
+        base_qty: quantity_a,
         sequence: 1,
     })
     .unwrap();
     asks.insert(AskEntry {
-        price_x64: Q64,
-        sqrt_price_x64: Q64,
-        base_qty: 200,
+        price_x64: price,
+        sqrt_price_x64: sqrt_price,
+        base_qty: quantity_b,
         sequence: 2,
     })
     .unwrap();
-    let mut ask_data = vec![0; ASK_PAGE_BYTES];
-    asks.encode_into(&mut ask_data).unwrap();
+    let mut ask_data = vec![
+        0;
+        if bid_side {
+            BID_PAGE_BYTES
+        } else {
+            ASK_PAGE_BYTES
+        }
+    ];
+    if bid_side {
+        let mut bids = BidPage::default();
+        bids.set_links(PageLinks::new(0, None, None));
+        for entry in asks.as_slice() {
+            bids.insert(*entry).unwrap();
+        }
+        bids.encode_into(&mut ask_data).unwrap();
+    } else {
+        asks.encode_into(&mut ask_data).unwrap();
+    }
 
     let mut sidecar = AskOwnerPage::default();
     sidecar.set_links(PageLinks::new(0, None, None));
@@ -152,20 +211,28 @@ fn fixture(freeze_destination: bool) -> Fixture {
         quote_mint: quote_mint.to_bytes(),
         base_vault: base_vault.to_bytes(),
         quote_vault: quote_vault.to_bytes(),
-        total_base: 300,
-        total_quote: 0,
+        total_base: if bid_side { 0 } else { quantity_a + quantity_b },
+        total_quote: if bid_side { quote_a + quote_b } else { 0 },
     };
     let mut custody_data = vec![0; CUSTODY_STATE_BYTES];
     custody_state.encode_into(&mut custody_data).unwrap();
 
     let mut balance_a_state =
         MakerBalance::new(bump_a, market.to_bytes(), maker_a.pubkey().to_bytes());
-    balance_a_state.locked_base = 100;
+    if bid_side {
+        balance_a_state.locked_quote = quote_a;
+    } else {
+        balance_a_state.locked_base = quantity_a;
+    }
     let mut balance_a_data = vec![0; MAKER_BALANCE_BYTES];
     balance_a_state.encode_into(&mut balance_a_data).unwrap();
     let mut balance_b_state =
         MakerBalance::new(bump_b, market.to_bytes(), maker_b.pubkey().to_bytes());
-    balance_b_state.locked_base = 200;
+    if bid_side {
+        balance_b_state.locked_quote = quote_b;
+    } else {
+        balance_b_state.locked_base = quantity_b;
+    }
     let mut balance_b_data = vec![0; MAKER_BALANCE_BYTES];
     balance_b_state.encode_into(&mut balance_b_data).unwrap();
 
@@ -198,30 +265,75 @@ fn fixture(freeze_destination: bool) -> Fixture {
     test.add_account(quote_mint, account(mint_data(), TOKEN));
     test.add_account(
         base_vault,
-        account(token_data(base_mint, vault_authority, 300, false), TOKEN),
+        account(
+            token_data(
+                base_mint,
+                vault_authority,
+                if bid_side { 0 } else { quantity_a + quantity_b },
+                false,
+            ),
+            TOKEN,
+        ),
     );
     test.add_account(
         quote_vault,
-        account(token_data(quote_mint, vault_authority, 0, false), TOKEN),
+        account(
+            token_data(
+                quote_mint,
+                vault_authority,
+                if bid_side { quote_a + quote_b } else { 0 },
+                false,
+            ),
+            TOKEN,
+        ),
     );
     test.add_account(
         taker_base,
-        account(token_data(base_mint, taker.pubkey(), 0, false), TOKEN),
+        account(
+            token_data(
+                base_mint,
+                taker.pubkey(),
+                if bid_side { 500 } else { 0 },
+                false,
+            ),
+            TOKEN,
+        ),
     );
     test.add_account(
         taker_quote,
-        account(token_data(quote_mint, taker.pubkey(), 500, false), TOKEN),
+        account(
+            token_data(
+                quote_mint,
+                taker.pubkey(),
+                if bid_side { 0 } else { 500 },
+                false,
+            ),
+            TOKEN,
+        ),
     );
     test.add_account(
         destination_a,
         account(
-            token_data(quote_mint, maker_a.pubkey(), 0, freeze_destination),
+            token_data(
+                if bid_side { base_mint } else { quote_mint },
+                maker_a.pubkey(),
+                0,
+                freeze_destination,
+            ),
             TOKEN,
         ),
     );
     test.add_account(
         destination_b,
-        account(token_data(quote_mint, maker_b.pubkey(), 0, false), TOKEN),
+        account(
+            token_data(
+                if bid_side { base_mint } else { quote_mint },
+                maker_b.pubkey(),
+                0,
+                false,
+            ),
+            TOKEN,
+        ),
     );
 
     Fixture {
@@ -294,6 +406,18 @@ fn seal(f: &Fixture, payer: Pubkey, base: u64, limit: u64) -> Instruction {
     }
 }
 
+fn seal_bid(f: &Fixture, payer: Pubkey, base: u64, min_quote: u64) -> Instruction {
+    let mut instruction = seal(f, payer, base, min_quote);
+    instruction.data[0] = 42;
+    instruction
+        .accounts
+        .push(AccountMeta::new(f.balance_a, false));
+    instruction
+        .accounts
+        .push(AccountMeta::new(f.balance_b, false));
+    instruction
+}
+
 fn leaf(digest: &[u8; 32], seat: u32, maker: Pubkey, weight: u64, amounts: [u64; 6]) -> [u8; 32] {
     let index = seat.to_le_bytes();
     let weight_bytes = weight.to_le_bytes();
@@ -357,6 +481,21 @@ fn claim(f: &Fixture, seat: u32, sibling: [u8; 32], destination: Pubkey) -> Inst
     }
 }
 
+fn claim_bid(f: &Fixture, seat: u32, sibling: [u8; 32], destination: Pubkey) -> Instruction {
+    let mut instruction = claim(f, seat, sibling, destination);
+    let amounts: [u64; 6] = if seat == 0 {
+        [0, 50, 50, 0, 0, 0]
+    } else {
+        [0, 99, 100, 0, 1, 0]
+    };
+    for (index, amount) in amounts.iter().enumerate() {
+        instruction.data[45 + index * 8..53 + index * 8].copy_from_slice(&amount.to_le_bytes());
+    }
+    instruction.accounts[6] = AccountMeta::new(f.base_vault, false);
+    instruction.accounts[8] = AccountMeta::new_readonly(f.base_mint, false);
+    instruction
+}
+
 async fn tx(
     context: &mut ProgramTestContext,
     ix: Instruction,
@@ -398,6 +537,19 @@ async fn bytes(context: &mut ProgramTestContext, pubkey: Pubkey) -> Vec<u8> {
         .unwrap()
         .data
 }
+
+async fn snapshot_bytes(context: &mut ProgramTestContext, pubkey: Pubkey) -> Vec<u8> {
+    // Negative transaction fixtures run before the frozen epoch PDA is
+    // created. Preserve its absence as an empty snapshot, without weakening
+    // successful claim tests that require the account to exist.
+    context
+        .banks_client
+        .get_account(pubkey)
+        .await
+        .unwrap()
+        .map(|account| account.data)
+        .unwrap_or_default()
+}
 async fn snapshot(context: &mut ProgramTestContext, f: &Fixture) -> Vec<Vec<u8>> {
     let mut accounts = Vec::new();
     for key in [
@@ -416,9 +568,224 @@ async fn snapshot(context: &mut ProgramTestContext, f: &Fixture) -> Vec<Vec<u8>>
         f.destination_a,
         f.destination_b,
     ] {
-        accounts.push(bytes(context, key).await);
+        accounts.push(snapshot_bytes(context, key).await);
     }
     accounts
+}
+
+#[tokio::test]
+async fn paid_bid_execution_seals_and_claims_base_without_spending_other_reserves() {
+    let mut f = fixture_bid(false);
+    let mut context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+        .await
+        .unwrap();
+    tx(&mut context, seal_bid(&f, payer, 150, 150), &[&f.taker])
+        .await
+        .unwrap();
+
+    let epoch_data = bytes(&mut context, f.epoch).await;
+    let epoch = FrozenEpochView::decode(&epoch_data).unwrap();
+    assert_eq!(epoch.header.side, 1);
+    assert_eq!(epoch.header.epoch_id, 0);
+    assert_eq!(epoch.header.totals, [0, 149, 150, 0, 1, 0]);
+    let a = leaf(
+        &epoch.header.commitment,
+        0,
+        f.maker_a.pubkey(),
+        100,
+        [0, 50, 50, 0, 0, 0],
+    );
+    let b = leaf(
+        &epoch.header.commitment,
+        1,
+        f.maker_b.pubkey(),
+        200,
+        [0, 99, 100, 0, 1, 0],
+    );
+    assert_eq!(
+        epoch.header.claim_root,
+        hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\0", &a, &b]).to_bytes()
+    );
+    assert_eq!(amount(&bytes(&mut context, f.base_vault).await), 150);
+    assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), 150);
+    assert_eq!(amount(&bytes(&mut context, f.taker_base).await), 350);
+    assert_eq!(amount(&bytes(&mut context, f.taker_quote).await), 150);
+    let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
+    assert_eq!(reserve.vault_floor(0, 150), Ok((150, 150)));
+
+    tx(
+        &mut context,
+        claim_bid(&f, 1, a, f.destination_b),
+        &[&f.maker_b],
+    )
+    .await
+    .unwrap();
+    tx(
+        &mut context,
+        claim_bid(&f, 0, b, f.destination_a),
+        &[&f.maker_a],
+    )
+    .await
+    .unwrap();
+    assert_eq!(amount(&bytes(&mut context, f.destination_a).await), 50);
+    assert_eq!(amount(&bytes(&mut context, f.destination_b).await), 99);
+    let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
+    assert_eq!(reserve.vault_floor(0, 150), Ok((1, 150)));
+    assert_eq!(reserve.maker_base_credit, 0);
+    assert_eq!(reserve.maker_quote_debit, 0);
+
+    let before = snapshot(&mut context, &f).await;
+    assert!(tx(
+        &mut context,
+        claim_bid(&f, 0, b, f.destination_a),
+        &[&f.maker_a]
+    )
+    .await
+    .is_err());
+    assert_eq!(snapshot(&mut context, &f).await, before);
+}
+
+#[tokio::test]
+async fn failed_bid_claim_to_frozen_destination_rolls_back_all_balances() {
+    let mut f = fixture_bid(true);
+    let mut context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+        .await
+        .unwrap();
+    tx(&mut context, seal_bid(&f, payer, 150, 150), &[&f.taker])
+        .await
+        .unwrap();
+    let epoch = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
+    let sibling = leaf(
+        &epoch.header.commitment,
+        1,
+        f.maker_b.pubkey(),
+        200,
+        [0, 99, 100, 0, 1, 0],
+    );
+    let before = snapshot(&mut context, &f).await;
+    assert!(tx(
+        &mut context,
+        claim_bid(&f, 0, sibling, f.destination_a),
+        &[&f.maker_a]
+    )
+    .await
+    .is_err());
+    assert_eq!(snapshot(&mut context, &f).await, before);
+}
+
+#[tokio::test]
+async fn bid_epoch_rejects_overfill_slippage_and_wrong_mint_without_state_changes() {
+    let mut f = fixture_bid(false);
+    let mut context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+        .await
+        .unwrap();
+    let before = snapshot(&mut context, &f).await;
+    assert!(tx(&mut context, seal_bid(&f, payer, 301, 1), &[&f.taker])
+        .await
+        .is_err());
+    assert_eq!(snapshot(&mut context, &f).await, before);
+    assert!(tx(&mut context, seal_bid(&f, payer, 150, 151), &[&f.taker])
+        .await
+        .is_err());
+    assert_eq!(snapshot(&mut context, &f).await, before);
+
+    let mut wrong_mint = seal_bid(&f, payer, 150, 150);
+    wrong_mint.accounts[11] = AccountMeta::new_readonly(f.base_mint, false);
+    assert!(tx(&mut context, wrong_mint, &[&f.taker]).await.is_err());
+    assert_eq!(snapshot(&mut context, &f).await, before);
+
+    let mut forged_maker_balance = seal_bid(&f, payer, 150, 150);
+    forged_maker_balance.accounts[17] = AccountMeta::new(f.balance_b, false);
+    assert!(tx(&mut context, forged_maker_balance, &[&f.taker])
+        .await
+        .is_err());
+    assert_eq!(snapshot(&mut context, &f).await, before);
+
+    let mut readonly_maker_balance = seal_bid(&f, payer, 150, 150);
+    readonly_maker_balance.accounts[17] = AccountMeta::new_readonly(f.balance_a, false);
+    assert!(tx(&mut context, readonly_maker_balance, &[&f.taker])
+        .await
+        .is_err());
+    assert_eq!(snapshot(&mut context, &f).await, before);
+
+    let mut wrong_sidecar = seal_bid(&f, payer, 150, 150);
+    wrong_sidecar.accounts[5] = AccountMeta::new_readonly(f.maker_a.pubkey(), false);
+    assert!(tx(&mut context, wrong_sidecar, &[&f.taker]).await.is_err());
+    assert_eq!(snapshot(&mut context, &f).await, before);
+}
+
+#[tokio::test]
+async fn fractional_bid_full_fill_refunds_surplus_and_claims_do_not_strand_quote() {
+    let mut f = fixture_bid_fractional(3);
+    let mut context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+        .await
+        .unwrap();
+    tx(&mut context, seal_bid(&f, payer, 6, 3), &[&f.taker])
+        .await
+        .unwrap();
+
+    let epoch = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
+    assert_eq!(epoch.header.totals, [0, 6, 3, 0, 0, 0]);
+    let balance_a = MakerBalance::decode_from(&bytes(&mut context, f.balance_a).await).unwrap();
+    let balance_b = MakerBalance::decode_from(&bytes(&mut context, f.balance_b).await).unwrap();
+    assert_eq!((balance_a.locked_quote, balance_a.free_quote), (1, 1));
+    assert_eq!((balance_b.locked_quote, balance_b.free_quote), (2, 0));
+    assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), 1);
+
+    let claim_a = [0, 3, 1, 0, 0, 0];
+    let claim_b = [0, 3, 2, 0, 0, 0];
+    let leaf_a = leaf(&epoch.header.commitment, 0, f.maker_a.pubkey(), 3, claim_a);
+    let leaf_b = leaf(&epoch.header.commitment, 1, f.maker_b.pubkey(), 3, claim_b);
+    assert_eq!(
+        epoch.header.claim_root,
+        hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\0", &leaf_a, &leaf_b]).to_bytes()
+    );
+
+    let mut first = claim_bid(&f, 0, leaf_b, f.destination_a);
+    first.data[37..45].copy_from_slice(&3u64.to_le_bytes());
+    for (index, amount) in claim_a.iter().enumerate() {
+        first.data[45 + index * 8..53 + index * 8].copy_from_slice(&amount.to_le_bytes());
+    }
+    tx(&mut context, first, &[&f.maker_a]).await.unwrap();
+
+    let mut second = claim_bid(&f, 1, leaf_a, f.destination_b);
+    second.data[37..45].copy_from_slice(&3u64.to_le_bytes());
+    for (index, amount) in claim_b.iter().enumerate() {
+        second.data[45 + index * 8..53 + index * 8].copy_from_slice(&amount.to_le_bytes());
+    }
+    tx(&mut context, second, &[&f.maker_b]).await.unwrap();
+    let balance_a = MakerBalance::decode_from(&bytes(&mut context, f.balance_a).await).unwrap();
+    let balance_b = MakerBalance::decode_from(&bytes(&mut context, f.balance_b).await).unwrap();
+    assert_eq!((balance_a.locked_quote, balance_a.free_quote), (0, 1));
+    assert_eq!((balance_b.locked_quote, balance_b.free_quote), (0, 0));
+    let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
+    assert_eq!(reserve.vault_floor(0, 1), Ok((0, 1)));
+}
+
+#[tokio::test]
+async fn fractional_bid_partial_fill_cannot_spend_still_locked_quote() {
+    let mut f = fixture_bid_fractional(2);
+    let mut context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+        .await
+        .unwrap();
+    let before = snapshot(&mut context, &f).await;
+    // Each 2-base order locks one quote. Filling 1 base from the second
+    // order cannot release quote while its remaining 1-base order still
+    // needs the full original 1 quote atom.
+    assert!(tx(&mut context, seal_bid(&f, payer, 1, 1), &[&f.taker])
+        .await
+        .is_err());
+    assert_eq!(snapshot(&mut context, &f).await, before);
 }
 
 #[tokio::test]

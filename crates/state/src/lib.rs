@@ -720,9 +720,9 @@ impl AskPage {
         }
         page.len = len as u16;
         page.reserved.copy_from_slice(&input[2..16]);
-        for index in 0..ASKS_PER_PAGE {
+        for (index, entry) in page.entries.iter_mut().enumerate() {
             let start = PAGE_HEADER_BYTES + index * ASK_ENTRY_BYTES;
-            page.entries[index] = AskEntry::decode_from(&input[start..start + ASK_ENTRY_BYTES]);
+            *entry = AskEntry::decode_from(&input[start..start + ASK_ENTRY_BYTES]);
         }
         page.validate_order()
     }
@@ -874,9 +874,9 @@ impl AskOwnerPage {
         }
         page.len = len as u16;
         page.reserved.copy_from_slice(&input[2..16]);
-        for index in 0..ASKS_PER_PAGE {
+        for (index, owner) in page.owners.iter_mut().enumerate() {
             let start = PAGE_HEADER_BYTES + index * ASK_OWNER_BYTES;
-            page.owners[index].copy_from_slice(&input[start..start + ASK_OWNER_BYTES]);
+            owner.copy_from_slice(&input[start..start + ASK_OWNER_BYTES]);
         }
         if page.owners[page.len()..]
             .iter()
@@ -1102,9 +1102,9 @@ impl BidPage {
         }
         page.len = len as u16;
         page.reserved.copy_from_slice(&input[2..16]);
-        for index in 0..BIDS_PER_PAGE {
+        for (index, entry) in page.entries.iter_mut().enumerate() {
             let start = PAGE_HEADER_BYTES + index * BID_ENTRY_BYTES;
-            page.entries[index] = BidEntry::decode_from(&input[start..start + BID_ENTRY_BYTES]);
+            *entry = BidEntry::decode_from(&input[start..start + BID_ENTRY_BYTES]);
         }
         page.validate_order()
     }
@@ -1461,10 +1461,9 @@ impl BoundaryPage {
             ..Self::default()
         };
         page.reserved.copy_from_slice(&input[2..16]);
-        for index in 0..BOUNDARIES_PER_PAGE {
+        for (index, entry) in page.entries.iter_mut().enumerate() {
             let start = PAGE_HEADER_BYTES + index * BOUNDARY_ENTRY_BYTES;
-            page.entries[index] =
-                BoundaryEntry::decode_from(&input[start..start + BOUNDARY_ENTRY_BYTES]);
+            *entry = BoundaryEntry::decode_from(&input[start..start + BOUNDARY_ENTRY_BYTES]);
         }
         page.validate_order()?;
         Ok(page)
@@ -2226,6 +2225,53 @@ mod bid_settlement_tests {
 /// maker-balance writes. All quantities are prevalidated, and both the page
 /// and owner sidecar must remain parallel after removing fully filled orders.
 /// The future claim instruction debits historical maker locked collateral.
+/// Apply a bounded single-tick BID epoch's base fills without touching maker
+/// balances. Historical quote collateral remains locked until the authenticated
+/// maker claim, after execution has already debited aggregate custody quote.
+pub fn apply_lazy_bid_fills(
+    bids: &mut BidPage,
+    owners: &mut BidOwnerPage,
+    fills: &[u64],
+) -> Result<usize, StateError> {
+    if owners.len() != bids.len() || owners.links() != bids.links() {
+        return Err(StateError::Corrupt);
+    }
+    if fills.len() != bids.len() || !fills.iter().any(|amount| *amount > 0) {
+        return Err(StateError::Corrupt);
+    }
+    if owners.as_slice().contains(&[0; 32]) || bids.validate_order().is_err() {
+        return Err(StateError::Corrupt);
+    }
+    for (order, fill) in bids.as_slice().iter().zip(fills) {
+        if *fill > order.base_qty {
+            return Err(StateError::Corrupt);
+        }
+    }
+    let mut removed = 0usize;
+    for index in (0..fills.len()).rev() {
+        let amount = fills[index];
+        if amount == 0 {
+            continue;
+        }
+        if amount == bids.entries[index].base_qty {
+            let sequence = bids.entries[index].sequence;
+            bids.remove_by_sequence(sequence)?;
+            owners.remove_at(index)?;
+            removed += 1;
+        } else {
+            bids.entries[index].base_qty -= amount;
+        }
+    }
+    if owners.len() != bids.len()
+        || owners.links() != bids.links()
+        || owners.as_slice().contains(&[0; 32])
+    {
+        return Err(StateError::Corrupt);
+    }
+    bids.validate_order()?;
+    Ok(removed)
+}
+
 pub fn apply_lazy_ask_fills(
     asks: &mut AskPage,
     owners: &mut AskOwnerPage,

@@ -92,6 +92,195 @@ pub fn allocate_ask(
     Ok(allocations)
 }
 
+/// BID-side cumulative pro-rata allocation in vault token atoms. The maker
+/// pays quote to the taker and receives base, net of a base-denominated fee.
+/// This is independent of the ASK-side quote-fee rounding rules.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MakerBidAllocation {
+    /// Net base atoms reserved for an eventual maker claim.
+    pub base_proceeds: u64,
+    /// Historical locked quote atoms to debit upon the maker's claim.
+    pub quote_spent: u64,
+    /// Base atoms permanently segregated as protocol fees.
+    pub base_fee: u64,
+}
+
+/// Assign an authenticated, single-price BID fill to a canonical maker roster.
+///
+/// All three quantities telescope by cumulative prefix, so neither splitting
+/// an order nor odd-weight rounding can manufacture or destroy token atoms.
+/// The caller must separately authenticate the roster, executable price,
+/// resting quote collateral, and the taker's actual SPL transfers.
+pub fn allocate_bid(
+    weights: &[u64],
+    filled_base: u64,
+    quote_paid: u64,
+    base_fee: u64,
+) -> Result<Vec<MakerBidAllocation>, ProRataError> {
+    if weights.is_empty()
+        || weights.len() > 32
+        || filled_base == 0
+        || quote_paid == 0
+        || base_fee >= filled_base
+    {
+        return Err(ProRataError::Invalid);
+    }
+    let total = weights
+        .iter()
+        .try_fold(0u64, |sum, weight| {
+            if *weight == 0 {
+                return None;
+            }
+            sum.checked_add(*weight)
+        })
+        .ok_or(ProRataError::Overflow)?;
+    if filled_base > total {
+        return Err(ProRataError::Invalid);
+    }
+
+    let mut weight_prefix = 0u64;
+    let mut fill_prefix = 0u64;
+    let mut allocations = Vec::with_capacity(weights.len());
+    for weight in weights {
+        let next_weight = weight_prefix
+            .checked_add(*weight)
+            .ok_or(ProRataError::Overflow)?;
+        let next_fill =
+            ((u128::from(filled_base) * u128::from(next_weight)) / u128::from(total)) as u64;
+        let filled = next_fill
+            .checked_sub(fill_prefix)
+            .ok_or(ProRataError::Invalid)?;
+        let quote_before =
+            ((u128::from(quote_paid) * u128::from(fill_prefix)) / u128::from(filled_base)) as u64;
+        let quote_after =
+            ((u128::from(quote_paid) * u128::from(next_fill)) / u128::from(filled_base)) as u64;
+        let fee_before =
+            ((u128::from(base_fee) * u128::from(fill_prefix)) / u128::from(filled_base)) as u64;
+        let fee_after =
+            ((u128::from(base_fee) * u128::from(next_fill)) / u128::from(filled_base)) as u64;
+        let fee = fee_after
+            .checked_sub(fee_before)
+            .ok_or(ProRataError::Invalid)?;
+        let proceeds = filled.checked_sub(fee).ok_or(ProRataError::Invalid)?;
+        let spent = quote_after
+            .checked_sub(quote_before)
+            .ok_or(ProRataError::Invalid)?;
+        // A positive fill without both a maker credit and an authenticated
+        // quote debit cannot be claimed through opcode 40. Reject it early.
+        if (filled == 0 && (spent != 0 || fee != 0))
+            || (filled > 0 && (proceeds == 0 || spent == 0))
+        {
+            return Err(ProRataError::Invalid);
+        }
+        allocations.push(MakerBidAllocation {
+            base_proceeds: proceeds,
+            quote_spent: spent,
+            base_fee: fee,
+        });
+        weight_prefix = next_weight;
+        fill_prefix = next_fill;
+    }
+    if fill_prefix != filled_base
+        || allocations
+            .iter()
+            .map(|entry| u128::from(entry.base_proceeds) + u128::from(entry.base_fee))
+            .sum::<u128>()
+            != u128::from(filled_base)
+        || allocations
+            .iter()
+            .map(|entry| u128::from(entry.quote_spent))
+            .sum::<u128>()
+            != u128::from(quote_paid)
+        || allocations
+            .iter()
+            .map(|entry| u128::from(entry.base_fee))
+            .sum::<u128>()
+            != u128::from(base_fee)
+    {
+        return Err(ProRataError::Invalid);
+    }
+    Ok(allocations)
+}
+
+/// Quote-safe BID allocation for execution-derived epochs.
+///
+/// Rounding an aggregate quote debit pro-rata can otherwise charge a maker
+/// more than `ceil(own_filled_base * price)`: at price 1/2, fills [3,2]
+/// and total quote 3, naive cumulative allocation assigns [1,2], while the
+/// second maker only locked 1 quote atom. Cap each seat by its independently
+/// rounded fill obligation and redistribute excess deterministically.
+pub fn allocate_bid_at_price(
+    weights: &[u64],
+    filled_base: u64,
+    price_x64: u128,
+    base_fee: u64,
+) -> Result<Vec<MakerBidAllocation>, ProRataError> {
+    let quote_paid = hybrid_engine::quote_for_base_at_price(filled_base, price_x64)
+        .map_err(|_| ProRataError::Overflow)?;
+    let mut claims = allocate_bid(weights, filled_base, quote_paid, base_fee)?;
+    let mut capacities = Vec::with_capacity(claims.len());
+    let mut spill = 0u64;
+    for claim in &mut claims {
+        let filled = claim
+            .base_proceeds
+            .checked_add(claim.base_fee)
+            .ok_or(ProRataError::Overflow)?;
+        // The release cap is the difference in the resting order's
+        // rounded-up collateral obligations, not ceil(filled * price).
+        // The latter can overdraw an order after a fractional partial fill.
+        let original_lock = hybrid_engine::quote_for_base_at_price(
+            *weights.get(capacities.len()).ok_or(ProRataError::Invalid)?,
+            price_x64,
+        )
+        .map_err(|_| ProRataError::Overflow)?;
+        let remaining = weights[capacities.len()]
+            .checked_sub(filled)
+            .ok_or(ProRataError::Invalid)?;
+        let remaining_lock = if remaining == 0 {
+            0
+        } else {
+            hybrid_engine::quote_for_base_at_price(remaining, price_x64)
+                .map_err(|_| ProRataError::Overflow)?
+        };
+        let cap = original_lock
+            .checked_sub(remaining_lock)
+            .ok_or(ProRataError::Invalid)?;
+        capacities.push(cap);
+        if claim.quote_spent > cap {
+            spill = spill
+                .checked_add(claim.quote_spent - cap)
+                .ok_or(ProRataError::Overflow)?;
+            claim.quote_spent = cap;
+        }
+    }
+    // Only the excess caused by aggregate-rounding dust is redistributed.
+    // The original prefix allocation is left intact whenever all seats fit.
+    for (claim, cap) in claims.iter_mut().zip(capacities) {
+        let room = cap
+            .checked_sub(claim.quote_spent)
+            .ok_or(ProRataError::Invalid)?;
+        let extra = room.min(spill);
+        claim.quote_spent = claim
+            .quote_spent
+            .checked_add(extra)
+            .ok_or(ProRataError::Overflow)?;
+        spill -= extra;
+    }
+    if spill != 0
+        || claims
+            .iter()
+            .any(|claim| claim.base_proceeds > 0 && claim.quote_spent == 0)
+        || claims
+            .iter()
+            .map(|claim| u128::from(claim.quote_spent))
+            .sum::<u128>()
+            != u128::from(quote_paid)
+    {
+        return Err(ProRataError::Invalid);
+    }
+    Ok(claims)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,6 +336,158 @@ mod tests {
                 u128::from(fee)
             );
         }
+    }
+
+    #[test]
+    fn bid_side_cumulative_allocations_conserve_base_quote_fees_and_dust() {
+        let amounts = allocate_bid(&[1, 1, 1], 2, 7, 0).unwrap();
+        assert_eq!(
+            amounts,
+            vec![
+                MakerBidAllocation {
+                    base_proceeds: 0,
+                    quote_spent: 0,
+                    base_fee: 0,
+                },
+                MakerBidAllocation {
+                    base_proceeds: 1,
+                    quote_spent: 3,
+                    base_fee: 0,
+                },
+                MakerBidAllocation {
+                    base_proceeds: 1,
+                    quote_spent: 4,
+                    base_fee: 0,
+                },
+            ]
+        );
+        for (weights, fill, quote, fee) in [
+            (vec![1; 8], 8, 25, 0),
+            (vec![1, 2, 3, 4], 10, 40, 1),
+            (vec![17, 999, 3, 2], 1021, 4_084, 3),
+            (vec![u64::MAX / 2, u64::MAX / 2], u64::MAX - 1, u64::MAX, 1),
+        ] {
+            let claims = allocate_bid(&weights, fill, quote, fee).unwrap();
+            assert_eq!(
+                claims
+                    .iter()
+                    .map(|x| u128::from(x.base_proceeds) + u128::from(x.base_fee))
+                    .sum::<u128>(),
+                u128::from(fill)
+            );
+            assert_eq!(
+                claims
+                    .iter()
+                    .map(|x| u128::from(x.quote_spent))
+                    .sum::<u128>(),
+                u128::from(quote)
+            );
+            assert_eq!(
+                claims.iter().map(|x| u128::from(x.base_fee)).sum::<u128>(),
+                u128::from(fee)
+            );
+        }
+    }
+
+    #[test]
+    fn bid_quote_caps_redistribute_fractional_price_rounding_without_underfunding() {
+        let half = hybrid_engine::Q64 / 2;
+        // Maker 2 is locked for ceil(2 / 2) = 1, not the 2 quote
+        // assigned by a simple pro-rata split of ceil(5 / 2) = 3.
+        let capped = allocate_bid_at_price(&[3, 2], 5, half, 0).unwrap();
+        assert_eq!(capped[0].quote_spent, 2);
+        assert_eq!(capped[1].quote_spent, 1);
+        assert_eq!(
+            capped
+                .iter()
+                .map(|c| u128::from(c.quote_spent))
+                .sum::<u128>(),
+            3
+        );
+        for (weights, fill, price, fee) in [
+            (vec![3, 2], 5, half, 0),
+            (vec![7, 5, 3], 15, hybrid_engine::Q64 * 3 / 2, 0),
+            (vec![100, 200], 150, hybrid_engine::Q64, 0),
+            (vec![17, 999, 3, 2], 1021, hybrid_engine::Q64 * 4, 3),
+        ] {
+            let allocations = allocate_bid_at_price(&weights, fill, price, fee).unwrap();
+            let quote_paid = hybrid_engine::quote_for_base_at_price(fill, price).unwrap();
+            let mut filled_prefix = 0u64;
+            let mut weight_prefix = 0u64;
+            let total: u64 = weights.iter().sum();
+            for (weight, allocation) in weights.iter().zip(&allocations) {
+                weight_prefix += weight;
+                let next_fill =
+                    ((u128::from(fill) * u128::from(weight_prefix)) / u128::from(total)) as u64;
+                let filled = next_fill - filled_prefix;
+                let locked = hybrid_engine::quote_for_base_at_price(*weight, price).unwrap();
+                assert!(allocation.quote_spent <= locked);
+                assert_eq!(allocation.base_proceeds + allocation.base_fee, filled);
+                filled_prefix = next_fill;
+            }
+            assert_eq!(
+                allocations
+                    .iter()
+                    .map(|c| u128::from(c.quote_spent))
+                    .sum::<u128>(),
+                u128::from(quote_paid)
+            );
+        }
+    }
+
+    #[test]
+    fn bid_partial_fill_must_not_debit_quote_still_locked_for_remaining_order() {
+        let half = hybrid_engine::Q64 / 2;
+        // The 2-base resting order locked 1 quote. Filling only 1 base
+        // releases 1 - ceil(1/2) = 0, so paying 1 quote is forbidden.
+        assert_eq!(
+            allocate_bid_at_price(&[2], 1, half, 0),
+            Err(ProRataError::Invalid)
+        );
+        // The same order can fully fill and release the whole locked quote.
+        let full = allocate_bid_at_price(&[2], 2, half, 0).unwrap();
+        assert_eq!(full[0].quote_spent, 1);
+        // Even when a different maker has spare quote collateral, the
+        // un-released amount cannot be assigned to this partial-fill seat.
+        assert_eq!(
+            allocate_bid_at_price(&[2, 2], 1, half, 0),
+            Err(ProRataError::Invalid)
+        );
+    }
+
+    #[test]
+    fn bid_full_fill_releases_more_quote_collateral_than_debited_when_rounding_down() {
+        let half = hybrid_engine::Q64 / 2;
+        // Each 3-base maker locked ceil(3/2) = 2 quote. Aggregate payout
+        // ceil(6/2) = 3, leaving one atom to unlock into maker free quote.
+        let fills = allocate_bid_at_price(&[3, 3], 6, half, 0).unwrap();
+        assert_eq!(fills[0].quote_spent + fills[1].quote_spent, 3);
+        let releases = [2u64, 2u64];
+        let refunds: Vec<u64> = releases
+            .iter()
+            .zip(&fills)
+            .map(|(released, claim)| released - claim.quote_spent)
+            .collect();
+        assert_eq!(refunds.iter().sum::<u64>(), 1);
+        assert!(refunds.contains(&1));
+    }
+
+    #[test]
+    fn bid_allocation_rejects_unclaimable_dust_overfill_and_weight_overflow() {
+        assert_eq!(allocate_bid(&[1, 1], 3, 3, 0), Err(ProRataError::Invalid));
+        assert_eq!(allocate_bid(&[1, 0], 1, 2, 0), Err(ProRataError::Overflow));
+        assert_eq!(
+            allocate_bid(&[u64::MAX, 1], 1, 2, 0),
+            Err(ProRataError::Overflow)
+        );
+        assert_eq!(allocate_bid(&[1], 1, 0, 0), Err(ProRataError::Invalid));
+        assert_eq!(allocate_bid(&[1], 1, 1, 1), Err(ProRataError::Invalid));
+        assert_eq!(allocate_bid(&[1, 1], 2, 1, 0), Err(ProRataError::Invalid));
+        assert_eq!(allocate_bid(&[1, 1], 2, 2, 1), Err(ProRataError::Invalid));
+        assert_eq!(
+            allocate_bid(&[1; 33], 33, 33, 0),
+            Err(ProRataError::Invalid)
+        );
     }
 
     #[test]
