@@ -790,6 +790,145 @@ async fn snapshot(context: &mut ProgramTestContext, f: &Fixture) -> Vec<Vec<u8>>
     accounts
 }
 
+// New opcode 43 is a read-only authenticated cross-page planning gate.
+// It does not create epochs or update book/custody/SPL accounts.
+fn multilevel_bid_preflight(
+    f: &Fixture,
+    tail: Option<(Pubkey, Pubkey)>,
+    base: u64,
+    min_quote: u64,
+) -> Instruction {
+    let mut accounts = vec![
+        AccountMeta::new_readonly(f.market, false),
+        AccountMeta::new_readonly(f.ask, false),
+        AccountMeta::new_readonly(f.owners, false),
+    ];
+    if let Some((page, owner)) = tail {
+        accounts.push(AccountMeta::new_readonly(page, false));
+        accounts.push(AccountMeta::new_readonly(owner, false));
+    }
+    let mut data = vec![43, if accounts.len() == 3 { 1 } else { 2 }];
+    data.extend_from_slice(&base.to_le_bytes());
+    data.extend_from_slice(&min_quote.to_le_bytes());
+    Instruction {
+        program_id: ID,
+        accounts,
+        data,
+    }
+}
+
+fn fixture_bid_two_linked_prices() -> (Fixture, Pubkey, Pubkey) {
+    let mut f = fixture_bid(false);
+    let next_index = 1u32.to_le_bytes();
+    let (tail_key, _) =
+        Pubkey::find_program_address(&[b"bid-page", f.market.as_ref(), &next_index], &ID);
+    let (tail_owner_key, _) =
+        Pubkey::find_program_address(&[b"bid-owner-page", f.market.as_ref(), &next_index], &ID);
+
+    let mut market = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    market.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
+    market.set_bid_count(3);
+    market.next_sequence = 4;
+    let mut tag = [0u8; 16];
+    tag.copy_from_slice(&f.owners.to_bytes()[..16]);
+    market.set_bid_owner_tag(tag);
+    let mut market_bytes = vec![0; MARKET_HEADER_BYTES];
+    market.encode_into(&mut market_bytes).unwrap();
+
+    let mut head = BidPage::default();
+    let mut head_owners = AskOwnerPage::default();
+    head.set_links(PageLinks::new(0, None, Some(1)));
+    head_owners.set_links(PageLinks::new(0, None, Some(1)));
+    for (index, (maker, qty)) in [(f.maker_a.pubkey(), 100u64), (f.maker_b.pubkey(), 200u64)]
+        .into_iter()
+        .enumerate()
+    {
+        head.insert(AskEntry {
+            price_x64: Q64,
+            sqrt_price_x64: Q64,
+            base_qty: qty,
+            sequence: index as u64 + 1,
+        })
+        .unwrap();
+        head_owners.owners[index] = maker.to_bytes();
+    }
+    head_owners.len = 2;
+    let mut head_bytes = vec![0; BID_PAGE_BYTES];
+    head.encode_into(&mut head_bytes).unwrap();
+    let mut head_owner_bytes = vec![0; ASK_OWNER_PAGE_BYTES];
+    head_owners.encode_into(&mut head_owner_bytes).unwrap();
+
+    let mut tail = BidPage::default();
+    let mut tail_owners = AskOwnerPage::default();
+    tail.set_links(PageLinks::new(1, Some(0), None));
+    tail_owners.set_links(PageLinks::new(1, Some(0), None));
+    tail.insert(AskEntry {
+        price_x64: Q64 / 2,
+        sqrt_price_x64: 13_043_817_825_332_782_213u128,
+        base_qty: 100,
+        sequence: 3,
+    })
+    .unwrap();
+    tail_owners.owners[0] = Pubkey::new_unique().to_bytes();
+    tail_owners.len = 1;
+    let mut tail_bytes = vec![0; BID_PAGE_BYTES];
+    tail.encode_into(&mut tail_bytes).unwrap();
+    let mut tail_owner_bytes = vec![0; ASK_OWNER_PAGE_BYTES];
+    tail_owners.encode_into(&mut tail_owner_bytes).unwrap();
+    let test = f.test.as_mut().unwrap();
+    test.add_account(f.market, account(market_bytes, ID));
+    test.add_account(f.ask, account(head_bytes, ID));
+    test.add_account(f.owners, account(head_owner_bytes, ID));
+    test.add_account(tail_key, account(tail_bytes, ID));
+    test.add_account(tail_owner_key, account(tail_owner_bytes, ID));
+    (f, tail_key, tail_owner_key)
+}
+
+#[tokio::test]
+async fn authenticated_multilevel_bid_preflight_crosses_two_linked_prices_without_writes() {
+    let (mut f, tail, tail_owner) = fixture_bid_two_linked_prices();
+    let mut context = f.test.take().unwrap().start_with_context().await;
+    let observed = [f.market, f.ask, f.owners, tail, tail_owner];
+    let mut before = Vec::new();
+    for key in observed {
+        before.push(snapshot_bytes(&mut context, key).await);
+    }
+    // First tick: 300 base at 1 quote/base; second tick: 50 at 1/2.
+    tx(
+        &mut context,
+        multilevel_bid_preflight(&f, Some((tail, tail_owner)), 350, 325),
+        &[],
+    )
+    .await
+    .unwrap();
+    for (index, key) in observed.into_iter().enumerate() {
+        assert_eq!(snapshot_bytes(&mut context, key).await, before[index]);
+    }
+
+    // Reject underquoted output, omitted tail page, forged sidecar PDA,
+    // duplicate account metas and malformed wire length without mutations.
+    let mut forged = multilevel_bid_preflight(&f, Some((tail, tail_owner)), 350, 325);
+    // A distinct program-owned maker balance is still not the canonical
+    // page-1 owner sidecar PDA; reject it before page decoding.
+    forged.accounts[4] = AccountMeta::new_readonly(f.balance_a, false);
+    let mut duplicate = multilevel_bid_preflight(&f, Some((tail, tail_owner)), 350, 325);
+    duplicate.accounts[3] = AccountMeta::new_readonly(f.ask, false);
+    let mut malformed = multilevel_bid_preflight(&f, Some((tail, tail_owner)), 350, 325);
+    malformed.data.pop();
+    for instruction in [
+        multilevel_bid_preflight(&f, Some((tail, tail_owner)), 350, 326),
+        multilevel_bid_preflight(&f, None, 350, 325),
+        forged,
+        duplicate,
+        malformed,
+    ] {
+        assert!(tx(&mut context, instruction, &[]).await.is_err());
+        for (index, key) in observed.into_iter().enumerate() {
+            assert_eq!(snapshot_bytes(&mut context, key).await, before[index]);
+        }
+    }
+}
+
 #[tokio::test]
 async fn extended_bid_roster_rejects_malformed_maker_account_lists_atomically() {
     let mut f = fixture_bid_extended(9);

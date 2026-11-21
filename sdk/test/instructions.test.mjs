@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   cancelOrder, closePassivePosition, initMakerBalance, initPassivePool,
-  openPassivePosition, placeOrder, swap, transferMakerCollateral, unsigned,
+  openPassivePosition, placeOrder, preflightMultilevelBid, swap, transferMakerCollateral, unsigned,
 } from "../src/instructions.mjs";
 
 const id = "hybrid-program";
@@ -109,4 +109,43 @@ test("reject imprecise numbers, overflow, missing accounts and invalid fan-out",
   assert.throws(()=> swap(id,{...trade,taker:undefined},{
     side:"buy",mode:"exact-in",amount:1n,limit:1n,
   }),TypeError);
+});
+
+test("opcode 43 encodes exact read-only two-page BID preflight ABI",()=>{
+  const book={market:"market",pages:[
+    {index:0,page:"bid-page-0",ownerPage:"owners-0"},
+    {index:1,page:"bid-page-1",ownerPage:"owners-1"},
+  ]};
+  const ix=preflightMultilevelBid(id,book,{requestedBase:350n,minQuoteOut:325n});
+  assert.equal(ix.programId,id);
+  assert.equal(ix.data.length,18);
+  assert.deepEqual([...ix.data.subarray(0,2)],[43,2]);
+  assert.equal(ix.data.readBigUInt64LE(2),350n);
+  assert.equal(ix.data.readBigUInt64LE(10),325n);
+  assert.deepEqual(ix.keys.map(k=>k.pubkey),[
+    "market","bid-page-0","owners-0","bid-page-1","owners-1",
+  ]);
+  assert.ok(ix.keys.every(k=>!k.isWritable&&!k.isSigner));
+});
+
+test("opcode 43 refuses incomplete, aliased or out-of-order BID page accounts",()=>{
+  const valid=[
+    {index:0,page:"page-0",ownerPage:"owners-0"},
+    {index:1,page:"page-1",ownerPage:"owners-1"},
+  ];
+  const make=pages=>preflightMultilevelBid(id,{market:"market",pages},{
+    requestedBase:100n,minQuoteOut:50n,
+  });
+  assert.throws(()=>make([]),/one or two/);
+  assert.throws(()=>make([...valid,valid[1]]),/one or two/);
+  assert.throws(()=>make([valid[1]]),/unordered/);
+  assert.throws(()=>make([{index:0,page:"market",ownerPage:"owners-0"}]),/Aliased/);
+  assert.throws(()=>make([{index:0,page:"page-0",ownerPage:"page-0"}]),/Aliased/);
+  assert.throws(()=>make([{index:0,page:"page-0"}]),/Missing/);
+  assert.throws(()=>preflightMultilevelBid(id,{market:"market",pages:valid},{
+    requestedBase:0n,minQuoteOut:1n,
+  }),/positive/);
+  assert.throws(()=>preflightMultilevelBid(id,{market:"market",pages:valid},{
+    requestedBase:1n,minQuoteOut:(1n<<64n),
+  }),/outside u64/);
 });
