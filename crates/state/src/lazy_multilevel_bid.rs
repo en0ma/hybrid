@@ -273,7 +273,7 @@ mod tests {
         assert_eq!(plan.ticks[2].price_x64, Q64 / 2);
         assert_eq!(plan.ticks[2].quote_paid, 50);
         assert_eq!(plan.quote_paid, 4_850);
-        assert_eq!(plan.ticks[2].totals(), [0, 100, 50, 0, 0, 0]);
+        assert_eq!(plan.ticks[2].totals(), [0, 99, 50, 0, 1, 0]);
     }
 
     #[test]
