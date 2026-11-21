@@ -1,6 +1,6 @@
 # Milestone 75 — multilevel BID preflight across authenticated page-shaped state
 
-**Status: draft foundation. Not an executable settlement instruction.**
+**Status: draft read-only native + on-chain preflight. Not an executable settlement instruction.**
 
 PR #73 merged the single-tick BID sealer. PR #74 increased its maker roster
 from eight to sixteen seats, with a sendable ALT-backed v0 transaction at the
@@ -12,8 +12,7 @@ execution-derived sealer.
 `crates/state/src/lazy_multilevel_bid.rs` adds
 `plan_multilevel_bid(pages, sidecars, requested_base, min_quote_out)`, a
 **pure, read-only** planner over the already decoded canonical BID book pages
-and aligned maker-owner sidecars. It is deliberately not called by any
-on-chain opcode.
+and aligned maker-owner sidecars. Opcode 43 now calls this planner **only**\nafter on-chain authenticated account preflight; opcode 43 never settles.
 
 - Cap input at **two linked pages, four executed price ticks, sixteen seats
   per executed tick**. These are **planner caps**, not measured limits for a
@@ -38,12 +37,34 @@ with three distinct price levels: 16 seats at 2 quote/base, 16 at 1 and one
 at 1/2. They verify crossing two and three price levels, independent
 quote rounding/fees, conservation and hostile owner/page/limit rejection.
 
+## On-chain read-only preflight (opcode 43)
+
+Instruction data: `[43, page_count:u8, requested_base:u64LE, min_quote_out:u64LE]`.
+Account order: market, then canonical ordered `(BID page, BID owner sidecar)`
+pairs for page IDs `0..page_count`. Both page and sidecar accounts must be
+program owned and disjoint. BID page PDAs must match their market/index
+seeds; head sidecar must match the market-header owner tag, and each later
+sidecar must be the canonical `bid-owner-page` market/index PDA. Decoded
+page/sidecar links and lengths must agree, and the flattened maker-seat
+count must equal the authenticated market BID order count. The pure planner
+checks all remaining link/order/owner/price/fill invariants.
+
+Funded SBF tests exercise two linked pages with prices 1 and 1/2,
+positive cross-price quote output and zero state changes. Malicious
+sidecar substitution, duplicated accounts, omitted pages, insufficient
+quote output and malformed wire length must all fail without mutations.
+
+**Opcode 43 is validation only:** it does not authenticate custody or SPL
+balances, reserve liabilities, maker balance PDAs or epoch destination PDAs.
+It creates no epoch and moves no tokens. It cannot be used to execute an
+order or claim proceeds. Opcode 42 is unchanged.
+
 ## Important separation of trust
 
-A correctly shaped in-memory book is **not proof of authenticity**. Only
-an on-chain instruction can verify program ownership, PDA derivation,
-market/custody ownership, SPL mint and vault balances, the owner sidecar
-head market tag and every later sidecar's canonical PDA.
+A correctly shaped in-memory book is **not proof of authenticity**. Opcode 43 now verifies program ownership, page/sidecar PDA derivation,
+market state and the authenticated sidecar chain, **but does not verify**
+custody, mint, SPL vault balances or executable maker collateral. These
+remain mandatory checks for the eventual mutating instruction.
 
 Likewise, these `PlannedBidTick` values are **not Merkle-authenticated
 maker credits**, and no new opcode accepts them from users.
