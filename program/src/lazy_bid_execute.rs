@@ -98,7 +98,11 @@ pub(super) fn validate_bid_custody_token_accounts(
     }
     for (account, expected_mint, expected_owner) in [
         (base_vault, custody.base_mint, expected_authority.to_bytes()),
-        (quote_vault, custody.quote_mint, expected_authority.to_bytes()),
+        (
+            quote_vault,
+            custody.quote_mint,
+            expected_authority.to_bytes(),
+        ),
         (taker_base, custody.base_mint, taker.key.to_bytes()),
         (taker_quote, custody.quote_mint, taker.key.to_bytes()),
     ] {
@@ -372,8 +376,13 @@ pub(super) fn execute_and_seal_bid(
             return Err(ProgramError::InvalidAccountData);
         }
         let balance = update_lazy_bid_maker_balance(
-            program_id, market_account, account, *owner, weights[index],
-            resting_price, &allocations[index],
+            program_id,
+            market_account,
+            account,
+            *owner,
+            weights[index],
+            resting_price,
+            &allocations[index],
         )?;
         updated_maker_balances.push(balance);
     }
@@ -381,9 +390,17 @@ pub(super) fn execute_and_seal_bid(
     let mut custody = load_custody(program_id, market_account, custody_account)?;
     let mut reserve = lazy_reserve::load_lazy_reserve(program_id, market_account, reserve_account)?;
     let authority_bump = validate_bid_custody_token_accounts(
-        program_id, market_account, &custody, taker,
-        taker_base, taker_quote, base_vault, quote_vault,
-        base_mint, quote_mint, vault_authority,
+        program_id,
+        market_account,
+        &custody,
+        taker,
+        taker_base,
+        taker_quote,
+        base_vault,
+        quote_vault,
+        base_mint,
+        quote_mint,
+        vault_authority,
     )?;
 
     // Reconcile vault ownership and ALL historical liabilities before
