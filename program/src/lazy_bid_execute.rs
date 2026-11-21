@@ -22,6 +22,50 @@ const EPOCH_DOMAIN: &[u8] = b"HYBRID_LAZY_PUBKEY_EPOCH_V1\0";
 const LEAF_DOMAIN: &[u8] = b"HYBRID_MAKER_PUBKEY_CLAIM_V1\0";
 const NODE_DOMAIN: &[u8] = b"HYBRID_MAKER_PUBKEY_NODE_V1\0";
 
+/// Update a verified maker PDA using the same collateral rounding rules
+/// for both one-page and linked-page BID settlement. Quote debits remain
+/// locked until the separately authenticated maker claim.
+#[inline(never)]
+pub(super) fn update_lazy_bid_maker_balance(
+    program_id: &Pubkey,
+    market: &AccountInfo,
+    account: &AccountInfo,
+    owner: [u8; 32],
+    original: u64,
+    price_x64: u128,
+    allocation: &hybrid_state::lazy_pro_rata::MakerBidAllocation,
+) -> Result<hybrid_state::MakerBalance, ProgramError> {
+    let mut balance = load_maker_balance_for_owner(program_id, market, account, owner)?;
+    let filled = allocation
+        .base_proceeds
+        .checked_add(allocation.base_fee)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let remaining = original
+        .checked_sub(filled)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let old_lock = hybrid_engine::quote_for_base_at_price(original, price_x64)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    let new_lock = if remaining == 0 {
+        0
+    } else {
+        hybrid_engine::quote_for_base_at_price(remaining, price_x64)
+            .map_err(|_| ProgramError::InvalidAccountData)?
+    };
+    let released = old_lock
+        .checked_sub(new_lock)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let surplus = released
+        .checked_sub(allocation.quote_spent)
+        .ok_or(ProgramError::InsufficientFunds)?;
+    balance
+        .unlock_quote(surplus)
+        .map_err(|_| ProgramError::InsufficientFunds)?;
+    if balance.locked_quote < allocation.quote_spent {
+        return Err(ProgramError::InsufficientFunds);
+    }
+    Ok(balance)
+}
+
 // Use the same canonical floor-sqrt interval accepted by order placement.
 fn validate_resting_bid_price(price_x64: u128, sqrt_price_x64: u128) -> ProgramResult {
     hybrid_engine::validate_limit_ask(hybrid_engine::LimitAsk {
@@ -276,36 +320,10 @@ pub(super) fn execute_and_seal_bid(
         {
             return Err(ProgramError::InvalidAccountData);
         }
-        let mut balance =
-            load_maker_balance_for_owner(program_id, market_account, account, *owner)?;
-        let original = weights[index];
-        let filled = allocations[index]
-            .base_proceeds
-            .checked_add(allocations[index].base_fee)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        let remaining = original
-            .checked_sub(filled)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        let old_lock = hybrid_engine::quote_for_base_at_price(original, resting_price)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-        let new_lock = if remaining == 0 {
-            0
-        } else {
-            hybrid_engine::quote_for_base_at_price(remaining, resting_price)
-                .map_err(|_| ProgramError::InvalidAccountData)?
-        };
-        let released = old_lock
-            .checked_sub(new_lock)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        let surplus = released
-            .checked_sub(allocations[index].quote_spent)
-            .ok_or(ProgramError::InsufficientFunds)?;
-        balance
-            .unlock_quote(surplus)
-            .map_err(|_| ProgramError::InsufficientFunds)?;
-        if balance.locked_quote < allocations[index].quote_spent {
-            return Err(ProgramError::InsufficientFunds);
-        }
+        let balance = update_lazy_bid_maker_balance(
+            program_id, market_account, account, *owner, weights[index],
+            resting_price, &allocations[index],
+        )?;
         updated_maker_balances.push(balance);
     }
 
