@@ -15,6 +15,73 @@ use super::*;
 const MAX_ATOMIC_BID_MAKERS: usize = 8;
 const FIXED_ACCOUNTS: usize = 20;
 
+
+/// Decode directly into heap-backed vectors. Avoid constructing two 1.5 KiB
+/// pages as simultaneous stack temporaries in the settlement frame.
+#[inline(never)]
+fn load_multipage_bid_pairs(
+    page_0: &AccountInfo,
+    owner_0: &AccountInfo,
+    page_1: &AccountInfo,
+    owner_1: &AccountInfo,
+) -> Result<(Vec<hybrid_state::BidPage>, Vec<hybrid_state::BidOwnerPage>), ProgramError> {
+    let mut pages = Vec::with_capacity(2);
+    let mut owners = Vec::with_capacity(2);
+    for (page, owner) in [(page_0, owner_0), (page_1, owner_1)] {
+        pages.resize_with(pages.len() + 1, hybrid_state::BidPage::default);
+        owners.resize_with(owners.len() + 1, hybrid_state::BidOwnerPage::default);
+        let index = pages.len() - 1;
+        hybrid_state::BidPage::decode_into(&page.try_borrow_data()?, &mut pages[index])
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        hybrid_state::BidOwnerPage::decode_into(&owner.try_borrow_data()?, &mut owners[index])
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+    }
+    Ok((pages, owners))
+}
+
+/// Isolate large local page/owner encoding temporaries from the execution
+/// frame. Identical layout to the already established multipage seller.
+#[inline(never)]
+fn store_multipage_bid_updates(
+    page_0: &AccountInfo,
+    owner_0: &AccountInfo,
+    page_1: &AccountInfo,
+    owner_1: &AccountInfo,
+    pages: &[hybrid_state::BidPage],
+    owners: &[hybrid_state::BidOwnerPage],
+) -> ProgramResult {
+    for (index, (page_account, owner_account)) in
+        [(page_0, owner_0), (page_1, owner_1)].iter().enumerate()
+    {
+        write_multipage_bid_pair(page_account, owner_account, index, pages.get(index), owners.get(index))?;
+    }
+    Ok(())
+}
+
+#[inline(never)]
+fn write_multipage_bid_pair(
+    page_account: &AccountInfo,
+    owner_account: &AccountInfo,
+    index: usize,
+    page: Option<&hybrid_state::BidPage>,
+    owner: Option<&hybrid_state::BidOwnerPage>,
+) -> ProgramResult {
+    let mut next_page = page.copied().unwrap_or_default();
+    let mut next_owner = owner.copied().unwrap_or_default();
+    if page.is_none() {
+        let links = hybrid_state::PageLinks::new(index as u32, None, None);
+        next_page.set_links(links);
+        next_owner.set_links(links);
+    }
+    next_page
+        .encode_into(&mut page_account.try_borrow_mut_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    next_owner
+        .encode_into(&mut owner_account.try_borrow_mut_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)
+}
+
+
 #[inline(never)]
 pub(super) fn execute_and_seal_multipage_bid(
     program_id: &Pubkey,
@@ -109,14 +176,7 @@ pub(super) fn execute_and_seal_multipage_bid(
             }
         }
     }
-    let pages = vec![
-        *load_active_bid_page(page_0)?,
-        *load_active_bid_page(page_1)?,
-    ];
-    let owners = vec![
-        *load_owner_page_box(owner_0)?,
-        *load_owner_page_box(owner_1)?,
-    ];
+    let (pages, owners) = load_multipage_bid_pairs(page_0, owner_0, page_1, owner_1)?;
     let seats: usize = pages.iter().map(|page| page.len()).sum();
     if seats != balances.len() || seats != market.bid_count() as usize {
         return Err(ProgramError::InvalidAccountData);
@@ -388,23 +448,7 @@ pub(super) fn execute_and_seal_multipage_bid(
     market
         .encode_into(&mut market_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    for (index, (page_account, owner_account)) in
-        [(page_0, owner_0), (page_1, owner_1)].iter().enumerate()
-    {
-        // Keep the head owner binding and trailing page PDA identities.
-        let mut page = next_pages.get(index).copied().unwrap_or_default();
-        let mut sidecar = next_owners.get(index).copied().unwrap_or_default();
-        if index >= next_pages.len() {
-            let links = hybrid_state::PageLinks::new(index as u32, None, None);
-            page.set_links(links);
-            sidecar.set_links(links);
-        }
-        page.encode_into(&mut page_account.try_borrow_mut_data()?)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-        sidecar
-            .encode_into(&mut owner_account.try_borrow_mut_data()?)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-    }
+    store_multipage_bid_updates(page_0, owner_0, page_1, owner_1, &next_pages, &next_owners)?;
     for (account, state) in balances.iter().zip(updated_balances.iter()) {
         store_maker_balance(account, state)?;
     }
