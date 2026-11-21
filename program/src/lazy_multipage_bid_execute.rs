@@ -170,40 +170,11 @@ pub(super) fn execute_and_seal_multipage_bid(
 
     let mut custody = load_custody(program_id, market_account, custody_account)?;
     let mut reserve = lazy_reserve::load_lazy_reserve(program_id, market_account, reserve_account)?;
-    if custody.base_vault != base_vault.key.to_bytes()
-        || custody.quote_vault != quote_vault.key.to_bytes()
-        || custody.base_mint != base_mint.key.to_bytes()
-        || custody.quote_mint != quote_mint.key.to_bytes()
-    {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let (expected_authority, authority_bump) = Pubkey::find_program_address(
-        &[b"vault-authority", market_account.key.as_ref()],
-        program_id,
-    );
-    if *vault_authority.key != expected_authority {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    for (account, expected_mint, expected_owner) in [
-        (base_vault, custody.base_mint, expected_authority.to_bytes()),
-        (
-            quote_vault,
-            custody.quote_mint,
-            expected_authority.to_bytes(),
-        ),
-        (taker_base, custody.base_mint, taker.key.to_bytes()),
-        (taker_quote, custody.quote_mint, taker.key.to_bytes()),
-    ] {
-        let (mint, owner) = token_account_fields(account)?;
-        if mint != expected_mint || owner != expected_owner {
-            return Err(ProgramError::InvalidAccountData);
-        }
-    }
-    if mint_decimals(base_mint)? != custody.base_decimals
-        || mint_decimals(quote_mint)? != custody.quote_decimals
-    {
-        return Err(ProgramError::InvalidAccountData);
-    }
+    let authority_bump = lazy_bid_execute::validate_bid_custody_token_accounts(
+        program_id, market_account, &custody, taker,
+        taker_base, taker_quote, base_vault, quote_vault,
+        base_mint, quote_mint, vault_authority,
+    )?;
     let (old_base_floor, old_quote_floor) = reserve
         .vault_floor(custody.total_base, custody.total_quote)
         .map_err(|_| ProgramError::InvalidAccountData)?;
