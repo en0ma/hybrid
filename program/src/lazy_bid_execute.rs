@@ -66,6 +66,57 @@ pub(super) fn update_lazy_bid_maker_balance(
     Ok(balance)
 }
 
+/// Verify custody-owned SPL accounts and canonical vault authority for
+/// both BID sealer ABIs. Shared to avoid expanding linked-SBF bytecode.
+#[inline(never)]
+pub(super) fn validate_bid_custody_token_accounts(
+    program_id: &Pubkey,
+    market_account: &AccountInfo,
+    custody: &hybrid_state::CustodyState,
+    taker: &AccountInfo,
+    taker_base: &AccountInfo,
+    taker_quote: &AccountInfo,
+    base_vault: &AccountInfo,
+    quote_vault: &AccountInfo,
+    base_mint: &AccountInfo,
+    quote_mint: &AccountInfo,
+    vault_authority: &AccountInfo,
+) -> Result<u8, ProgramError> {
+    if custody.base_vault != base_vault.key.to_bytes()
+        || custody.quote_vault != quote_vault.key.to_bytes()
+        || custody.base_mint != base_mint.key.to_bytes()
+        || custody.quote_mint != quote_mint.key.to_bytes()
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let (expected_authority, authority_bump) = Pubkey::find_program_address(
+        &[b"vault-authority", market_account.key.as_ref()],
+        program_id,
+    );
+    if *vault_authority.key != expected_authority {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    for (account, expected_mint, expected_owner) in [
+        (base_vault, custody.base_mint, expected_authority.to_bytes()),
+        (quote_vault, custody.quote_mint, expected_authority.to_bytes()),
+        (taker_base, custody.base_mint, taker.key.to_bytes()),
+        (taker_quote, custody.quote_mint, taker.key.to_bytes()),
+    ] {
+        let (mint, owner) = token_account_fields(account)?;
+        if mint != expected_mint || owner != expected_owner {
+            return Err(ProgramError::InvalidAccountData);
+        }
+    }
+    if mint_decimals(base_mint)? != custody.base_decimals
+        || mint_decimals(quote_mint)? != custody.quote_decimals
+        || *taker_base.key == *base_vault.key
+        || *taker_quote.key == *quote_vault.key
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    Ok(authority_bump)
+}
+
 // Use the same canonical floor-sqrt interval accepted by order placement.
 fn validate_resting_bid_price(price_x64: u128, sqrt_price_x64: u128) -> ProgramResult {
     hybrid_engine::validate_limit_ask(hybrid_engine::LimitAsk {
@@ -329,42 +380,11 @@ pub(super) fn execute_and_seal_bid(
 
     let mut custody = load_custody(program_id, market_account, custody_account)?;
     let mut reserve = lazy_reserve::load_lazy_reserve(program_id, market_account, reserve_account)?;
-    if custody.base_vault != base_vault.key.to_bytes()
-        || custody.quote_vault != quote_vault.key.to_bytes()
-        || custody.base_mint != base_mint.key.to_bytes()
-        || custody.quote_mint != quote_mint.key.to_bytes()
-    {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let (expected_authority, authority_bump) = Pubkey::find_program_address(
-        &[b"vault-authority", market_account.key.as_ref()],
-        program_id,
-    );
-    if *vault_authority.key != expected_authority {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    for (account, expected_mint, expected_owner) in [
-        (base_vault, custody.base_mint, expected_authority.to_bytes()),
-        (
-            quote_vault,
-            custody.quote_mint,
-            expected_authority.to_bytes(),
-        ),
-        (taker_base, custody.base_mint, taker.key.to_bytes()),
-        (taker_quote, custody.quote_mint, taker.key.to_bytes()),
-    ] {
-        let (mint, owner) = token_account_fields(account)?;
-        if mint != expected_mint || owner != expected_owner {
-            return Err(ProgramError::InvalidAccountData);
-        }
-    }
-    if mint_decimals(base_mint)? != custody.base_decimals
-        || mint_decimals(quote_mint)? != custody.quote_decimals
-        || *taker_base.key == *base_vault.key
-        || *taker_quote.key == *quote_vault.key
-    {
-        return Err(ProgramError::InvalidAccountData);
-    }
+    let authority_bump = validate_bid_custody_token_accounts(
+        program_id, market_account, &custody, taker,
+        taker_base, taker_quote, base_vault, quote_vault,
+        base_mint, quote_mint, vault_authority,
+    )?;
 
     // Reconcile vault ownership and ALL historical liabilities before
     // creating the next epoch, not merely the new epoch's Merkle root.
