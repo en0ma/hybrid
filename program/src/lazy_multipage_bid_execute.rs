@@ -231,35 +231,12 @@ pub(super) fn execute_and_seal_multipage_bid(
             let balance = balances
                 .get(row_index)
                 .ok_or(ProgramError::NotEnoughAccountKeys)?;
-            let mut state =
-                load_maker_balance_for_owner(program_id, market_account, balance, *maker)?;
-            let filled = claim
-                .base_proceeds
-                .checked_add(claim.base_fee)
+            let state = lazy_bid_execute::update_lazy_bid_maker_balance(
+                program_id, market_account, balance, *maker, *original,
+                tick.price_x64, claim,
+            )?;
+            let filled = claim.base_proceeds.checked_add(claim.base_fee)
                 .ok_or(ProgramError::InvalidAccountData)?;
-            let remaining = original
-                .checked_sub(filled)
-                .ok_or(ProgramError::InvalidAccountData)?;
-            let old_lock = hybrid_engine::quote_for_base_at_price(*original, tick.price_x64)
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-            let new_lock = if remaining == 0 {
-                0
-            } else {
-                hybrid_engine::quote_for_base_at_price(remaining, tick.price_x64)
-                    .map_err(|_| ProgramError::InvalidAccountData)?
-            };
-            let released = old_lock
-                .checked_sub(new_lock)
-                .ok_or(ProgramError::InvalidAccountData)?;
-            let surplus = released
-                .checked_sub(claim.quote_spent)
-                .ok_or(ProgramError::InsufficientFunds)?;
-            state
-                .unlock_quote(surplus)
-                .map_err(|_| ProgramError::InsufficientFunds)?;
-            if state.locked_quote < claim.quote_spent {
-                return Err(ProgramError::InsufficientFunds);
-            }
             if filled > 0 {
                 fills.push(hybrid_engine::ActiveBidFill {
                     bid_index: u16::try_from(row_index)
