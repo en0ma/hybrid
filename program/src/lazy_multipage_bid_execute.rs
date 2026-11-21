@@ -52,57 +52,10 @@ fn store_multipage_bid_updates<'a>(
     for (index, (page_account, owner_account)) in
         [(page_0, owner_0), (page_1, owner_1)].iter().enumerate()
     {
-        write_multipage_bid_pair(
-            page_account,
-            owner_account,
-            index,
-            pages.get(index),
-            owners.get(index),
-        )?;
+        multipage_sell::store_bid_data_page(page_account, index, pages.get(index))?;
+        multipage_sell::store_bid_owner_page(owner_account, index, owners.get(index))?;
     }
     Ok(())
-}
-
-#[inline(never)]
-fn write_multipage_bid_pair(
-    page_account: &AccountInfo,
-    owner_account: &AccountInfo,
-    index: usize,
-    page: Option<&hybrid_state::BidPage>,
-    owner: Option<&hybrid_state::BidOwnerPage>,
-) -> ProgramResult {
-    write_multipage_bid_page(page_account, index, page)?;
-    write_multipage_bid_owner(owner_account, index, owner)
-}
-
-/// Separating each 1552-byte book and 1040-byte sidecar temporary avoids
-/// overflowing SBF's 4096-byte per-function stack frame.
-#[inline(never)]
-fn write_multipage_bid_page(
-    account: &AccountInfo,
-    index: usize,
-    next: Option<&hybrid_state::BidPage>,
-) -> ProgramResult {
-    let mut page = next.copied().unwrap_or_default();
-    if next.is_none() {
-        page.set_links(hybrid_state::PageLinks::new(index as u32, None, None));
-    }
-    page.encode_into(&mut account.try_borrow_mut_data()?)
-        .map_err(|_| ProgramError::InvalidAccountData)
-}
-
-#[inline(never)]
-fn write_multipage_bid_owner(
-    account: &AccountInfo,
-    index: usize,
-    next: Option<&hybrid_state::BidOwnerPage>,
-) -> ProgramResult {
-    let mut owner = next.copied().unwrap_or_default();
-    if next.is_none() {
-        owner.set_links(hybrid_state::PageLinks::new(index as u32, None, None));
-    }
-    owner.encode_into(&mut account.try_borrow_mut_data()?)
-        .map_err(|_| ProgramError::InvalidAccountData)
 }
 
 #[inline(never)]
