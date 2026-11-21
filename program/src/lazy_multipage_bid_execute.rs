@@ -15,7 +15,6 @@ use super::*;
 const MAX_ATOMIC_BID_MAKERS: usize = 8;
 const FIXED_ACCOUNTS: usize = 20;
 
-
 /// Decode directly into heap-backed vectors. Avoid constructing two 1.5 KiB
 /// pages as simultaneous stack temporaries in the settlement frame.
 #[inline(never)]
@@ -53,7 +52,13 @@ fn store_multipage_bid_updates(
     for (index, (page_account, owner_account)) in
         [(page_0, owner_0), (page_1, owner_1)].iter().enumerate()
     {
-        write_multipage_bid_pair(page_account, owner_account, index, pages.get(index), owners.get(index))?;
+        write_multipage_bid_pair(
+            page_account,
+            owner_account,
+            index,
+            pages.get(index),
+            owners.get(index),
+        )?;
     }
     Ok(())
 }
@@ -80,7 +85,6 @@ fn write_multipage_bid_pair(
         .encode_into(&mut owner_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)
 }
-
 
 #[inline(never)]
 pub(super) fn execute_and_seal_multipage_bid(
