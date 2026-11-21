@@ -69,6 +69,7 @@ pub(super) fn update_lazy_bid_maker_balance(
 /// Verify custody-owned SPL accounts and canonical vault authority for
 /// both BID sealer ABIs. Shared to avoid expanding linked-SBF bytecode.
 #[inline(never)]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn validate_bid_custody_token_accounts<'a>(
     program_id: &Pubkey,
     market_account: &AccountInfo<'a>,
@@ -124,6 +125,7 @@ pub(super) fn validate_bid_custody_token_accounts<'a>(
 /// Derive the same immutable V1 BID epoch commitment and claim root from
 /// program-owned resting rows in both execution ABIs.
 #[inline(never)]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_bid_epoch_header(
     program_id: &Pubkey,
     market: &Pubkey,
