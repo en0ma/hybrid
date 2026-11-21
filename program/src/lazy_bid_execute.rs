@@ -121,6 +121,54 @@ pub(super) fn validate_bid_custody_token_accounts<'a>(
     Ok(authority_bump)
 }
 
+/// Derive the same immutable V1 BID epoch commitment and claim root from
+/// program-owned resting rows in both execution ABIs.
+#[inline(never)]
+pub(super) fn build_bid_epoch_header(
+    program_id: &Pubkey,
+    market: &Pubkey,
+    epoch_key: &Pubkey,
+    custody: &hybrid_state::CustodyState,
+    genesis: [u8; 32],
+    epoch_id: u64,
+    tick_sqrt_price_x64: u128,
+    owners: &[[u8; 32]],
+    weights: &[u64],
+    allocations: &[hybrid_state::lazy_pro_rata::MakerBidAllocation],
+    totals: [u64; 6],
+) -> Result<hybrid_state::frozen_epoch::FrozenEpochHeader, ProgramError> {
+    let digest = epoch_commitment(
+        market, program_id, &genesis, (epoch_id, tick_sqrt_price_x64),
+        owners, weights, totals,
+    )?;
+    let root = sealed_claim_root(&digest, owners, weights, allocations)?;
+    let id_bytes = epoch_id.to_le_bytes();
+    let (expected_epoch, bump) = Pubkey::find_program_address(
+        &[b"frozen-epoch", market.as_ref(), &id_bytes], program_id,
+    );
+    if *epoch_key != expected_epoch {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let header = hybrid_state::frozen_epoch::FrozenEpochHeader {
+        bump,
+        side: 1,
+        market: market.to_bytes(),
+        authority: market.to_bytes(),
+        program: program_id.to_bytes(),
+        genesis,
+        epoch_id,
+        tick_sqrt_price_x64,
+        commitment: digest,
+        claim_root: root,
+        maker_count: owners.len() as u32,
+        totals,
+        base_vault: custody.base_vault,
+        quote_vault: custody.quote_vault,
+    };
+    header.validate().map_err(|_| ProgramError::InvalidAccountData)?;
+    Ok(header)
+}
+
 // Use the same canonical floor-sqrt interval accepted by order placement.
 fn validate_resting_bid_price(price_x64: u128, sqrt_price_x64: u128) -> ProgramResult {
     hybrid_engine::validate_limit_ask(hybrid_engine::LimitAsk {
@@ -416,43 +464,13 @@ pub(super) fn execute_and_seal_bid(
     }
     let epoch_id = reserve.next_epoch_id;
     let totals = [0, base_fill - base_fee, quote_paid, 0, base_fee, 0];
-    let digest = epoch_commitment(
-        market_account.key,
-        program_id,
-        &reserve.genesis,
-        (epoch_id, resting_tick),
-        &owners,
-        &weights,
-        totals,
-    )?;
-    let root = sealed_claim_root(&digest, &owners, &weights, &allocations)?;
     let id_bytes = epoch_id.to_le_bytes();
-    let (expected_epoch, epoch_bump) = Pubkey::find_program_address(
-        &[b"frozen-epoch", market_account.key.as_ref(), &id_bytes],
-        program_id,
-    );
-    if *epoch_account.key != expected_epoch {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    let header = hybrid_state::frozen_epoch::FrozenEpochHeader {
-        bump: epoch_bump,
-        side: 1,
-        market: market_account.key.to_bytes(),
-        authority: market_account.key.to_bytes(),
-        program: program_id.to_bytes(),
-        genesis: reserve.genesis,
-        epoch_id,
-        tick_sqrt_price_x64: resting_tick,
-        commitment: digest,
-        claim_root: root,
-        maker_count: weights.len() as u32,
-        totals,
-        base_vault: custody.base_vault,
-        quote_vault: custody.quote_vault,
-    };
-    header
-        .validate()
-        .map_err(|_| ProgramError::InvalidAccountData)?;
+    let header = build_bid_epoch_header(
+        program_id, market_account.key, epoch_account.key, &custody,
+        reserve.genesis, epoch_id, resting_tick, &owners, &weights,
+        &allocations, totals,
+    )?;
+    let epoch_bump = header.bump;
 
     // Precalculate every state transition before the first token CPI.
     let fills: Vec<u64> = allocations
