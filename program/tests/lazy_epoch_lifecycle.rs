@@ -685,13 +685,20 @@ async fn tx(
             data,
         });
     }
+    let ix_opcode = ix.data.first().copied();
     instructions.push(ix);
+    let check_packet = ix_opcode == Some(44);
     let signed = Transaction::new_signed_with_payer(
         &instructions,
         Some(&context.payer.pubkey()),
         &all_signers,
         blockhash,
     );
+    if check_packet {
+        // Legacy transaction bytes must actually be network-sendable,
+        // not merely accepted by the in-process BanksClient.
+        assert!(bincode::serialize(&signed).unwrap().len() <= 1_232);
+    }
     context.banks_client.process_transaction(signed).await
 }
 // A 16-seat BID cannot fit into a legacy network packet. Resolve the
