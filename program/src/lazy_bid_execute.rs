@@ -69,18 +69,18 @@ pub(super) fn update_lazy_bid_maker_balance(
 /// Verify custody-owned SPL accounts and canonical vault authority for
 /// both BID sealer ABIs. Shared to avoid expanding linked-SBF bytecode.
 #[inline(never)]
-pub(super) fn validate_bid_custody_token_accounts(
+pub(super) fn validate_bid_custody_token_accounts<'a>(
     program_id: &Pubkey,
-    market_account: &AccountInfo,
+    market_account: &AccountInfo<'a>,
     custody: &hybrid_state::CustodyState,
-    taker: &AccountInfo,
-    taker_base: &AccountInfo,
-    taker_quote: &AccountInfo,
-    base_vault: &AccountInfo,
-    quote_vault: &AccountInfo,
-    base_mint: &AccountInfo,
-    quote_mint: &AccountInfo,
-    vault_authority: &AccountInfo,
+    taker: &AccountInfo<'a>,
+    taker_base: &AccountInfo<'a>,
+    taker_quote: &AccountInfo<'a>,
+    base_vault: &AccountInfo<'a>,
+    quote_vault: &AccountInfo<'a>,
+    base_mint: &AccountInfo<'a>,
+    quote_mint: &AccountInfo<'a>,
+    vault_authority: &AccountInfo<'a>,
 ) -> Result<u8, ProgramError> {
     if custody.base_vault != base_vault.key.to_bytes()
         || custody.quote_vault != quote_vault.key.to_bytes()
