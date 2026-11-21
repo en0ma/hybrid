@@ -171,9 +171,17 @@ pub(super) fn execute_and_seal_multipage_bid(
     let mut custody = load_custody(program_id, market_account, custody_account)?;
     let mut reserve = lazy_reserve::load_lazy_reserve(program_id, market_account, reserve_account)?;
     let authority_bump = lazy_bid_execute::validate_bid_custody_token_accounts(
-        program_id, market_account, &custody, taker,
-        taker_base, taker_quote, base_vault, quote_vault,
-        base_mint, quote_mint, vault_authority,
+        program_id,
+        market_account,
+        &custody,
+        taker,
+        taker_base,
+        taker_quote,
+        base_vault,
+        quote_vault,
+        base_mint,
+        quote_mint,
+        vault_authority,
     )?;
     let (old_base_floor, old_quote_floor) = reserve
         .vault_floor(custody.total_base, custody.total_quote)
@@ -203,10 +211,17 @@ pub(super) fn execute_and_seal_multipage_bid(
                 .get(row_index)
                 .ok_or(ProgramError::NotEnoughAccountKeys)?;
             let state = lazy_bid_execute::update_lazy_bid_maker_balance(
-                program_id, market_account, balance, *maker, *original,
-                tick.price_x64, claim,
+                program_id,
+                market_account,
+                balance,
+                *maker,
+                *original,
+                tick.price_x64,
+                claim,
             )?;
-            let filled = claim.base_proceeds.checked_add(claim.base_fee)
+            let filled = claim
+                .base_proceeds
+                .checked_add(claim.base_fee)
                 .ok_or(ProgramError::InvalidAccountData)?;
             if filled > 0 {
                 fills.push(hybrid_engine::ActiveBidFill {
