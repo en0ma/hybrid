@@ -670,9 +670,7 @@ async fn tx(
     // 200_000-CU single-instruction default. Other opcodes retain the default.
     const CLAIM_CU_LIMIT: u32 = 350_000;
     let mut instructions = Vec::with_capacity(2);
-    if ix.data.first() == Some(&40)
-        || ix.data.first() == Some(&42)
-        || ix.data.first() == Some(&44)
+    if ix.data.first() == Some(&40) || ix.data.first() == Some(&42) || ix.data.first() == Some(&44)
     {
         let mut data = vec![2u8]; // SetComputeUnitLimit, u32 little-endian
         let limit = if ix.data.first() == Some(&42) || ix.data.first() == Some(&44) {
@@ -824,7 +822,8 @@ fn fixture_funded_multipage_bid() -> (Fixture, Pubkey, Pubkey, Pubkey) {
     let (mut f, tail, tail_owner) = fixture_bid_two_linked_prices();
     let maker = Keypair::new();
     let (balance, bump) = Pubkey::find_program_address(
-        &[b"maker-balance", f.market.as_ref(), maker.pubkey().as_ref()], &ID,
+        &[b"maker-balance", f.market.as_ref(), maker.pubkey().as_ref()],
+        &ID,
     );
     let destination = Pubkey::new_unique();
     let test = f.test.as_mut().unwrap();
@@ -870,7 +869,10 @@ fn fixture_funded_multipage_bid() -> (Fixture, Pubkey, Pubkey, Pubkey) {
     test.add_account(f.custody, account(custody_data, ID));
     test.add_account(
         f.quote_vault,
-        account(token_data(f.quote_mint, f.vault_authority, 350, false), TOKEN),
+        account(
+            token_data(f.quote_mint, f.vault_authority, 350, false),
+            TOKEN,
+        ),
     );
     f.extra_makers.push(maker);
     f.extra_balances.push(balance);
@@ -879,8 +881,13 @@ fn fixture_funded_multipage_bid() -> (Fixture, Pubkey, Pubkey, Pubkey) {
 }
 
 fn seal_multipage_bid(
-    f: &Fixture, payer: Pubkey, tail: Pubkey, tail_owner: Pubkey,
-    epoch_one: Pubkey, base: u64, min_quote: u64,
+    f: &Fixture,
+    payer: Pubkey,
+    tail: Pubkey,
+    tail_owner: Pubkey,
+    epoch_one: Pubkey,
+    base: u64,
+    min_quote: u64,
 ) -> Instruction {
     let mut data = vec![44];
     data.extend_from_slice(&base.to_le_bytes());
@@ -923,9 +930,11 @@ async fn funded_two_page_bid_seals_two_epochs_and_compacts_order_chain() {
     let mut context = f.test.take().unwrap().start_with_context().await;
     let payer = context.payer.pubkey();
     tx(&mut context, initialize(&f, payer), &[&f.market_signer])
-        .await.unwrap();
+        .await
+        .unwrap();
     let (epoch_one, _) = Pubkey::find_program_address(
-        &[b"frozen-epoch", f.market.as_ref(), &1u64.to_le_bytes()], &ID,
+        &[b"frozen-epoch", f.market.as_ref(), &1u64.to_le_bytes()],
+        &ID,
     );
     let before_base = amount(&bytes(&mut context, f.taker_base).await);
     let before_quote = amount(&bytes(&mut context, f.taker_quote).await);
@@ -933,30 +942,42 @@ async fn funded_two_page_bid_seals_two_epochs_and_compacts_order_chain() {
         &mut context,
         seal_multipage_bid(&f, payer, tail, tail_owner, epoch_one, 350, 325),
         &[&f.taker],
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
 
     let first = FrozenEpochView::decode(&bytes(&mut context, f.epoch).await).unwrap();
     let second = FrozenEpochView::decode(&bytes(&mut context, epoch_one).await).unwrap();
     assert_eq!(first.header.epoch_id, 0);
     assert_eq!(second.header.epoch_id, 1);
     assert_eq!(first.header.tick_sqrt_price_x64, Q64);
-    assert_eq!(second.header.tick_sqrt_price_x64, 13_043_817_825_332_782_213u128);
+    assert_eq!(
+        second.header.tick_sqrt_price_x64,
+        13_043_817_825_332_782_213u128
+    );
     assert_eq!(first.header.maker_count, 2);
     assert_eq!(second.header.maker_count, 1);
     assert_eq!(first.header.totals, [0, 297, 300, 0, 3, 0]);
     assert_eq!(second.header.totals, [0, 50, 25, 0, 0, 0]);
     assert_ne!(first.header.commitment, second.header.commitment);
-    assert_eq!(amount(&bytes(&mut context, f.taker_base).await), before_base - 350);
-    assert_eq!(amount(&bytes(&mut context, f.taker_quote).await), before_quote + 325);
+    assert_eq!(
+        amount(&bytes(&mut context, f.taker_base).await),
+        before_base - 350
+    );
+    assert_eq!(
+        amount(&bytes(&mut context, f.taker_quote).await),
+        before_quote + 325
+    );
     let head = BidPage::decode_from(&bytes(&mut context, f.ask).await).unwrap();
     assert_eq!(head.len(), 1);
     assert_eq!(head.as_slice()[0].base_qty, 50);
     assert_eq!(head.as_slice()[0].sequence, 3);
     assert_eq!(head.links(), PageLinks::new(0, None, None));
-    let compacted_owners = AskOwnerPage::decode_from(
-        &bytes(&mut context, f.owners).await,
-    ).unwrap();
-    assert_eq!(compacted_owners.as_slice()[0], f.extra_makers[0].pubkey().to_bytes());
+    let compacted_owners = AskOwnerPage::decode_from(&bytes(&mut context, f.owners).await).unwrap();
+    assert_eq!(
+        compacted_owners.as_slice()[0],
+        f.extra_makers[0].pubkey().to_bytes()
+    );
     let retired = BidPage::decode_from(&bytes(&mut context, tail).await).unwrap();
     assert_eq!(retired.len(), 0);
     assert_eq!(retired.links().page_index, 1);
@@ -968,14 +989,29 @@ async fn multipage_bid_rejects_late_tick_failures_without_any_account_writes() {
     let mut context = f.test.take().unwrap().start_with_context().await;
     let payer = context.payer.pubkey();
     tx(&mut context, initialize(&f, payer), &[&f.market_signer])
-        .await.unwrap();
+        .await
+        .unwrap();
     let (epoch_one, _) = Pubkey::find_program_address(
-        &[b"frozen-epoch", f.market.as_ref(), &1u64.to_le_bytes()], &ID,
+        &[b"frozen-epoch", f.market.as_ref(), &1u64.to_le_bytes()],
+        &ID,
     );
     let observed = [
-        f.market, f.custody, f.reserve, f.epoch, epoch_one, f.ask, f.owners,
-        tail, tail_owner, f.balance_a, f.balance_b, f.extra_balances[0],
-        f.quote_vault, f.base_vault, f.taker_base, f.taker_quote,
+        f.market,
+        f.custody,
+        f.reserve,
+        f.epoch,
+        epoch_one,
+        f.ask,
+        f.owners,
+        tail,
+        tail_owner,
+        f.balance_a,
+        f.balance_b,
+        f.extra_balances[0],
+        f.quote_vault,
+        f.base_vault,
+        f.taker_base,
+        f.taker_quote,
     ];
     let mut before = Vec::new();
     for key in observed {
@@ -992,7 +1028,11 @@ async fn multipage_bid_rejects_late_tick_failures_without_any_account_writes() {
     bad_epoch.accounts[4] = AccountMeta::new(Pubkey::new_unique(), false);
     let bad_slippage = seal_multipage_bid(&f, payer, tail, tail_owner, epoch_one, 350, 326);
     for instruction in [
-        forged_owner, swapped_balances, duplicate, bad_epoch, bad_slippage,
+        forged_owner,
+        swapped_balances,
+        duplicate,
+        bad_epoch,
+        bad_slippage,
     ] {
         assert!(tx(&mut context, instruction, &[&f.taker]).await.is_err());
         for (index, key) in observed.iter().enumerate() {
