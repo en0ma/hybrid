@@ -1059,7 +1059,7 @@ async fn funded_two_page_bid_seals_two_epochs_and_compacts_order_chain() {
     assert_eq!(
         first.header.claim_root,
         hashv(&[
-            b"HYBRID_MAKER_PUBKEY_NODE_V1\\0",
+            b"HYBRID_MAKER_PUBKEY_NODE_V1\0",
             &maker_zero_leaf, &maker_one_leaf,
         ]).to_bytes(),
     );
