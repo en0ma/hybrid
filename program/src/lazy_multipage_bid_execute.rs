@@ -21,23 +21,27 @@ pub(super) fn execute_and_seal_multipage_bid(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    if data.len() != 17 || data[0] != 44 ||
-        accounts.len() < FIXED_ACCOUNTS + 2 ||
-        accounts.len() > FIXED_ACCOUNTS + MAX_ATOMIC_BID_MAKERS
+    if data.len() != 17
+        || data[0] != 44
+        || accounts.len() < FIXED_ACCOUNTS + 2
+        || accounts.len() > FIXED_ACCOUNTS + MAX_ATOMIC_BID_MAKERS
     {
         return Err(ProgramError::InvalidInstructionData);
     }
     let base_fill = u64::from_le_bytes(
-        data[1..9].try_into().map_err(|_| ProgramError::InvalidInstructionData)?,
+        data[1..9]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidInstructionData)?,
     );
     let min_quote_out = u64::from_le_bytes(
-        data[9..17].try_into().map_err(|_| ProgramError::InvalidInstructionData)?,
+        data[9..17]
+            .try_into()
+            .map_err(|_| ProgramError::InvalidInstructionData)?,
     );
     let (fixed, balances) = accounts.split_at(FIXED_ACCOUNTS);
-    let [market_account, custody_account, reserve_account, epoch_0, epoch_1,
-         page_0, owner_0, page_1, owner_1, taker, taker_quote, taker_base,
-         quote_vault, base_vault, quote_mint, base_mint, vault_authority,
-         token_program, payer, system_program] = fixed else {
+    let [market_account, custody_account, reserve_account, epoch_0, epoch_1, page_0, owner_0, page_1, owner_1, taker, taker_quote, taker_base, quote_vault, base_vault, quote_mint, base_mint, vault_authority, token_program, payer, system_program] =
+        fixed
+    else {
         return Err(ProgramError::NotEnoughAccountKeys);
     };
     if !taker.is_signer || !payer.is_signer || !payer.is_writable {
@@ -49,18 +53,32 @@ pub(super) fn execute_and_seal_multipage_bid(
     if fixed.iter().enumerate().any(|(i, account)| {
         let must_write = matches!(i, 0..=8 | 10..=13 | 18);
         must_write && !account.is_writable
-    }) || balances.iter().any(|account| !account.is_writable) {
+    }) || balances.iter().any(|account| !account.is_writable)
+    {
         return Err(ProgramError::InvalidAccountData);
     }
     // All state/token/epoch/authority accounts are role-distinct.
     // Repeated account metas must never turn into a bypass.
     for (i, account) in accounts.iter().enumerate() {
-        if accounts[i + 1..].iter().any(|other| other.key == account.key) {
+        if accounts[i + 1..]
+            .iter()
+            .any(|other| other.key == account.key)
+        {
             return Err(ProgramError::InvalidAccountData);
         }
     }
-    if [market_account, custody_account, reserve_account, page_0, owner_0, page_1, owner_1]
-        .iter().any(|account| account.owner != program_id) {
+    if [
+        market_account,
+        custody_account,
+        reserve_account,
+        page_0,
+        owner_0,
+        page_1,
+        owner_1,
+    ]
+    .iter()
+    .any(|account| account.owner != program_id)
+    {
         return Err(ProgramError::IncorrectProgramId);
     }
     let mut market = hybrid_state::MarketHeader::decode_from(&market_account.try_borrow_data()?)
@@ -71,7 +89,8 @@ pub(super) fn execute_and_seal_multipage_bid(
     for (index, (page, owner)) in [(page_0, owner_0), (page_1, owner_1)].iter().enumerate() {
         let index_bytes = (index as u32).to_le_bytes();
         let (expected, _) = Pubkey::find_program_address(
-            &[b"bid-page", market_account.key.as_ref(), &index_bytes], program_id,
+            &[b"bid-page", market_account.key.as_ref(), &index_bytes],
+            program_id,
         );
         if *page.key != expected {
             return Err(ProgramError::InvalidSeeds);
@@ -82,22 +101,33 @@ pub(super) fn execute_and_seal_multipage_bid(
             }
         } else {
             let (expected_owner, _) = Pubkey::find_program_address(
-                &[b"bid-owner-page", market_account.key.as_ref(), &index_bytes], program_id,
+                &[b"bid-owner-page", market_account.key.as_ref(), &index_bytes],
+                program_id,
             );
             if *owner.key != expected_owner {
                 return Err(ProgramError::InvalidSeeds);
             }
         }
     }
-    let pages = vec![*load_active_bid_page(page_0)?, *load_active_bid_page(page_1)?];
-    let owners = vec![*load_owner_page_box(owner_0)?, *load_owner_page_box(owner_1)?];
+    let pages = vec![
+        *load_active_bid_page(page_0)?,
+        *load_active_bid_page(page_1)?,
+    ];
+    let owners = vec![
+        *load_owner_page_box(owner_0)?,
+        *load_owner_page_box(owner_1)?,
+    ];
     let seats: usize = pages.iter().map(|page| page.len()).sum();
     if seats != balances.len() || seats != market.bid_count() as usize {
         return Err(ProgramError::InvalidAccountData);
     }
     let plan = hybrid_state::lazy_multilevel_bid::plan_multilevel_bid(
-        &pages, &owners, base_fill, min_quote_out,
-    ).map_err(|_| ProgramError::InvalidInstructionData)?;
+        &pages,
+        &owners,
+        base_fill,
+        min_quote_out,
+    )
+    .map_err(|_| ProgramError::InvalidInstructionData)?;
     if plan.ticks.len() != 2 || plan.ticks[0].price_x64 == plan.ticks[1].price_x64 {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -112,14 +142,19 @@ pub(super) fn execute_and_seal_multipage_bid(
         return Err(ProgramError::InvalidAccountData);
     }
     let (expected_authority, authority_bump) = Pubkey::find_program_address(
-        &[b"vault-authority", market_account.key.as_ref()], program_id,
+        &[b"vault-authority", market_account.key.as_ref()],
+        program_id,
     );
     if *vault_authority.key != expected_authority {
         return Err(ProgramError::InvalidSeeds);
     }
     for (account, expected_mint, expected_owner) in [
         (base_vault, custody.base_mint, expected_authority.to_bytes()),
-        (quote_vault, custody.quote_mint, expected_authority.to_bytes()),
+        (
+            quote_vault,
+            custody.quote_mint,
+            expected_authority.to_bytes(),
+        ),
         (taker_base, custody.base_mint, taker.key.to_bytes()),
         (taker_quote, custody.quote_mint, taker.key.to_bytes()),
     ] {
@@ -129,7 +164,8 @@ pub(super) fn execute_and_seal_multipage_bid(
         }
     }
     if mint_decimals(base_mint)? != custody.base_decimals
-        || mint_decimals(quote_mint)? != custody.quote_decimals {
+        || mint_decimals(quote_mint)? != custody.quote_decimals
+    {
         return Err(ProgramError::InvalidAccountData);
     }
     let (old_base_floor, old_quote_floor) = reserve
@@ -137,7 +173,8 @@ pub(super) fn execute_and_seal_multipage_bid(
         .map_err(|_| ProgramError::InvalidAccountData)?;
     if lazy_bid_execute::token_amount(base_vault)? < old_base_floor
         || lazy_bid_execute::token_amount(quote_vault)? < old_quote_floor
-        || custody.total_quote < plan.quote_paid {
+        || custody.total_quote < plan.quote_paid
+    {
         return Err(ProgramError::InsufficientFunds);
     }
 
@@ -149,29 +186,41 @@ pub(super) fn execute_and_seal_multipage_bid(
     let mut fills = Vec::new();
     let mut row_index = 0usize;
     for tick in &plan.ticks {
-        for ((maker, original), claim) in tick.makers.iter()
+        for ((maker, original), claim) in tick
+            .makers
+            .iter()
             .zip(tick.weights.iter())
             .zip(tick.allocations.iter())
         {
-            let balance = balances.get(row_index).ok_or(ProgramError::NotEnoughAccountKeys)?;
-            let mut state = load_maker_balance_for_owner(
-                program_id, market_account, balance, *maker,
-            )?;
-            let filled = claim.base_proceeds.checked_add(claim.base_fee)
+            let balance = balances
+                .get(row_index)
+                .ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let mut state =
+                load_maker_balance_for_owner(program_id, market_account, balance, *maker)?;
+            let filled = claim
+                .base_proceeds
+                .checked_add(claim.base_fee)
                 .ok_or(ProgramError::InvalidAccountData)?;
-            let remaining = original.checked_sub(filled)
+            let remaining = original
+                .checked_sub(filled)
                 .ok_or(ProgramError::InvalidAccountData)?;
             let old_lock = hybrid_engine::quote_for_base_at_price(*original, tick.price_x64)
                 .map_err(|_| ProgramError::InvalidAccountData)?;
-            let new_lock = if remaining == 0 { 0 } else {
+            let new_lock = if remaining == 0 {
+                0
+            } else {
                 hybrid_engine::quote_for_base_at_price(remaining, tick.price_x64)
                     .map_err(|_| ProgramError::InvalidAccountData)?
             };
-            let released = old_lock.checked_sub(new_lock)
+            let released = old_lock
+                .checked_sub(new_lock)
                 .ok_or(ProgramError::InvalidAccountData)?;
-            let surplus = released.checked_sub(claim.quote_spent)
+            let surplus = released
+                .checked_sub(claim.quote_spent)
                 .ok_or(ProgramError::InsufficientFunds)?;
-            state.unlock_quote(surplus).map_err(|_| ProgramError::InsufficientFunds)?;
+            state
+                .unlock_quote(surplus)
+                .map_err(|_| ProgramError::InsufficientFunds)?;
             if state.locked_quote < claim.quote_spent {
                 return Err(ProgramError::InsufficientFunds);
             }
@@ -190,11 +239,17 @@ pub(super) fn execute_and_seal_multipage_bid(
     // The planner stops once requested liquidity is filled; any rows
     // following the last executed price still require a canonical balance
     // PDA, but must not be debited by this execution.
-    for (index, maker) in owners.iter().flat_map(|sidecar| sidecar.as_slice())
-        .enumerate().skip(row_index)
+    for (index, maker) in owners
+        .iter()
+        .flat_map(|sidecar| sidecar.as_slice())
+        .enumerate()
+        .skip(row_index)
     {
         updated_balances.push(load_maker_balance_for_owner(
-            program_id, market_account, &balances[index], *maker,
+            program_id,
+            market_account,
+            &balances[index],
+            *maker,
         )?);
     }
     if updated_balances.len() != seats {
@@ -207,54 +262,85 @@ pub(super) fn execute_and_seal_multipage_bid(
         hybrid_state::multipage_bid::apply_linked_bid_fills(&pages, &owners, &fills)
             .map_err(|_| ProgramError::InvalidAccountData)?;
     market.set_bid_count(
-        market.bid_count().checked_sub(removed as u32)
+        market
+            .bid_count()
+            .checked_sub(removed as u32)
             .ok_or(ProgramError::InvalidAccountData)?,
     );
-    custody.total_quote = custody.total_quote.checked_sub(plan.quote_paid)
+    custody.total_quote = custody
+        .total_quote
+        .checked_sub(plan.quote_paid)
         .ok_or(ProgramError::InsufficientFunds)?;
 
     let mut headers = Vec::with_capacity(2);
     let first_epoch = reserve.next_epoch_id;
     for (index, tick) in plan.ticks.iter().enumerate() {
-        let epoch_id = first_epoch.checked_add(index as u64)
+        let epoch_id = first_epoch
+            .checked_add(index as u64)
             .ok_or(ProgramError::InvalidAccountData)?;
         let id_bytes = epoch_id.to_le_bytes();
         let (expected_epoch, bump) = Pubkey::find_program_address(
-            &[b"frozen-epoch", market_account.key.as_ref(), &id_bytes], program_id,
+            &[b"frozen-epoch", market_account.key.as_ref(), &id_bytes],
+            program_id,
         );
         let epoch_account = if index == 0 { epoch_0 } else { epoch_1 };
-        if *epoch_account.key != expected_epoch || *epoch_account.owner != Pubkey::default()
-            || !epoch_account.data_is_empty() {
+        if *epoch_account.key != expected_epoch
+            || *epoch_account.owner != Pubkey::default()
+            || !epoch_account.data_is_empty()
+        {
             return Err(ProgramError::InvalidSeeds);
         }
         let totals = tick.totals();
         let digest = lazy_bid_execute::epoch_commitment(
-            market_account.key, program_id, &reserve.genesis,
-            (epoch_id, tick.sqrt_price_x64), &tick.makers, &tick.weights, totals,
+            market_account.key,
+            program_id,
+            &reserve.genesis,
+            (epoch_id, tick.sqrt_price_x64),
+            &tick.makers,
+            &tick.weights,
+            totals,
         )?;
         let root = lazy_bid_execute::sealed_claim_root(
-            &digest, &tick.makers, &tick.weights, &tick.allocations,
+            &digest,
+            &tick.makers,
+            &tick.weights,
+            &tick.allocations,
         )?;
         let header = hybrid_state::frozen_epoch::FrozenEpochHeader {
-            bump, side: 1, market: market_account.key.to_bytes(),
-            authority: market_account.key.to_bytes(), program: program_id.to_bytes(),
-            genesis: reserve.genesis, epoch_id,
+            bump,
+            side: 1,
+            market: market_account.key.to_bytes(),
+            authority: market_account.key.to_bytes(),
+            program: program_id.to_bytes(),
+            genesis: reserve.genesis,
+            epoch_id,
             tick_sqrt_price_x64: tick.sqrt_price_x64,
-            commitment: digest, claim_root: root, maker_count: tick.makers.len() as u32,
-            totals, base_vault: custody.base_vault, quote_vault: custody.quote_vault,
+            commitment: digest,
+            claim_root: root,
+            maker_count: tick.makers.len() as u32,
+            totals,
+            base_vault: custody.base_vault,
+            quote_vault: custody.quote_vault,
         };
-        header.validate().map_err(|_| ProgramError::InvalidAccountData)?;
-        reserve.reserve_execution(epoch_id, totals)
+        header
+            .validate()
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        reserve
+            .reserve_execution(epoch_id, totals)
             .map_err(|_| ProgramError::InvalidAccountData)?;
         headers.push(header);
     }
     let (next_base_floor, next_quote_floor) = reserve
         .vault_floor(custody.total_base, custody.total_quote)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    if lazy_bid_execute::token_amount(base_vault)?.checked_add(base_fill)
-        .ok_or(ProgramError::InvalidAccountData)? < next_base_floor
-        || lazy_bid_execute::token_amount(quote_vault)?.checked_sub(plan.quote_paid)
-            .ok_or(ProgramError::InsufficientFunds)? < next_quote_floor
+    if lazy_bid_execute::token_amount(base_vault)?
+        .checked_add(base_fill)
+        .ok_or(ProgramError::InvalidAccountData)?
+        < next_base_floor
+        || lazy_bid_execute::token_amount(quote_vault)?
+            .checked_sub(plan.quote_paid)
+            .ok_or(ProgramError::InsufficientFunds)?
+            < next_quote_floor
     {
         return Err(ProgramError::InsufficientFunds);
     }
@@ -266,25 +352,41 @@ pub(super) fn execute_and_seal_multipage_bid(
         let epoch_account = if index == 0 { epoch_0 } else { epoch_1 };
         let id = header.epoch_id.to_le_bytes();
         create_program_pda(
-            program_id, payer, epoch_account, system_program,
+            program_id,
+            payer,
+            epoch_account,
+            system_program,
             &[b"frozen-epoch", market_account.key.as_ref(), &id],
-            header.bump, hybrid_state::frozen_epoch::FROZEN_EPOCH_BYTES,
+            header.bump,
+            hybrid_state::frozen_epoch::FROZEN_EPOCH_BYTES,
         )?;
-        header.initialize(&mut epoch_account.try_borrow_mut_data()?)
+        header
+            .initialize(&mut epoch_account.try_borrow_mut_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
     }
     transfer_checked(
-        taker_base, base_mint, base_vault, taker, token_program,
-        (base_fill, custody.base_decimals), None,
+        taker_base,
+        base_mint,
+        base_vault,
+        taker,
+        token_program,
+        (base_fill, custody.base_decimals),
+        None,
     )?;
     let bump = [authority_bump];
     let seeds: &[&[u8]] = &[b"vault-authority", market_account.key.as_ref(), &bump];
     transfer_checked(
-        quote_vault, quote_mint, taker_quote, vault_authority, token_program,
-        (plan.quote_paid, custody.quote_decimals), Some(seeds),
+        quote_vault,
+        quote_mint,
+        taker_quote,
+        vault_authority,
+        token_program,
+        (plan.quote_paid, custody.quote_decimals),
+        Some(seeds),
     )?;
 
-    market.encode_into(&mut market_account.try_borrow_mut_data()?)
+    market
+        .encode_into(&mut market_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
     for (index, (page_account, owner_account)) in
         [(page_0, owner_0), (page_1, owner_1)].iter().enumerate()
@@ -299,14 +401,16 @@ pub(super) fn execute_and_seal_multipage_bid(
         }
         page.encode_into(&mut page_account.try_borrow_mut_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        sidecar.encode_into(&mut owner_account.try_borrow_mut_data()?)
+        sidecar
+            .encode_into(&mut owner_account.try_borrow_mut_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
     }
     for (account, state) in balances.iter().zip(updated_balances.iter()) {
         store_maker_balance(account, state)?;
     }
     store_custody(custody_account, &custody)?;
-    reserve.encode(&mut reserve_account.try_borrow_mut_data()?)
+    reserve
+        .encode(&mut reserve_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
     Ok(())
 }
