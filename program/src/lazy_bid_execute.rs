@@ -138,14 +138,18 @@ pub(super) fn build_bid_epoch_header(
     totals: [u64; 6],
 ) -> Result<hybrid_state::frozen_epoch::FrozenEpochHeader, ProgramError> {
     let digest = epoch_commitment(
-        market, program_id, &genesis, (epoch_id, tick_sqrt_price_x64),
-        owners, weights, totals,
+        market,
+        program_id,
+        &genesis,
+        (epoch_id, tick_sqrt_price_x64),
+        owners,
+        weights,
+        totals,
     )?;
     let root = sealed_claim_root(&digest, owners, weights, allocations)?;
     let id_bytes = epoch_id.to_le_bytes();
-    let (expected_epoch, bump) = Pubkey::find_program_address(
-        &[b"frozen-epoch", market.as_ref(), &id_bytes], program_id,
-    );
+    let (expected_epoch, bump) =
+        Pubkey::find_program_address(&[b"frozen-epoch", market.as_ref(), &id_bytes], program_id);
     if *epoch_key != expected_epoch {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -165,7 +169,9 @@ pub(super) fn build_bid_epoch_header(
         base_vault: custody.base_vault,
         quote_vault: custody.quote_vault,
     };
-    header.validate().map_err(|_| ProgramError::InvalidAccountData)?;
+    header
+        .validate()
+        .map_err(|_| ProgramError::InvalidAccountData)?;
     Ok(header)
 }
 
@@ -466,9 +472,17 @@ pub(super) fn execute_and_seal_bid(
     let totals = [0, base_fill - base_fee, quote_paid, 0, base_fee, 0];
     let id_bytes = epoch_id.to_le_bytes();
     let header = build_bid_epoch_header(
-        program_id, market_account.key, epoch_account.key, &custody,
-        reserve.genesis, epoch_id, resting_tick, &owners, &weights,
-        &allocations, totals,
+        program_id,
+        market_account.key,
+        epoch_account.key,
+        &custody,
+        reserve.genesis,
+        epoch_id,
+        resting_tick,
+        &owners,
+        &weights,
+        &allocations,
+        totals,
     )?;
     let epoch_bump = header.bump;
 
