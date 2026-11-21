@@ -190,15 +190,12 @@ pub(super) fn execute_and_seal_multipage_bid(
     // The planner stops once requested liquidity is filled; any rows
     // following the last executed price still require a canonical balance
     // PDA, but must not be debited by this execution.
-    for (page, owner) in pages.iter().zip(&owners) {
-        for (_entry, maker) in page.as_slice().iter().zip(owner.as_slice()) {
-            if updated_balances.len() == seats { break; }
-            let index = updated_balances.len();
-            if index < row_index { continue; }
-            updated_balances.push(load_maker_balance_for_owner(
-                program_id, market_account, &balances[index], *maker,
-            )?);
-        }
+    for (index, maker) in owners.iter().flat_map(|sidecar| sidecar.as_slice())
+        .enumerate().skip(row_index)
+    {
+        updated_balances.push(load_maker_balance_for_owner(
+            program_id, market_account, &balances[index], *maker,
+        )?);
     }
     if updated_balances.len() != seats {
         return Err(ProgramError::InvalidAccountData);
