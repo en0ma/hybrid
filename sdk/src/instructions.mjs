@@ -163,3 +163,48 @@ export function closePassivePosition(programId, accounts, { nonce }) {
     ["quoteMint", ""], ["vaultAuthority", ""], ["tokenProgram", ""],
   ], [Buffer.from([21]), le(nonce, 8, "nonce")]);
 }
+
+/**
+ * Opcode 43: read-only authenticated multilevel BID preflight.
+ *
+ * Accepts the complete canonical page-zero-prefixed BID chain, not arbitrary
+ * book fragments. The program validates the market, all PDAs and sidecars
+ * before computing a per-tick plan. No maker credit, epoch or trade is
+ * produced by this instruction.
+ */
+export function preflightMultilevelBid(programId, {market, pages}, {
+  requestedBase, minQuoteOut,
+}) {
+  required(programId, "programId");
+  required(market, "market");
+  if(!Array.isArray(pages)||pages.length<1||pages.length>2) {
+    throw new RangeError("BID preflight requires one or two ordered page pairs");
+  }
+  const base=unsigned(requestedBase,64,"requestedBase");
+  const quote=unsigned(minQuoteOut,64,"minQuoteOut");
+  if(base===0n||quote===0n)throw new RangeError("BID preflight amounts must be positive");
+  const keys=[{pubkey:market,isWritable:false,isSigner:false}];
+  const keyId=(value)=>typeof value?.toBytes==="function"
+    ? Buffer.from(value.toBytes()).toString("hex")
+    : String(value);
+  const seen=new Set([keyId(market)]);
+  for(const [index,pair] of pages.entries()) {
+    if(!pair||pair.index!==index)throw new RangeError("Missing or unordered BID page index");
+    for(const [role,value] of [["page",pair.page],["ownerPage",pair.ownerPage]]) {
+      required(value,role);
+      const id=keyId(value);
+      if(seen.has(id))throw new Error("Aliased BID preflight account");
+      seen.add(id);
+      keys.push({pubkey:value,isWritable:false,isSigner:false});
+    }
+  }
+  return {
+    programId,
+    keys,
+    data:Buffer.concat([
+      Buffer.from([43,pages.length]),
+      le(base,8,"requestedBase"),
+      le(quote,8,"minQuoteOut"),
+    ]),
+  };
+}
