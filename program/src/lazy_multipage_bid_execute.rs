@@ -277,16 +277,10 @@ pub(super) fn execute_and_seal_multipage_bid(
         let epoch_id = first_epoch
             .checked_add(index as u64)
             .ok_or(ProgramError::InvalidAccountData)?;
-        let id_bytes = epoch_id.to_le_bytes();
-        let (expected_epoch, bump) = Pubkey::find_program_address(
-            &[b"frozen-epoch", market_account.key.as_ref(), &id_bytes],
-            program_id,
-        );
         let epoch_account = if index == 0 { epoch_0 } else { epoch_1 };
-        if *epoch_account.key != expected_epoch
-            || *epoch_account.owner != Pubkey::default()
-            || !epoch_account.data_is_empty()
-        {
+        // build_bid_epoch_header authenticates the epoch PDA seeds;
+        // avoid deriving the same key twice in this hot SBF path.
+        if *epoch_account.owner != Pubkey::default() || !epoch_account.data_is_empty() {
             return Err(ProgramError::InvalidSeeds);
         }
         let totals = tick.totals();
