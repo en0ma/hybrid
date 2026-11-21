@@ -32,7 +32,7 @@ fn validate_resting_bid_price(price_x64: u128, sqrt_price_x64: u128) -> ProgramR
     .map_err(|_| ProgramError::InvalidAccountData)
 }
 
-fn token_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
+pub(super) fn token_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     token_account_fields(account)?;
     let data = account.try_borrow_data()?;
     Ok(u64::from_le_bytes(
@@ -42,7 +42,7 @@ fn token_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     ))
 }
 
-fn epoch_commitment(
+pub(super) fn epoch_commitment(
     market: &Pubkey,
     program: &Pubkey,
     genesis: &[u8; 32],
@@ -82,7 +82,7 @@ fn epoch_commitment(
     Ok(solana_program::hash::hash(&bytes[..used]).to_bytes())
 }
 
-fn sealed_claim_root(
+pub(super) fn sealed_claim_root(
     epoch_commitment: &[u8; 32],
     owners: &[[u8; 32]],
     weights: &[u64],
