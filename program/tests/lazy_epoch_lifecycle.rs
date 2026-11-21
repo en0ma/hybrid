@@ -908,7 +908,9 @@ async fn authenticated_multilevel_bid_preflight_crosses_two_linked_prices_withou
     // Reject underquoted output, omitted tail page, forged sidecar PDA,
     // duplicate account metas and malformed wire length without mutations.
     let mut forged = multilevel_bid_preflight(&f, Some((tail, tail_owner)), 350, 325);
-    forged.accounts[4] = AccountMeta::new_readonly(f.owners, false);
+    // A distinct program-owned maker balance is still not the canonical
+    // page-1 owner sidecar PDA; reject it before page decoding.
+    forged.accounts[4] = AccountMeta::new_readonly(f.balance_a, false);
     let mut duplicate = multilevel_bid_preflight(&f, Some((tail, tail_owner)), 350, 325);
     duplicate.accounts[3] = AccountMeta::new_readonly(f.ask, false);
     let mut malformed = multilevel_bid_preflight(&f, Some((tail, tail_owner)), 350, 325);
