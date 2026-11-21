@@ -18,11 +18,11 @@ const FIXED_ACCOUNTS: usize = 20;
 /// Decode directly into heap-backed vectors. Avoid constructing two 1.5 KiB
 /// pages as simultaneous stack temporaries in the settlement frame.
 #[inline(never)]
-fn load_multipage_bid_pairs(
-    page_0: &AccountInfo,
-    owner_0: &AccountInfo,
-    page_1: &AccountInfo,
-    owner_1: &AccountInfo,
+fn load_multipage_bid_pairs<'a>(
+    page_0: &AccountInfo<'a>,
+    owner_0: &AccountInfo<'a>,
+    page_1: &AccountInfo<'a>,
+    owner_1: &AccountInfo<'a>,
 ) -> Result<(Vec<hybrid_state::BidPage>, Vec<hybrid_state::BidOwnerPage>), ProgramError> {
     let mut pages = Vec::with_capacity(2);
     let mut owners = Vec::with_capacity(2);
@@ -41,11 +41,11 @@ fn load_multipage_bid_pairs(
 /// Isolate large local page/owner encoding temporaries from the execution
 /// frame. Identical layout to the already established multipage seller.
 #[inline(never)]
-fn store_multipage_bid_updates(
-    page_0: &AccountInfo,
-    owner_0: &AccountInfo,
-    page_1: &AccountInfo,
-    owner_1: &AccountInfo,
+fn store_multipage_bid_updates<'a>(
+    page_0: &AccountInfo<'a>,
+    owner_0: &AccountInfo<'a>,
+    page_1: &AccountInfo<'a>,
+    owner_1: &AccountInfo<'a>,
     pages: &[hybrid_state::BidPage],
     owners: &[hybrid_state::BidOwnerPage],
 ) -> ProgramResult {
