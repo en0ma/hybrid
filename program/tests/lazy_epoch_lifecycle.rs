@@ -839,12 +839,9 @@ fn fixture_bid_two_linked_prices() -> (Fixture, Pubkey, Pubkey) {
     let mut head_owners = AskOwnerPage::default();
     head.set_links(PageLinks::new(0, None, Some(1)));
     head_owners.set_links(PageLinks::new(0, None, Some(1)));
-    for (index, (maker, qty)) in [
-        (f.maker_a.pubkey(), 100u64),
-        (f.maker_b.pubkey(), 200u64),
-    ]
-    .into_iter()
-    .enumerate()
+    for (index, (maker, qty)) in [(f.maker_a.pubkey(), 100u64), (f.maker_b.pubkey(), 200u64)]
+        .into_iter()
+        .enumerate()
     {
         head.insert(AskEntry {
             price_x64: Q64,
