@@ -290,40 +290,11 @@ pub(super) fn execute_and_seal_multipage_bid(
             return Err(ProgramError::InvalidSeeds);
         }
         let totals = tick.totals();
-        let digest = lazy_bid_execute::epoch_commitment(
-            market_account.key,
-            program_id,
-            &reserve.genesis,
-            (epoch_id, tick.sqrt_price_x64),
-            &tick.makers,
-            &tick.weights,
-            totals,
+        let header = lazy_bid_execute::build_bid_epoch_header(
+            program_id, market_account.key, epoch_account.key, &custody,
+            reserve.genesis, epoch_id, tick.sqrt_price_x64,
+            &tick.makers, &tick.weights, &tick.allocations, totals,
         )?;
-        let root = lazy_bid_execute::sealed_claim_root(
-            &digest,
-            &tick.makers,
-            &tick.weights,
-            &tick.allocations,
-        )?;
-        let header = hybrid_state::frozen_epoch::FrozenEpochHeader {
-            bump,
-            side: 1,
-            market: market_account.key.to_bytes(),
-            authority: market_account.key.to_bytes(),
-            program: program_id.to_bytes(),
-            genesis: reserve.genesis,
-            epoch_id,
-            tick_sqrt_price_x64: tick.sqrt_price_x64,
-            commitment: digest,
-            claim_root: root,
-            maker_count: tick.makers.len() as u32,
-            totals,
-            base_vault: custody.base_vault,
-            quote_vault: custody.quote_vault,
-        };
-        header
-            .validate()
-            .map_err(|_| ProgramError::InvalidAccountData)?;
         reserve
             .reserve_execution(epoch_id, totals)
             .map_err(|_| ProgramError::InvalidAccountData)?;
