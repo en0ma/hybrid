@@ -931,8 +931,14 @@ fn seal_multipage_bid(
 }
 
 fn multipage_bid_claim(
-    f: &Fixture, epoch: Pubkey, maker: Pubkey, balance: Pubkey,
-    destination: Pubkey, seat: u32, weight: u64, totals: [u64; 6],
+    f: &Fixture,
+    epoch: Pubkey,
+    maker: Pubkey,
+    balance: Pubkey,
+    destination: Pubkey,
+    seat: u32,
+    weight: u64,
+    totals: [u64; 6],
     proof: &[[u8; 32]],
 ) -> Instruction {
     let mut data = vec![40];
@@ -1030,47 +1036,92 @@ async fn funded_two_page_bid_seals_two_epochs_and_compacts_order_chain() {
     let lower_amounts = [0, 50, 25, 0, 0, 0];
     assert_eq!(
         second.header.claim_root,
-        leaf(&second.header.commitment, 0, f.extra_makers[0].pubkey(), 100, lower_amounts),
+        leaf(
+            &second.header.commitment,
+            0,
+            f.extra_makers[0].pubkey(),
+            100,
+            lower_amounts
+        ),
     );
     let low_claim = multipage_bid_claim(
-        &f, epoch_one, f.extra_makers[0].pubkey(), f.extra_balances[0],
-        f.extra_destinations[0], 0, 100, lower_amounts, &[],
+        &f,
+        epoch_one,
+        f.extra_makers[0].pubkey(),
+        f.extra_balances[0],
+        f.extra_destinations[0],
+        0,
+        100,
+        lower_amounts,
+        &[],
     );
     let cross_epoch = multipage_bid_claim(
-        &f, f.epoch, f.extra_makers[0].pubkey(), f.extra_balances[0],
-        f.extra_destinations[0], 0, 100, lower_amounts, &[],
+        &f,
+        f.epoch,
+        f.extra_makers[0].pubkey(),
+        f.extra_balances[0],
+        f.extra_destinations[0],
+        0,
+        100,
+        lower_amounts,
+        &[],
     );
-    assert!(tx(&mut context, cross_epoch, &[&f.extra_makers[0]]).await.is_err());
+    assert!(tx(&mut context, cross_epoch, &[&f.extra_makers[0]])
+        .await
+        .is_err());
     tx(&mut context, low_claim.clone(), &[&f.extra_makers[0]])
-        .await.unwrap();
+        .await
+        .unwrap();
     assert_eq!(
-        amount(&bytes(&mut context, f.extra_destinations[0]).await), 50
+        amount(&bytes(&mut context, f.extra_destinations[0]).await),
+        50
     );
-    assert!(tx(&mut context, low_claim, &[&f.extra_makers[0]]).await.is_err());
+    assert!(tx(&mut context, low_claim, &[&f.extra_makers[0]])
+        .await
+        .is_err());
 
     let high_zero = [0, 99, 100, 0, 1, 0];
     let high_one = [0, 198, 200, 0, 2, 0];
     let maker_one_leaf = leaf(
-        &first.header.commitment, 1, f.maker_b.pubkey(), 200, high_one,
+        &first.header.commitment,
+        1,
+        f.maker_b.pubkey(),
+        200,
+        high_one,
     );
     let maker_zero_leaf = leaf(
-        &first.header.commitment, 0, f.maker_a.pubkey(), 100, high_zero,
+        &first.header.commitment,
+        0,
+        f.maker_a.pubkey(),
+        100,
+        high_zero,
     );
     assert_eq!(
         first.header.claim_root,
         hashv(&[
             b"HYBRID_MAKER_PUBKEY_NODE_V1\0",
-            &maker_zero_leaf, &maker_one_leaf,
-        ]).to_bytes(),
+            &maker_zero_leaf,
+            &maker_one_leaf,
+        ])
+        .to_bytes(),
     );
     tx(
         &mut context,
         multipage_bid_claim(
-            &f, f.epoch, f.maker_a.pubkey(), f.balance_a,
-            f.destination_a, 0, 100, high_zero, &[maker_one_leaf],
+            &f,
+            f.epoch,
+            f.maker_a.pubkey(),
+            f.balance_a,
+            f.destination_a,
+            0,
+            100,
+            high_zero,
+            &[maker_one_leaf],
         ),
         &[&f.maker_a],
-    ).await.unwrap();
+    )
+    .await
+    .unwrap();
     assert_eq!(amount(&bytes(&mut context, f.destination_a).await), 99);
 }
 
