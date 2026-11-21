@@ -291,9 +291,17 @@ pub(super) fn execute_and_seal_multipage_bid(
         }
         let totals = tick.totals();
         let header = lazy_bid_execute::build_bid_epoch_header(
-            program_id, market_account.key, epoch_account.key, &custody,
-            reserve.genesis, epoch_id, tick.sqrt_price_x64,
-            &tick.makers, &tick.weights, &tick.allocations, totals,
+            program_id,
+            market_account.key,
+            epoch_account.key,
+            &custody,
+            reserve.genesis,
+            epoch_id,
+            tick.sqrt_price_x64,
+            &tick.makers,
+            &tick.weights,
+            &tick.allocations,
+            totals,
         )?;
         reserve
             .reserve_execution(epoch_id, totals)
