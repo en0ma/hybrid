@@ -1126,6 +1126,54 @@ async fn funded_two_page_bid_seals_two_epochs_and_compacts_order_chain() {
 }
 
 #[tokio::test]
+async fn multipage_bid_insufficient_taker_base_cpi_rolls_back_both_new_epochs() {
+    let (mut f, tail, tail_owner, _) = fixture_funded_multipage_bid();
+    // Keep all resting maker collateral and both vault floors solvent.
+    // Only the taker has 349 base atoms rather than the requested 350.
+    // This cannot fail planner, epoch-PDA, or pre-CPI vault preflight;
+    // the checked SPL base transfer must fail after both epoch creations.
+    f.test.as_mut().unwrap().add_account(
+        f.taker_base,
+        account(token_data(f.base_mint, f.taker.pubkey(), 349, false), TOKEN),
+    );
+    let mut context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+        .await
+        .unwrap();
+    let (epoch_one, _) = Pubkey::find_program_address(
+        &[b"frozen-epoch", f.market.as_ref(), &1u64.to_le_bytes()],
+        &ID,
+    );
+    let observed = [
+        f.market, f.custody, f.reserve, f.epoch, epoch_one,
+        f.ask, f.owners, tail, tail_owner,
+        f.balance_a, f.balance_b, f.extra_balances[0],
+        f.quote_vault, f.base_vault, f.taker_base, f.taker_quote,
+    ];
+    let mut before = Vec::new();
+    for key in observed {
+        before.push(context.banks_client.get_account(key).await.unwrap());
+    }
+    assert!(before[3].is_none());
+    assert!(before[4].is_none());
+    let outcome = tx(
+        &mut context,
+        seal_multipage_bid(&f, payer, tail, tail_owner, epoch_one, 350, 325),
+        &[&f.taker],
+    )
+    .await;
+    assert!(outcome.is_err(), "insufficient taker SPL base must fail");
+    for (index, key) in observed.iter().enumerate() {
+        assert_eq!(
+            context.banks_client.get_account(*key).await.unwrap(),
+            before[index],
+            "transaction modified account at index {index}",
+        );
+    }
+}
+
+#[tokio::test]
 async fn multipage_bid_rejects_late_tick_failures_without_any_account_writes() {
     let (mut f, tail, tail_owner, _balance) = fixture_funded_multipage_bid();
     let mut context = f.test.take().unwrap().start_with_context().await;
