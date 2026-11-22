@@ -1146,10 +1146,22 @@ async fn multipage_bid_insufficient_taker_base_cpi_rolls_back_both_new_epochs() 
         &ID,
     );
     let observed = [
-        f.market, f.custody, f.reserve, f.epoch, epoch_one,
-        f.ask, f.owners, tail, tail_owner,
-        f.balance_a, f.balance_b, f.extra_balances[0],
-        f.quote_vault, f.base_vault, f.taker_base, f.taker_quote,
+        f.market,
+        f.custody,
+        f.reserve,
+        f.epoch,
+        epoch_one,
+        f.ask,
+        f.owners,
+        tail,
+        tail_owner,
+        f.balance_a,
+        f.balance_b,
+        f.extra_balances[0],
+        f.quote_vault,
+        f.base_vault,
+        f.taker_base,
+        f.taker_quote,
     ];
     let mut before = Vec::new();
     for key in observed {
