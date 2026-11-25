@@ -1148,13 +1148,9 @@ async fn multipage_bid_extended_roster_v0_packet_characterization() {
             context.last_blockhash,
         );
         let legacy_bytes = bincode::serialize(&legacy).unwrap().len();
-        let message = v0::Message::try_compile(
-            &payer,
-            &instructions,
-            &[table],
-            context.last_blockhash,
-        )
-        .unwrap();
+        let message =
+            v0::Message::try_compile(&payer, &instructions, &[table], context.last_blockhash)
+                .unwrap();
         assert!(!message.address_table_lookups.is_empty());
         let versioned = VersionedTransaction::try_new(
             VersionedMessage::V0(message),
