@@ -1158,6 +1158,35 @@ async fn funded_two_page_bid_seals_two_epochs_and_compacts_order_chain() {
     .await
     .unwrap();
     assert_eq!(amount(&bytes(&mut context, f.destination_a).await), 99);
+    tx(
+        &mut context,
+        multipage_bid_claim(
+            &f,
+            f.epoch,
+            f.maker_b.pubkey(),
+            f.balance_b,
+            f.destination_b,
+            1,
+            200,
+            high_one,
+            &[maker_zero_leaf],
+        ),
+        &[&f.maker_b],
+    )
+    .await
+    .unwrap();
+    assert_eq!(amount(&bytes(&mut context, f.destination_b).await), 198);
+    let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
+    assert_eq!(reserve.next_epoch_id, 2);
+    assert_eq!(reserve.maker_base_credit, 0);
+    assert_eq!(reserve.maker_quote_debit, 0);
+    assert_eq!(reserve.vault_floor(0, 25), Ok((3, 25)));
+    assert_eq!(amount(&bytes(&mut context, f.base_vault).await), 3);
+    assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), 25);
+    for key in [f.epoch, epoch_one] {
+        let epoch = FrozenEpochView::decode(&bytes(&mut context, key).await).unwrap();
+        assert_eq!(epoch.claimed_count, epoch.header.maker_count);
+    }
 }
 
 #[tokio::test]
@@ -1323,7 +1352,11 @@ async fn multipage_bid_rejects_late_tick_failures_without_any_account_writes() {
     let mut foreign_epoch = good.clone();
     let foreign_market = Pubkey::new_unique();
     let (foreign_epoch_key, _) = Pubkey::find_program_address(
-        &[b"frozen-epoch", foreign_market.as_ref(), &1u64.to_le_bytes()],
+        &[
+            b"frozen-epoch",
+            foreign_market.as_ref(),
+            &1u64.to_le_bytes(),
+        ],
         &ID,
     );
     foreign_epoch.accounts[4] = AccountMeta::new(foreign_epoch_key, false);
