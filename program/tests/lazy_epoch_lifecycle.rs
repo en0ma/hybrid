@@ -1347,6 +1347,75 @@ async fn funded_two_page_bid_seals_two_epochs_and_compacts_order_chain() {
 }
 
 #[tokio::test]
+async fn multipage_bid_preserves_historical_reserve_floors() {
+    // Inject a historical reserve at genesis of the test bank. The old
+    // liability is deliberately independent of the current maker roster.
+    for solvent in [false, true] {
+        let (mut f, tail, tail_owner, _) = fixture_funded_multipage_bid();
+        let (_, bump) =
+            Pubkey::find_program_address(&[b"lazy-reserve", f.market.as_ref()], &ID);
+        let mut historical = LazyReserve::new(bump, f.market.to_bytes(), GENESIS).unwrap();
+        historical
+            .reserve_execution(0, [0, 17, 9, 0, 3, 0])
+            .unwrap();
+        let mut reserve_data = vec![0; LAZY_RESERVE_BYTES];
+        historical.encode(&mut reserve_data).unwrap();
+        let test = f.test.as_mut().unwrap();
+        test.add_account(f.reserve, account(reserve_data, ID));
+        test.add_account(
+            f.base_vault,
+            account(
+                token_data(f.base_mint, f.vault_authority, if solvent { 20 } else { 19 }, false),
+                TOKEN,
+            ),
+        );
+        let (epoch_two, _) = Pubkey::find_program_address(
+            &[b"frozen-epoch", f.market.as_ref(), &2u64.to_le_bytes()],
+            &ID,
+        );
+        let (epoch_one, _) = Pubkey::find_program_address(
+            &[b"frozen-epoch", f.market.as_ref(), &1u64.to_le_bytes()],
+            &ID,
+        );
+        let mut context = f.test.take().unwrap().start_with_context().await;
+        let payer = context.payer.pubkey();
+        let mut instruction =
+            seal_multipage_bid(&f, payer, tail, tail_owner, epoch_two, 350, 325);
+        instruction.accounts[3] = AccountMeta::new(epoch_one, false);
+        let observed: Vec<_> = instruction
+            .accounts
+            .iter()
+            .filter(|meta| meta.is_writable && meta.pubkey != payer)
+            .map(|meta| meta.pubkey)
+            .collect();
+        let mut before = Vec::new();
+        for key in &observed {
+            before.push(context.banks_client.get_account(*key).await.unwrap());
+        }
+        let outcome = tx(&mut context, instruction, &[&f.taker]).await;
+        if solvent {
+            outcome.unwrap();
+            let mut expected = historical;
+            expected.reserve_execution(1, [0, 297, 300, 0, 3, 0]).unwrap();
+            expected.reserve_execution(2, [0, 50, 25, 0, 0, 0]).unwrap();
+            let actual = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
+            assert_eq!(actual, expected);
+            assert_eq!(actual.vault_floor(0, 25), Ok((370, 25)));
+            assert_eq!(amount(&bytes(&mut context, f.base_vault).await), 370);
+            assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), 25);
+        } else {
+            assert!(outcome.is_err());
+            for (key, expected) in observed.iter().zip(before) {
+                assert_eq!(
+                    context.banks_client.get_account(*key).await.unwrap(),
+                    expected,
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn multipage_bid_insufficient_taker_base_cpi_rolls_back_both_new_epochs() {
     let (mut f, tail, tail_owner, _) = fixture_funded_multipage_bid();
     // Keep all resting maker collateral and both vault floors solvent.
