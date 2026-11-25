@@ -1262,6 +1262,60 @@ async fn funded_sixteen_maker_multipage_bid_executes_and_claims() {
         key: table_key,
         addresses: keys,
     };
+    // Reject malformed expanded account lists before consuming any collateral.
+    let observed: Vec<_> = instruction
+        .accounts
+        .iter()
+        .filter(|meta| meta.is_writable && meta.pubkey != payer)
+        .map(|meta| meta.pubkey)
+        .collect();
+    let mut before = Vec::new();
+    for key in &observed {
+        before.push(context.banks_client.get_account(*key).await.unwrap());
+    }
+    for case in 0..5 {
+        let mut invalid = instruction.clone();
+        match case {
+            0 => invalid.accounts.swap(20, 35),
+            1 => invalid.accounts[35].is_writable = false,
+            2 => {
+                let duplicate = invalid.accounts[20].clone();
+                invalid.accounts.push(duplicate);
+            }
+            3 => {
+                invalid.accounts.pop();
+            }
+            _ => invalid.data[9..17].copy_from_slice(&1001u64.to_le_bytes()),
+        }
+        let blockhash = context.get_new_latest_blockhash().await.unwrap();
+        let message = v0::Message::try_compile(
+            &payer,
+            &[budget.clone(), invalid],
+            std::slice::from_ref(&address_table),
+            blockhash,
+        )
+        .unwrap();
+        let signed =
+            VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.payer, &f.taker])
+                .unwrap();
+        assert!(bincode::serialize(&signed).unwrap().len() <= 1_232);
+        assert!(context
+            .banks_client
+            .process_transaction(signed)
+            .await
+            .is_err());
+        for (key, expected) in observed.iter().zip(&before) {
+            assert_eq!(
+                context
+                    .banks_client
+                    .get_account(*key)
+                    .await
+                    .unwrap()
+                    .as_ref(),
+                expected.as_ref(),
+            );
+        }
+    }
     let blockhash = context.get_new_latest_blockhash().await.unwrap();
     let message =
         v0::Message::try_compile(&payer, &[budget, instruction], &[address_table], blockhash)
