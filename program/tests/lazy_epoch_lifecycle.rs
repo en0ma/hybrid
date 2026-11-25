@@ -1108,6 +1108,15 @@ async fn funded_eight_maker_multipage_bid_executes_within_budget() {
 
 #[tokio::test]
 async fn funded_sixteen_maker_multipage_bid_executes_and_claims() {
+    exercise_sixteen_maker_multipage_bid(false).await;
+}
+
+#[tokio::test]
+async fn sixteen_maker_multipage_bid_late_cpi_failure_rolls_back() {
+    exercise_sixteen_maker_multipage_bid(true).await;
+}
+
+async fn exercise_sixteen_maker_multipage_bid(freeze_quote_destination: bool) {
     let (mut f, tail, tail_owner, _) = fixture_funded_multipage_bid();
     let mut header = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
     header.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
@@ -1197,6 +1206,12 @@ async fn funded_sixteen_maker_multipage_bid_executes_and_claims() {
             TOKEN,
         ),
     );
+    if freeze_quote_destination {
+        test.add_account(
+            f.taker_quote,
+            account(token_data(f.quote_mint, f.taker.pubkey(), 0, true), TOKEN),
+        );
+    }
     let (epoch_one, _) = Pubkey::find_program_address(
         &[b"frozen-epoch", f.market.as_ref(), &1u64.to_le_bytes()],
         &ID,
@@ -1295,9 +1310,11 @@ async fn funded_sixteen_maker_multipage_bid_executes_and_claims() {
             blockhash,
         )
         .unwrap();
-        let signed =
-            VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.payer, &f.taker])
-                .unwrap();
+        let signed = VersionedTransaction::try_new(
+            VersionedMessage::V0(message),
+            &[&context.payer, &f.taker],
+        )
+        .unwrap();
         assert!(bincode::serialize(&signed).unwrap().len() <= 1_232);
         assert!(context
             .banks_client
@@ -1331,6 +1348,38 @@ async fn funded_sixteen_maker_multipage_bid_executes_and_claims() {
         .process_transaction_with_metadata(signed)
         .await
         .unwrap();
+    if freeze_quote_destination {
+        assert!(outcome.result.is_err());
+        let metadata = outcome.metadata.unwrap();
+        assert!(
+            metadata
+                .log_messages
+                .iter()
+                .any(|line| line.contains("Account is frozen")),
+            "expected the SPL quote transfer to reject the frozen destination"
+        );
+        assert_eq!(
+            metadata
+                .log_messages
+                .iter()
+                .filter(|line| line.contains("Instruction: TransferChecked"))
+                .count(),
+            2,
+            "both checked SPL transfers must have been attempted"
+        );
+        for (key, expected) in observed.iter().zip(&before) {
+            assert_eq!(
+                context
+                    .banks_client
+                    .get_account(*key)
+                    .await
+                    .unwrap()
+                    .as_ref(),
+                expected.as_ref(),
+            );
+        }
+        return;
+    }
     outcome.result.unwrap();
     let units = outcome.metadata.unwrap().compute_units_consumed;
     eprintln!("opcode 44 sixteen-maker: {wire_bytes} bytes, {units} CU");
