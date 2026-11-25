@@ -265,7 +265,7 @@ fn store_bid_page_updates(
 }
 
 #[inline(never)]
-fn store_bid_data_page(
+pub(super) fn store_bid_data_page(
     account: &AccountInfo,
     index: usize,
     next: Option<&hybrid_state::BidPage>,
@@ -279,7 +279,7 @@ fn store_bid_data_page(
 }
 
 #[inline(never)]
-fn store_bid_owner_page(
+pub(super) fn store_bid_owner_page(
     account: &AccountInfo,
     index: usize,
     next: Option<&hybrid_state::BidOwnerPage>,

@@ -65,3 +65,26 @@ pinned Manifest comparison, exact-head validation and security review.
 Future bytecode growth above 384 KiB must fail CI and receive a separate
 reviewed policy change. Measurements describe the previous PR head and
 must be reconfirmed on the new exact head.
+
+## Atomic multipage BID settlement revision (PR #76)
+
+The exact-head SBF build on November 21, 2026, including the new atomic
+two-page, two-price BID execution and per-tick epoch sealing path, measured
+**394,136 bytes**. This exceeded the previous **393,216-byte (384 KiB)**
+repository policy by **920 bytes** after the stack-safe and shared-code
+refactors.
+
+The revised project policy budget is **409,600 bytes (400 KiB)**, an increase
+of **16,384 bytes (16 KiB)**. Relative to the measured binary, this leaves
+**15,464 bytes** (approximately 3.9%) of headroom. The previous
+384 KiB threshold remains a documented historical guard, not the effective
+limit for PR #76. Future growth past 400 KiB must fail CI and receive a
+separate reviewed policy change.
+
+This is **only** an in-repository artifact-size threshold revision.
+It does **not** raise the 4,096-byte SBF stack-frame limit, Solana transaction
+packet or compute limits, prove deployment readiness, or bypass any funded
+SBF, state, CU, pinned-Manifest, security-review or exact-head checks.
+The 394,136-byte measurement is from the previous exact head; the new head
+must be rebuilt and measured. The atomic opcode 44 PR remains draft pending
+execution, per-tick claims, rollback, transaction-size and CU validation.

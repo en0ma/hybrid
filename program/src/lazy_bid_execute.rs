@@ -22,6 +22,161 @@ const EPOCH_DOMAIN: &[u8] = b"HYBRID_LAZY_PUBKEY_EPOCH_V1\0";
 const LEAF_DOMAIN: &[u8] = b"HYBRID_MAKER_PUBKEY_CLAIM_V1\0";
 const NODE_DOMAIN: &[u8] = b"HYBRID_MAKER_PUBKEY_NODE_V1\0";
 
+/// Update a verified maker PDA using the same collateral rounding rules
+/// for both one-page and linked-page BID settlement. Quote debits remain
+/// locked until the separately authenticated maker claim.
+#[inline(never)]
+pub(super) fn update_lazy_bid_maker_balance(
+    program_id: &Pubkey,
+    market: &AccountInfo,
+    account: &AccountInfo,
+    owner: [u8; 32],
+    original: u64,
+    price_x64: u128,
+    allocation: &hybrid_state::lazy_pro_rata::MakerBidAllocation,
+) -> Result<hybrid_state::MakerBalance, ProgramError> {
+    let mut balance = load_maker_balance_for_owner(program_id, market, account, owner)?;
+    let filled = allocation
+        .base_proceeds
+        .checked_add(allocation.base_fee)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let remaining = original
+        .checked_sub(filled)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let old_lock = hybrid_engine::quote_for_base_at_price(original, price_x64)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    let new_lock = if remaining == 0 {
+        0
+    } else {
+        hybrid_engine::quote_for_base_at_price(remaining, price_x64)
+            .map_err(|_| ProgramError::InvalidAccountData)?
+    };
+    let released = old_lock
+        .checked_sub(new_lock)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let surplus = released
+        .checked_sub(allocation.quote_spent)
+        .ok_or(ProgramError::InsufficientFunds)?;
+    balance
+        .unlock_quote(surplus)
+        .map_err(|_| ProgramError::InsufficientFunds)?;
+    if balance.locked_quote < allocation.quote_spent {
+        return Err(ProgramError::InsufficientFunds);
+    }
+    Ok(balance)
+}
+
+/// Verify custody-owned SPL accounts and canonical vault authority for
+/// both BID sealer ABIs. Shared to avoid expanding linked-SBF bytecode.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn validate_bid_custody_token_accounts<'a>(
+    program_id: &Pubkey,
+    market_account: &AccountInfo<'a>,
+    custody: &hybrid_state::CustodyState,
+    taker: &AccountInfo<'a>,
+    taker_base: &AccountInfo<'a>,
+    taker_quote: &AccountInfo<'a>,
+    base_vault: &AccountInfo<'a>,
+    quote_vault: &AccountInfo<'a>,
+    base_mint: &AccountInfo<'a>,
+    quote_mint: &AccountInfo<'a>,
+    vault_authority: &AccountInfo<'a>,
+) -> Result<u8, ProgramError> {
+    if custody.base_vault != base_vault.key.to_bytes()
+        || custody.quote_vault != quote_vault.key.to_bytes()
+        || custody.base_mint != base_mint.key.to_bytes()
+        || custody.quote_mint != quote_mint.key.to_bytes()
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let (expected_authority, authority_bump) = Pubkey::find_program_address(
+        &[b"vault-authority", market_account.key.as_ref()],
+        program_id,
+    );
+    if *vault_authority.key != expected_authority {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    for (account, expected_mint, expected_owner) in [
+        (base_vault, custody.base_mint, expected_authority.to_bytes()),
+        (
+            quote_vault,
+            custody.quote_mint,
+            expected_authority.to_bytes(),
+        ),
+        (taker_base, custody.base_mint, taker.key.to_bytes()),
+        (taker_quote, custody.quote_mint, taker.key.to_bytes()),
+    ] {
+        let (mint, owner) = token_account_fields(account)?;
+        if mint != expected_mint || owner != expected_owner {
+            return Err(ProgramError::InvalidAccountData);
+        }
+    }
+    if mint_decimals(base_mint)? != custody.base_decimals
+        || mint_decimals(quote_mint)? != custody.quote_decimals
+        || *taker_base.key == *base_vault.key
+        || *taker_quote.key == *quote_vault.key
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    Ok(authority_bump)
+}
+
+/// Derive the same immutable V1 BID epoch commitment and claim root from
+/// program-owned resting rows in both execution ABIs.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_bid_epoch_header(
+    program_id: &Pubkey,
+    market: &Pubkey,
+    epoch_key: &Pubkey,
+    custody: &hybrid_state::CustodyState,
+    genesis: [u8; 32],
+    epoch_id: u64,
+    tick_sqrt_price_x64: u128,
+    owners: &[[u8; 32]],
+    weights: &[u64],
+    allocations: &[hybrid_state::lazy_pro_rata::MakerBidAllocation],
+    totals: [u64; 6],
+) -> Result<hybrid_state::frozen_epoch::FrozenEpochHeader, ProgramError> {
+    let digest = epoch_commitment(
+        market,
+        program_id,
+        &genesis,
+        (epoch_id, tick_sqrt_price_x64),
+        owners,
+        weights,
+        totals,
+    )?;
+    let root = sealed_claim_root(&digest, owners, weights, allocations)?;
+    let id_bytes = epoch_id.to_le_bytes();
+    let (expected_epoch, bump) =
+        Pubkey::find_program_address(&[b"frozen-epoch", market.as_ref(), &id_bytes], program_id);
+    if *epoch_key != expected_epoch {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let header = hybrid_state::frozen_epoch::FrozenEpochHeader {
+        bump,
+        side: 1,
+        market: market.to_bytes(),
+        authority: market.to_bytes(),
+        program: program_id.to_bytes(),
+        genesis,
+        epoch_id,
+        tick_sqrt_price_x64,
+        commitment: digest,
+        claim_root: root,
+        maker_count: owners.len() as u32,
+        totals,
+        base_vault: custody.base_vault,
+        quote_vault: custody.quote_vault,
+    };
+    header
+        .validate()
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    Ok(header)
+}
+
 // Use the same canonical floor-sqrt interval accepted by order placement.
 fn validate_resting_bid_price(price_x64: u128, sqrt_price_x64: u128) -> ProgramResult {
     hybrid_engine::validate_limit_ask(hybrid_engine::LimitAsk {
@@ -32,7 +187,7 @@ fn validate_resting_bid_price(price_x64: u128, sqrt_price_x64: u128) -> ProgramR
     .map_err(|_| ProgramError::InvalidAccountData)
 }
 
-fn token_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
+pub(super) fn token_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     token_account_fields(account)?;
     let data = account.try_borrow_data()?;
     Ok(u64::from_le_bytes(
@@ -42,7 +197,7 @@ fn token_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     ))
 }
 
-fn epoch_commitment(
+pub(super) fn epoch_commitment(
     market: &Pubkey,
     program: &Pubkey,
     genesis: &[u8; 32],
@@ -82,7 +237,7 @@ fn epoch_commitment(
     Ok(solana_program::hash::hash(&bytes[..used]).to_bytes())
 }
 
-fn sealed_claim_root(
+pub(super) fn sealed_claim_root(
     epoch_commitment: &[u8; 32],
     owners: &[[u8; 32]],
     weights: &[u64],
@@ -276,77 +431,33 @@ pub(super) fn execute_and_seal_bid(
         {
             return Err(ProgramError::InvalidAccountData);
         }
-        let mut balance =
-            load_maker_balance_for_owner(program_id, market_account, account, *owner)?;
-        let original = weights[index];
-        let filled = allocations[index]
-            .base_proceeds
-            .checked_add(allocations[index].base_fee)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        let remaining = original
-            .checked_sub(filled)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        let old_lock = hybrid_engine::quote_for_base_at_price(original, resting_price)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-        let new_lock = if remaining == 0 {
-            0
-        } else {
-            hybrid_engine::quote_for_base_at_price(remaining, resting_price)
-                .map_err(|_| ProgramError::InvalidAccountData)?
-        };
-        let released = old_lock
-            .checked_sub(new_lock)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        let surplus = released
-            .checked_sub(allocations[index].quote_spent)
-            .ok_or(ProgramError::InsufficientFunds)?;
-        balance
-            .unlock_quote(surplus)
-            .map_err(|_| ProgramError::InsufficientFunds)?;
-        if balance.locked_quote < allocations[index].quote_spent {
-            return Err(ProgramError::InsufficientFunds);
-        }
+        let balance = update_lazy_bid_maker_balance(
+            program_id,
+            market_account,
+            account,
+            *owner,
+            weights[index],
+            resting_price,
+            &allocations[index],
+        )?;
         updated_maker_balances.push(balance);
     }
 
     let mut custody = load_custody(program_id, market_account, custody_account)?;
     let mut reserve = lazy_reserve::load_lazy_reserve(program_id, market_account, reserve_account)?;
-    if custody.base_vault != base_vault.key.to_bytes()
-        || custody.quote_vault != quote_vault.key.to_bytes()
-        || custody.base_mint != base_mint.key.to_bytes()
-        || custody.quote_mint != quote_mint.key.to_bytes()
-    {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let (expected_authority, authority_bump) = Pubkey::find_program_address(
-        &[b"vault-authority", market_account.key.as_ref()],
+    let authority_bump = validate_bid_custody_token_accounts(
         program_id,
-    );
-    if *vault_authority.key != expected_authority {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    for (account, expected_mint, expected_owner) in [
-        (base_vault, custody.base_mint, expected_authority.to_bytes()),
-        (
-            quote_vault,
-            custody.quote_mint,
-            expected_authority.to_bytes(),
-        ),
-        (taker_base, custody.base_mint, taker.key.to_bytes()),
-        (taker_quote, custody.quote_mint, taker.key.to_bytes()),
-    ] {
-        let (mint, owner) = token_account_fields(account)?;
-        if mint != expected_mint || owner != expected_owner {
-            return Err(ProgramError::InvalidAccountData);
-        }
-    }
-    if mint_decimals(base_mint)? != custody.base_decimals
-        || mint_decimals(quote_mint)? != custody.quote_decimals
-        || *taker_base.key == *base_vault.key
-        || *taker_quote.key == *quote_vault.key
-    {
-        return Err(ProgramError::InvalidAccountData);
-    }
+        market_account,
+        &custody,
+        taker,
+        taker_base,
+        taker_quote,
+        base_vault,
+        quote_vault,
+        base_mint,
+        quote_mint,
+        vault_authority,
+    )?;
 
     // Reconcile vault ownership and ALL historical liabilities before
     // creating the next epoch, not merely the new epoch's Merkle root.
@@ -361,43 +472,21 @@ pub(super) fn execute_and_seal_bid(
     }
     let epoch_id = reserve.next_epoch_id;
     let totals = [0, base_fill - base_fee, quote_paid, 0, base_fee, 0];
-    let digest = epoch_commitment(
-        market_account.key,
+    let id_bytes = epoch_id.to_le_bytes();
+    let header = build_bid_epoch_header(
         program_id,
-        &reserve.genesis,
-        (epoch_id, resting_tick),
+        market_account.key,
+        epoch_account.key,
+        &custody,
+        reserve.genesis,
+        epoch_id,
+        resting_tick,
         &owners,
         &weights,
+        &allocations,
         totals,
     )?;
-    let root = sealed_claim_root(&digest, &owners, &weights, &allocations)?;
-    let id_bytes = epoch_id.to_le_bytes();
-    let (expected_epoch, epoch_bump) = Pubkey::find_program_address(
-        &[b"frozen-epoch", market_account.key.as_ref(), &id_bytes],
-        program_id,
-    );
-    if *epoch_account.key != expected_epoch {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    let header = hybrid_state::frozen_epoch::FrozenEpochHeader {
-        bump: epoch_bump,
-        side: 1,
-        market: market_account.key.to_bytes(),
-        authority: market_account.key.to_bytes(),
-        program: program_id.to_bytes(),
-        genesis: reserve.genesis,
-        epoch_id,
-        tick_sqrt_price_x64: resting_tick,
-        commitment: digest,
-        claim_root: root,
-        maker_count: weights.len() as u32,
-        totals,
-        base_vault: custody.base_vault,
-        quote_vault: custody.quote_vault,
-    };
-    header
-        .validate()
-        .map_err(|_| ProgramError::InvalidAccountData)?;
+    let epoch_bump = header.bump;
 
     // Precalculate every state transition before the first token CPI.
     let fills: Vec<u64> = allocations

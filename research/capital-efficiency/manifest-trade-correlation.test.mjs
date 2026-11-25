@@ -15,7 +15,7 @@ test("rejects a swap bundled with unrelated token transfers",()=>{const x=make()
 test("allows only non-state-changing ComputeBudget alongside a swap",()=>{const x=make();x.receipt.transaction.message.accountKeys.push("ComputeBudget111111111111111111111111111111");x.receipt.transaction.message.instructions.unshift({programIdIndex:8,accounts:[],data:"3"});assert.equal(correlateManifestTrade(x).isolatedTransactionChecked,true)});
 
 test("rejects missing explicit vault account bindings",()=>{const x=make();delete x.vaultAccounts;assert.throws(()=>correlateManifestTrade(x),/explicit Manifest vault/) });
-test("rejects inconsistent vault flow despite matching taker balances",()=>{const x=make();x.receipt.meta.postTokenBalances[4].uiTokenAmount.amount="970";assert.throws(()=>correlateManifestTrade(x),/vault\/taker token conservation mismatch/) });
+test("rejects inconsistent vault flow despite matching taker balances",()=>{const x=make();x.receipt.meta.postTokenBalances[4].uiTokenAmount.amount="970";assert.throws(()=>correlateManifestTrade(x),/SPL token conservation failed/) });
 
 test("rejects incorrect maker seat quote proceeds",()=>{const x=make();x.after.seats[0].quoteFreeAtoms="19";assert.throws(()=>correlateManifestTrade(x),/maker seat quote proceeds/) });
 
