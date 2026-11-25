@@ -47,9 +47,23 @@ jobs:
         run: node --test research/capital-efficiency/manifest-maker-instructions.test.mjs
       - name: Test local-only Manifest signed submission
         run: node --test research/capital-efficiency/manifest-local-send.test.mjs
-      - name: Test Manifest token conservation and partial orderbook fill audit\n        run: node --test research/capital-efficiency/manifest-fill-audit.test.mjs\n      - name: Test Manifest core instruction attribution\n        run: node --test research/capital-efficiency/manifest-swap-attribution.test.mjs\n      - name: Test Manifest swap and settlement correlation\n        run: node --test research/capital-efficiency/manifest-trade-correlation.test.mjs\n      - name: Test isolated Manifest vault and taker token flows\n        run: node --test research/capital-efficiency/manifest-vault-flow-audit.test.mjs\n      - name: Test exact Manifest maker-seat settlement accounting
+      - name: Test Manifest token conservation and partial orderbook fill audit
+        run: node --test research/capital-efficiency/manifest-fill-audit.test.mjs
+      - name: Test Manifest core instruction attribution
+        run: node --test research/capital-efficiency/manifest-swap-attribution.test.mjs
+      - name: Test Manifest swap and settlement correlation
+        run: node --test research/capital-efficiency/manifest-trade-correlation.test.mjs
+      - name: Test isolated Manifest vault and taker token flows
+        run: node --test research/capital-efficiency/manifest-vault-flow-audit.test.mjs
+      - name: Test exact Manifest maker-seat settlement accounting
         run: node --test research/capital-efficiency/manifest-maker-seat-audit.test.mjs
-      - name: Test Manifest Swap account-index bindings\n        run: node --test research/capital-efficiency/manifest-account-binding.test.mjs\n      - name: Test local Manifest fill orchestration safety gates\n        run: node --test research/capital-efficiency/manifest-local-fill.test.mjs\n      - name: Test operator-provided local Manifest fixture CLI\n        run: node --test research/capital-efficiency/manifest-local-fill-cli.test.mjs\n      - name: Test local Manifest funded-account preflight
+      - name: Test Manifest Swap account-index bindings
+        run: node --test research/capital-efficiency/manifest-account-binding.test.mjs
+      - name: Test local Manifest fill orchestration safety gates
+        run: node --test research/capital-efficiency/manifest-local-fill.test.mjs
+      - name: Test operator-provided local Manifest fixture CLI
+        run: node --test research/capital-efficiency/manifest-local-fill-cli.test.mjs
+      - name: Test local Manifest funded-account preflight
         run: node --test research/capital-efficiency/manifest-local-preflight.test.mjs
       - name: Generate reproducible model artifact
         run: node research/capital-efficiency/run.mjs research/capital-efficiency/two-market-scenario.json "$RUNNER_TEMP/p2-capital-model.json"
