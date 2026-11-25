@@ -1192,7 +1192,10 @@ async fn funded_sixteen_maker_multipage_bid_executes_and_claims() {
     );
     test.add_account(
         f.taker_base,
-        account(token_data(f.base_mint, f.taker.pubkey(), 1700, false), TOKEN),
+        account(
+            token_data(f.base_mint, f.taker.pubkey(), 1700, false),
+            TOKEN,
+        ),
     );
     let (epoch_one, _) = Pubkey::find_program_address(
         &[b"frozen-epoch", f.market.as_ref(), &1u64.to_le_bytes()],
@@ -1260,13 +1263,9 @@ async fn funded_sixteen_maker_multipage_bid_executes_and_claims() {
         addresses: keys,
     };
     let blockhash = context.get_new_latest_blockhash().await.unwrap();
-    let message = v0::Message::try_compile(
-        &payer,
-        &[budget, instruction],
-        &[address_table],
-        blockhash,
-    )
-    .unwrap();
+    let message =
+        v0::Message::try_compile(&payer, &[budget, instruction], &[address_table], blockhash)
+            .unwrap();
     assert!(!message.address_table_lookups.is_empty());
     let signed =
         VersionedTransaction::try_new(VersionedMessage::V0(message), &[&context.payer, &f.taker])
@@ -1356,8 +1355,8 @@ async fn funded_sixteen_maker_multipage_bid_executes_and_claims() {
                 amount(&bytes(&mut context, destinations[seat]).await),
                 claims[seat][1]
             );
-            let balance = MakerBalance::decode_from(&bytes(&mut context, balances[seat]).await)
-                .unwrap();
+            let balance =
+                MakerBalance::decode_from(&bytes(&mut context, balances[seat]).await).unwrap();
             assert_eq!(balance.locked_quote, 0);
             assert_eq!(balance.free_quote, 0);
         }
