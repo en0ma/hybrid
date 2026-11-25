@@ -1238,6 +1238,29 @@ async fn funded_two_page_bid_seals_two_epochs_and_compacts_order_chain() {
     assert!(tx(&mut context, cross_epoch, &[&f.extra_makers[0]])
         .await
         .is_err());
+    // Replay an otherwise valid claim under a different market identity.
+    let mut foreign_claim = low_claim.clone();
+    foreign_claim.accounts[0] = AccountMeta::new_readonly(Pubkey::new_unique(), false);
+    let mut observed = vec![f.market, f.custody, f.reserve, f.epoch, epoch_one];
+    observed.extend([
+        f.extra_balances[0],
+        f.extra_destinations[0],
+        f.base_vault,
+        f.quote_vault,
+    ]);
+    let mut before = Vec::new();
+    for key in &observed {
+        before.push(context.banks_client.get_account(*key).await.unwrap());
+    }
+    assert!(tx(&mut context, foreign_claim, &[&f.extra_makers[0]])
+        .await
+        .is_err());
+    for (key, expected) in observed.iter().zip(before) {
+        assert_eq!(
+            context.banks_client.get_account(*key).await.unwrap(),
+            expected,
+        );
+    }
     tx(&mut context, low_claim.clone(), &[&f.extra_makers[0]])
         .await
         .unwrap();
