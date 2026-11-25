@@ -61,3 +61,23 @@ across the entire multipage instruction.
 **Not yet generalized:** More than two ticks/pages, rosters over eight
 in one atomic call, or production deployment. The preflight-only opcode
 43 remains available and unchanged.
+
+## Follow-up verification — 2026-11-25
+
+The prior head `b5f2196190786c0559503abd7d3077a71f5274c3` passed the
+native/SBF/fuzz/CU/bytecode job, Manifest comparison and baseline, mainnet
+fork, exact-head verification, documentation, and funded Surfpool workflow.
+The review gate rejected draft status; no inline review threads were returned.
+These results apply only to that head, not subsequent commits.
+
+Follow-up changes repair malformed YAML in the capital efficiency workflow,
+add foreign-market epoch substitution, read-only maker, wrong system-program
+and frozen quote destination rejection tests, and add a signed legacy packet
+serialization test with all 28 opcode 44 account metas and two signatures.
+The maximum-roster packet test uses synthetic additional account keys and
+is not evidence of funded eight-maker execution or measured compute usage.
+
+Remaining release blockers: successful exact-head CI, funded eight-maker
+execution and measured CU, independent review of collateral/reserve conservation,
+full cross-market claim replay and historical reserve cases, and adversarial
+review. Keep this PR draft and the production SDK execution builder disabled.
