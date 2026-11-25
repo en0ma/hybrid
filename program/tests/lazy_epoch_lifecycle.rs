@@ -973,6 +973,41 @@ fn multipage_bid_claim(
 
 /// Both executable ticks must be sealed in one all-or-nothing transaction.
 #[tokio::test]
+async fn multipage_bid_eight_maker_legacy_packet_fits_wire_limit() {
+    let (mut f, tail, tail_owner, _) = fixture_funded_multipage_bid();
+    let context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    let (epoch_one, _) = Pubkey::find_program_address(
+        &[b"frozen-epoch", f.market.as_ref(), &1u64.to_le_bytes()],
+        &ID,
+    );
+    let mut instruction = seal_multipage_bid(&f, payer, tail, tail_owner, epoch_one, 350, 325);
+    // Five additional distinct writable keys model the maximum ABI roster.
+    // This is a wire-size test, not an execution or compute measurement.
+    for _ in 0..5 {
+        instruction
+            .accounts
+            .push(AccountMeta::new(Pubkey::new_unique(), false));
+    }
+    assert_eq!(instruction.accounts.len(), 28);
+    let mut data = vec![2u8];
+    data.extend_from_slice(&1_400_000u32.to_le_bytes());
+    let budget = Instruction {
+        program_id: solana_program::pubkey!("ComputeBudget111111111111111111111111111111"),
+        accounts: vec![],
+        data,
+    };
+    let signed = Transaction::new_signed_with_payer(
+        &[budget, instruction],
+        Some(&payer),
+        &[&context.payer, &f.taker],
+        context.last_blockhash,
+    );
+    let wire_bytes = bincode::serialize(&signed).unwrap().len();
+    assert!(wire_bytes <= 1_232, "eight-maker wire size: {wire_bytes}");
+}
+
+#[tokio::test]
 async fn funded_two_page_bid_seals_two_epochs_and_compacts_order_chain() {
     let (mut f, tail, tail_owner, _balance) = fixture_funded_multipage_bid();
     let mut context = f.test.take().unwrap().start_with_context().await;
