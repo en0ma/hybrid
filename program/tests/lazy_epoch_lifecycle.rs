@@ -1352,8 +1352,7 @@ async fn multipage_bid_preserves_historical_reserve_floors() {
     // liability is deliberately independent of the current maker roster.
     for solvent in [false, true] {
         let (mut f, tail, tail_owner, _) = fixture_funded_multipage_bid();
-        let (_, bump) =
-            Pubkey::find_program_address(&[b"lazy-reserve", f.market.as_ref()], &ID);
+        let (_, bump) = Pubkey::find_program_address(&[b"lazy-reserve", f.market.as_ref()], &ID);
         let mut historical = LazyReserve::new(bump, f.market.to_bytes(), GENESIS).unwrap();
         historical
             .reserve_execution(0, [0, 17, 9, 0, 3, 0])
@@ -1365,7 +1364,12 @@ async fn multipage_bid_preserves_historical_reserve_floors() {
         test.add_account(
             f.base_vault,
             account(
-                token_data(f.base_mint, f.vault_authority, if solvent { 20 } else { 19 }, false),
+                token_data(
+                    f.base_mint,
+                    f.vault_authority,
+                    if solvent { 20 } else { 19 },
+                    false,
+                ),
                 TOKEN,
             ),
         );
@@ -1379,8 +1383,7 @@ async fn multipage_bid_preserves_historical_reserve_floors() {
         );
         let mut context = f.test.take().unwrap().start_with_context().await;
         let payer = context.payer.pubkey();
-        let mut instruction =
-            seal_multipage_bid(&f, payer, tail, tail_owner, epoch_two, 350, 325);
+        let mut instruction = seal_multipage_bid(&f, payer, tail, tail_owner, epoch_two, 350, 325);
         instruction.accounts[3] = AccountMeta::new(epoch_one, false);
         let observed: Vec<_> = instruction
             .accounts
@@ -1396,7 +1399,9 @@ async fn multipage_bid_preserves_historical_reserve_floors() {
         if solvent {
             outcome.unwrap();
             let mut expected = historical;
-            expected.reserve_execution(1, [0, 297, 300, 0, 3, 0]).unwrap();
+            expected
+                .reserve_execution(1, [0, 297, 300, 0, 3, 0])
+                .unwrap();
             expected.reserve_execution(2, [0, 50, 25, 0, 0, 0]).unwrap();
             let actual = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
             assert_eq!(actual, expected);
