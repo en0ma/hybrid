@@ -1186,6 +1186,63 @@ async fn multipage_bid_insufficient_taker_base_cpi_rolls_back_both_new_epochs() 
 }
 
 #[tokio::test]
+async fn multipage_bid_frozen_quote_destination_rolls_back_both_new_epochs() {
+    let (mut f, tail, tail_owner, _) = fixture_funded_multipage_bid();
+    // Freeze the outgoing quote destination to exercise rejection and rollback.
+    f.test.as_mut().unwrap().add_account(
+        f.taker_quote,
+        account(token_data(f.quote_mint, f.taker.pubkey(), 0, true), TOKEN),
+    );
+    let mut context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+        .await
+        .unwrap();
+    let (epoch_one, _) = Pubkey::find_program_address(
+        &[b"frozen-epoch", f.market.as_ref(), &1u64.to_le_bytes()],
+        &ID,
+    );
+    let observed = [
+        f.market,
+        f.custody,
+        f.reserve,
+        f.epoch,
+        epoch_one,
+        f.ask,
+        f.owners,
+        tail,
+        tail_owner,
+        f.balance_a,
+        f.balance_b,
+        f.extra_balances[0],
+        f.quote_vault,
+        f.base_vault,
+        f.taker_base,
+        f.taker_quote,
+    ];
+    let mut before = Vec::new();
+    for key in observed {
+        before.push(context.banks_client.get_account(key).await.unwrap());
+    }
+    assert!(before[3].is_none());
+    assert!(before[4].is_none());
+    let outcome = tx(
+        &mut context,
+        seal_multipage_bid(&f, payer, tail, tail_owner, epoch_one, 350, 325),
+        &[&f.taker],
+    )
+    .await;
+    assert!(outcome.is_err(), "frozen taker quote destination must fail");
+    for (index, key) in observed.iter().enumerate() {
+        assert_eq!(
+            context.banks_client.get_account(*key).await.unwrap(),
+            before[index],
+            "transaction modified account at index {index}",
+        );
+    }
+}
+
+#[tokio::test]
 async fn multipage_bid_rejects_late_tick_failures_without_any_account_writes() {
     let (mut f, tail, tail_owner, _balance) = fixture_funded_multipage_bid();
     let mut context = f.test.take().unwrap().start_with_context().await;
@@ -1228,12 +1285,26 @@ async fn multipage_bid_rejects_late_tick_failures_without_any_account_writes() {
     duplicate.accounts[22] = duplicate.accounts[21].clone();
     let mut bad_epoch = good.clone();
     bad_epoch.accounts[4] = AccountMeta::new(Pubkey::new_unique(), false);
+    let mut foreign_epoch = good.clone();
+    let foreign_market = Pubkey::new_unique();
+    let (foreign_epoch_key, _) = Pubkey::find_program_address(
+        &[b"frozen-epoch", foreign_market.as_ref(), &1u64.to_le_bytes()],
+        &ID,
+    );
+    foreign_epoch.accounts[4] = AccountMeta::new(foreign_epoch_key, false);
+    let mut readonly_balance = good.clone();
+    readonly_balance.accounts[22].is_writable = false;
+    let mut wrong_system = good.clone();
+    wrong_system.accounts[19] = AccountMeta::new_readonly(Pubkey::new_unique(), false);
     let bad_slippage = seal_multipage_bid(&f, payer, tail, tail_owner, epoch_one, 350, 326);
     for instruction in [
         forged_owner,
         swapped_balances,
         duplicate,
         bad_epoch,
+        foreign_epoch,
+        readonly_balance,
+        wrong_system,
         bad_slippage,
     ] {
         assert!(tx(&mut context, instruction, &[&f.taker]).await.is_err());
