@@ -1107,6 +1107,71 @@ async fn funded_eight_maker_multipage_bid_executes_within_budget() {
 }
 
 #[tokio::test]
+async fn multipage_bid_extended_roster_v0_packet_characterization() {
+    let (mut f, tail, tail_owner, _) = fixture_funded_multipage_bid();
+    let context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    let (epoch_one, _) = Pubkey::find_program_address(
+        &[b"frozen-epoch", f.market.as_ref(), &1u64.to_le_bytes()],
+        &ID,
+    );
+    let mut data = vec![2u8];
+    data.extend_from_slice(&1_400_000u32.to_le_bytes());
+    let budget = Instruction {
+        program_id: solana_program::pubkey!("ComputeBudget111111111111111111111111111111"),
+        accounts: vec![],
+        data,
+    };
+    for seats in [8usize, 9, 16, 32] {
+        let mut ix = seal_multipage_bid(&f, payer, tail, tail_owner, epoch_one, 350, 325);
+        for _ in 3..seats {
+            ix.accounts
+                .push(AccountMeta::new(Pubkey::new_unique(), false));
+        }
+        assert_eq!(ix.accounts.len(), 20 + seats);
+        // Synthetic table for serialization only; no execution or CU claim.
+        // Keep signers and program IDs static, as required by v0 messages.
+        let table = AddressLookupTableAccount {
+            key: Pubkey::new_unique(),
+            addresses: ix
+                .accounts
+                .iter()
+                .filter(|meta| !meta.is_signer)
+                .map(|meta| meta.pubkey)
+                .collect(),
+        };
+        let instructions = [budget.clone(), ix];
+        let legacy = Transaction::new_signed_with_payer(
+            &instructions,
+            Some(&payer),
+            &[&context.payer, &f.taker],
+            context.last_blockhash,
+        );
+        let legacy_bytes = bincode::serialize(&legacy).unwrap().len();
+        let message = v0::Message::try_compile(
+            &payer,
+            &instructions,
+            &[table],
+            context.last_blockhash,
+        )
+        .unwrap();
+        assert!(!message.address_table_lookups.is_empty());
+        let versioned = VersionedTransaction::try_new(
+            VersionedMessage::V0(message),
+            &[&context.payer, &f.taker],
+        )
+        .unwrap();
+        let v0_bytes = bincode::serialize(&versioned).unwrap().len();
+        eprintln!("multipage BID packet: {seats} seats, legacy {legacy_bytes}, v0 {v0_bytes}");
+        assert!(v0_bytes < legacy_bytes);
+        assert!(v0_bytes <= 1_232);
+        if seats >= 16 {
+            assert!(legacy_bytes > 1_232);
+        }
+    }
+}
+
+#[tokio::test]
 async fn multipage_bid_eight_maker_legacy_packet_fits_wire_limit() {
     let (mut f, tail, tail_owner, _) = fixture_funded_multipage_bid();
     let context = f.test.take().unwrap().start_with_context().await;
