@@ -81,3 +81,21 @@ Remaining release blockers: successful exact-head CI, funded eight-maker
 execution and measured CU, independent review of collateral/reserve conservation,
 full cross-market claim replay and historical reserve cases, and adversarial
 review. Keep this PR draft and the production SDK execution builder disabled.
+
+## Maximum-roster evidence and reserve follow-up
+
+At exact head `e95974b874517ba5d476c13ef9b183e1218accfb`, the core
+PR Gate test job passed and reported opcode 44 eight-maker execution at
+1,182 serialized bytes and 220,729 CU (one funded fixture, not a worst-case
+bound across every possible input). Main Verification, documentation,
+benchmark provenance and funded Surfpool also passed. The review gate
+rejected draft status. See the [core job](https://github.com/en0ma/hybrid/actions/runs/45614896819/job/139207647924).
+
+Subsequent commits correct the Manifest correlation test expectation without
+weakening SPL conservation and add historical reserve fixtures with exact
+funding and a one-atom deficit. These fixtures inject historical state rather
+than generating a prior epoch through execution. Their CI results are pending.
+The source review covered account roles, linked ordering, maker identity,
+per-tick allocations, epoch commitments, and old/new vault floors. It is not
+an independent external audit. Keep the production builder disabled; require
+fresh exact-head CI and review before merge.
