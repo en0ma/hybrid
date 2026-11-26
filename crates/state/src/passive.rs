@@ -295,28 +295,44 @@ impl PositionAccount {
         let bf = proportion(p.base_fees, burn, liquidity)?;
         let qf = proportion(p.quote_fees, burn, liquidity)?;
         let payout = (
-            base.checked_add(bf).ok_or(PassiveAccountingError::Overflow)?,
-            quote.checked_add(qf).ok_or(PassiveAccountingError::Overflow)?,
+            base.checked_add(bf)
+                .ok_or(PassiveAccountingError::Overflow)?,
+            quote
+                .checked_add(qf)
+                .ok_or(PassiveAccountingError::Overflow)?,
         );
         if payout == (0, 0) && burn != liquidity {
             return Err(PassiveAccountingError::ZeroAmount);
         }
-        next.base_reserve = next.base_reserve.checked_sub(base)
+        next.base_reserve = next
+            .base_reserve
+            .checked_sub(base)
             .ok_or(PassiveAccountingError::InsufficientReserves)?;
-        next.quote_reserve = next.quote_reserve.checked_sub(quote)
+        next.quote_reserve = next
+            .quote_reserve
+            .checked_sub(quote)
             .ok_or(PassiveAccountingError::InsufficientReserves)?;
-        next.accrued_base_fees = next.accrued_base_fees.checked_sub(bf)
+        next.accrued_base_fees = next
+            .accrued_base_fees
+            .checked_sub(bf)
             .ok_or(PassiveAccountingError::InsufficientReserves)?;
-        next.accrued_quote_fees = next.accrued_quote_fees.checked_sub(qf)
+        next.accrued_quote_fees = next
+            .accrued_quote_fees
+            .checked_sub(qf)
             .ok_or(PassiveAccountingError::InsufficientReserves)?;
-        next.total_liquidity = next.total_liquidity.checked_sub(burn)
+        next.total_liquidity = next
+            .total_liquidity
+            .checked_sub(burn)
             .ok_or(PassiveAccountingError::InsufficientLiquidity)?;
         p.position.base_principal -= base;
         p.position.quote_principal -= quote;
         p.position.liquidity -= burn;
         p.base_fees -= bf;
         p.quote_fees -= qf;
-        p.revision = p.revision.checked_add(1).ok_or(PassiveAccountingError::Overflow)?;
+        p.revision = p
+            .revision
+            .checked_add(1)
+            .ok_or(PassiveAccountingError::Overflow)?;
         if burn != liquidity {
             p.validate()?;
         }
@@ -336,8 +352,12 @@ impl PositionAccount {
         {
             return Err(PassiveAccountingError::InvalidPosition);
         }
-        p.base_principal.checked_add(self.base_fees).ok_or(PassiveAccountingError::Overflow)?;
-        p.quote_principal.checked_add(self.quote_fees).ok_or(PassiveAccountingError::Overflow)?;
+        p.base_principal
+            .checked_add(self.base_fees)
+            .ok_or(PassiveAccountingError::Overflow)?;
+        p.quote_principal
+            .checked_add(self.quote_fees)
+            .ok_or(PassiveAccountingError::Overflow)?;
         Ok(())
     }
 

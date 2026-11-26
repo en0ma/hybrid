@@ -350,7 +350,10 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         states[i].position.quote_principal = ledger.positions[i].quote;
         states[i].base_fees = ledger.positions[i].base_fees;
         states[i].quote_fees = ledger.positions[i].quote_fees;
-        states[i].revision = states[i].revision.checked_add(1).ok_or(ProgramError::InvalidAccountData)?;
+        states[i].revision = states[i]
+            .revision
+            .checked_add(1)
+            .ok_or(ProgramError::InvalidAccountData)?;
         states[i]
             .encode_into(&mut account.try_borrow_mut_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;

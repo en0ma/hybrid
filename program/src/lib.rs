@@ -2578,7 +2578,8 @@ fn process_close_passive_position(
     } else {
         (state.revision, state.position.liquidity)
     };
-    let (payout_base, payout_quote) = state.redeem(&mut pool.pool, revision, burn)
+    let (payout_base, payout_quote) = state
+        .redeem(&mut pool.pool, revision, burn)
         .map_err(|_| ProgramError::InvalidInstructionData)?;
 
     let bump = [authority_bump];
@@ -2610,7 +2611,8 @@ fn process_close_passive_position(
     pool.encode_into(&mut pool_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
     if state.position.liquidity != 0 {
-        return state.encode_into(&mut position_account.try_borrow_mut_data()?)
+        return state
+            .encode_into(&mut position_account.try_borrow_mut_data()?)
             .map_err(|_| ProgramError::InvalidAccountData);
     }
     // A zeroed position cannot decode again. A second withdrawal fails.
