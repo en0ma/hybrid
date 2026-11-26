@@ -2405,9 +2405,6 @@ fn process_open_passive_position(
     }
     // Until per-position fee-growth accounting is on-chain, adding a new
     // claimant after trading would let it capture another LP's earned fees.
-    if pool.pool.accrued_base_fees != 0 || pool.pool.accrued_quote_fees != 0 {
-        return Err(ProgramError::InvalidAccountData);
-    }
     // Do not accept more LP claims when pre-existing custody is insolvent.
     // The deposits in this instruction are checked again after the CPIs.
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
@@ -2452,6 +2449,9 @@ fn process_open_passive_position(
     }
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
     let state = hybrid_state::passive::PositionAccount {
+        base_fees: 0,
+        quote_fees: 0,
+        revision: 1,
         bump,
         market: market.key.to_bytes(),
         nonce,
@@ -2570,35 +2570,20 @@ fn process_close_passive_position(
 
     // Both active maker claims and passive LP claims must remain funded.
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
-    // A pool fee balance can be attributed only to the sole position.
-    // Multi-position pools retain principal-only withdrawals and cannot
-    // withdraw unassigned trading fees until per-position accounts migrate.
-    let sole = pool.pool.total_liquidity == state.position.liquidity
-        && pool.pool.base_reserve == state.position.base_principal
-        && pool.pool.quote_reserve == state.position.quote_principal;
-    let fee_base = if sole { pool.pool.accrued_base_fees } else { 0 };
-    let fee_quote = if sole {
-        pool.pool.accrued_quote_fees
-    } else {
-        0
-    };
-    let payout_base = state
-        .position
-        .base_principal
-        .checked_add(fee_base)
+    let payout_base = state.position.base_principal.checked_add(state.base_fees)
         .ok_or(ProgramError::InvalidAccountData)?;
-    let payout_quote = state
-        .position
-        .quote_principal
-        .checked_add(fee_quote)
+    let payout_quote = state.position.quote_principal.checked_add(state.quote_fees)
         .ok_or(ProgramError::InvalidAccountData)?;
-    pool.pool
-        .withdraw(&state.position)
-        .map_err(|_| ProgramError::InsufficientFunds)?;
-    if sole {
-        pool.pool.accrued_base_fees = 0;
-        pool.pool.accrued_quote_fees = 0;
-    }
+    pool.pool.base_reserve = pool.pool.base_reserve.checked_sub(state.position.base_principal)
+        .ok_or(ProgramError::InsufficientFunds)?;
+    pool.pool.quote_reserve = pool.pool.quote_reserve.checked_sub(state.position.quote_principal)
+        .ok_or(ProgramError::InsufficientFunds)?;
+    pool.pool.total_liquidity = pool.pool.total_liquidity.checked_sub(state.position.liquidity)
+        .ok_or(ProgramError::InsufficientFunds)?;
+    pool.pool.accrued_base_fees = pool.pool.accrued_base_fees.checked_sub(state.base_fees)
+        .ok_or(ProgramError::InsufficientFunds)?;
+    pool.pool.accrued_quote_fees = pool.pool.accrued_quote_fees.checked_sub(state.quote_fees)
+        .ok_or(ProgramError::InsufficientFunds)?;
 
     let bump = [authority_bump];
     let seeds: &[&[u8]] = &[b"vault-authority", market.key.as_ref(), &bump];

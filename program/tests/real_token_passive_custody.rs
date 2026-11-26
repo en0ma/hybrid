@@ -131,6 +131,9 @@ fn fixture(available_base: u64, available_quote: u64) -> Fixture {
         },
     };
     let position_state = PositionAccount {
+        base_fees: 0,
+        quote_fees: 0,
+        revision: 1,
         bump: position_bump,
         market: market.to_bytes(),
         nonce,

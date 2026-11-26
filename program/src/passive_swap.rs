@@ -126,6 +126,8 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     if pool.pool.total_liquidity != position.position.liquidity
         || pool.pool.base_reserve != position.position.base_principal
         || pool.pool.quote_reserve != position.position.quote_principal
+        || pool.pool.accrued_base_fees != position.base_fees
+        || pool.pool.accrued_quote_fees != position.quote_fees
         || pool.pool.total_liquidity == 0
     {
         return Err(ProgramError::InvalidAccountData);
@@ -226,6 +228,7 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     let bump = [authority_bump];
     let seeds: &[&[u8]] = &[b"vault-authority", market_account.key.as_ref(), &bump];
     if side == 0 {
+        position.quote_fees = position.quote_fees.checked_add(fee).ok_or(ProgramError::InvalidAccountData)?;
         pool.pool
             .buy(gross_in, result.amount_out, fee)
             .map_err(|_| ProgramError::InsufficientFunds)?;
@@ -258,6 +261,7 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
             Some(seeds),
         )?;
     } else {
+        position.base_fees = position.base_fees.checked_add(fee).ok_or(ProgramError::InvalidAccountData)?;
         pool.pool
             .sell(gross_in, result.amount_out, fee)
             .map_err(|_| ProgramError::InsufficientFunds)?;
@@ -290,6 +294,7 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
             Some(seeds),
         )?;
     }
+    position.revision = position.revision.checked_add(1).ok_or(ProgramError::InvalidAccountData)?;
     header.sqrt_price_x64 = result.next_sqrt_price_x64;
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
     header

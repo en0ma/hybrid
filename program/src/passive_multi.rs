@@ -1,6 +1,5 @@
 //! Authenticated, funded multi-position passive settlement, one price segment.
-//! Fee proceeds are compounded into each LP's current redeemable principal;
-//! pool accrued-fee counters must be zero in this accounting mode.
+//! LP fee claims remain segregated from current inventory.
 use crate::{
     check_passive_vault_coverage, load_custody, token_account_fields, transfer_checked,
     TOKEN_PROGRAM_ID,
@@ -123,8 +122,6 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         || *quote_vault.key != Pubkey::new_from_array(custody.quote_vault)
         || *base_mint.key != Pubkey::new_from_array(custody.base_mint)
         || *quote_mint.key != Pubkey::new_from_array(custody.quote_mint)
-        || pool.pool.accrued_base_fees != 0
-        || pool.pool.accrued_quote_fees != 0
     {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -186,8 +183,8 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
             },
             base: state.position.base_principal,
             quote: state.position.quote_principal,
-            base_fees: 0,
-            quote_fees: 0,
+            base_fees: state.base_fees,
+            quote_fees: state.quote_fees,
         });
         states.push(state);
     }
@@ -307,34 +304,6 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     ledger
         .apply_segment(segment_price, trade)
         .map_err(|_| ProgramError::InsufficientFunds)?;
-    for claim in &mut ledger.positions {
-        claim.base = claim
-            .base
-            .checked_add(claim.base_fees)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        claim.quote = claim
-            .quote
-            .checked_add(claim.quote_fees)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        claim.base_fees = 0;
-        claim.quote_fees = 0;
-    }
-    ledger.pool.base_reserve = ledger
-        .pool
-        .base_reserve
-        .checked_add(ledger.pool.accrued_base_fees)
-        .ok_or(ProgramError::InvalidAccountData)?;
-    ledger.pool.quote_reserve = ledger
-        .pool
-        .quote_reserve
-        .checked_add(ledger.pool.accrued_quote_fees)
-        .ok_or(ProgramError::InvalidAccountData)?;
-    ledger.pool.accrued_base_fees = 0;
-    ledger.pool.accrued_quote_fees = 0;
-    ledger
-        .verify()
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-
     let bump = [authority_bump];
     let seeds: &[&[u8]] = &[b"vault-authority", market.key.as_ref(), &bump];
     if buy {
@@ -379,6 +348,9 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     for (i, account) in positions.iter().enumerate() {
         states[i].position.base_principal = ledger.positions[i].base;
         states[i].position.quote_principal = ledger.positions[i].quote;
+        states[i].base_fees = ledger.positions[i].base_fees;
+        states[i].quote_fees = ledger.positions[i].quote_fees;
+        states[i].revision = states[i].revision.checked_add(1).ok_or(ProgramError::InvalidAccountData)?;
         states[i]
             .encode_into(&mut account.try_borrow_mut_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;

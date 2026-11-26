@@ -126,6 +126,9 @@ fn fixture() -> Fixture {
     let mut pool_data = vec![0; PASSIVE_POOL_BYTES];
     pool_state.encode_into(&mut pool_data).unwrap();
     let position_state = PositionAccount {
+        base_fees: 0,
+        quote_fees: 0,
+        revision: 1,
         bump: position_bump,
         market: market.to_bytes(),
         nonce,
@@ -496,6 +499,9 @@ fn multi_fixture() -> (Fixture, Pubkey, Keypair) {
         .unwrap()
         .add_account(f.pool, account(pool_data, ID));
     let state = PositionAccount {
+        base_fees: 0,
+        quote_fees: 0,
+        revision: 1,
         bump,
         market: f.market.to_bytes(),
         nonce,
