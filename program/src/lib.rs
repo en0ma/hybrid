@@ -45,6 +45,7 @@ mod lazy_ask_execute;
 mod lazy_bid_execute;
 mod lazy_multilevel_bid;
 mod lazy_multipage_bid_execute;
+mod lazy_multipage_ask_execute;
 mod lazy_reserve;
 mod linked_maker;
 mod multipage_buy;
@@ -163,6 +164,9 @@ pub fn process_instruction(
         Some(43) => lazy_multilevel_bid::preflight_multilevel_bid(_program_id, _accounts, data),
         Some(44) => {
             lazy_multipage_bid_execute::execute_and_seal_multipage_bid(_program_id, _accounts, data)
+        }
+        Some(45) => {
+            lazy_multipage_ask_execute::execute_and_seal_multipage_ask(_program_id, _accounts, data)
         }
         _ => Err(ProgramError::InvalidInstructionData),
     }

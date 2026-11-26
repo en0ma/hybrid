@@ -142,6 +142,59 @@ fn sealed_claim_root(
 }
 
 #[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_ask_epoch_header(
+    program_id: &Pubkey,
+    market: &Pubkey,
+    epoch_key: &Pubkey,
+    custody: &hybrid_state::CustodyState,
+    genesis: [u8; 32],
+    epoch_id: u64,
+    tick_sqrt_price_x64: u128,
+    owners: &[[u8; 32]],
+    weights: &[u64],
+    allocations: &[hybrid_state::lazy_pro_rata::MakerAllocation],
+    totals: [u64; 6],
+) -> Result<hybrid_state::frozen_epoch::FrozenEpochHeader, ProgramError> {
+    let digest = epoch_commitment(
+        market,
+        program_id,
+        &genesis,
+        (epoch_id, tick_sqrt_price_x64),
+        owners,
+        weights,
+        totals,
+    )?;
+    let root = sealed_claim_root(&digest, owners, weights, allocations)?;
+    let id_bytes = epoch_id.to_le_bytes();
+    let (expected_epoch, bump) =
+        Pubkey::find_program_address(&[b"frozen-epoch", market.as_ref(), &id_bytes], program_id);
+    if *epoch_key != expected_epoch {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let header = hybrid_state::frozen_epoch::FrozenEpochHeader {
+        bump,
+        side: 0,
+        market: market.to_bytes(),
+        authority: market.to_bytes(),
+        program: program_id.to_bytes(),
+        genesis,
+        epoch_id,
+        tick_sqrt_price_x64,
+        commitment: digest,
+        claim_root: root,
+        maker_count: owners.len() as u32,
+        totals,
+        base_vault: custody.base_vault,
+        quote_vault: custody.quote_vault,
+    };
+    header
+        .validate()
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    Ok(header)
+}
+
+#[inline(never)]
 pub(super) fn execute_and_seal_ask(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
