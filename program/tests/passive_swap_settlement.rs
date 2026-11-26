@@ -1063,3 +1063,29 @@ async fn funded_partial_redeem_rejects_stale_revision_and_conserves_fees() {
         PassivePool::default()
     );
 }
+
+#[tokio::test]
+async fn guarded_single_swap_rejects_stale_price_and_revision() {
+    let mut f = fixture();
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
+    let mut ix = swap(&f, 0, 100, 1, f.base_vault);
+    ix.data.extend_from_slice(&Q64.to_le_bytes());
+    ix.data.extend_from_slice(&1u64.to_le_bytes());
+    ix.data.extend_from_slice(&1u64.to_le_bytes());
+    assert!(send(&mut ctx, ix.clone(), &f.taker).await);
+    let before = ctx
+        .banks_client
+        .get_account(f.position)
+        .await
+        .unwrap()
+        .unwrap();
+    ix.data[2..10].copy_from_slice(&101u64.to_le_bytes());
+    assert!(!send(&mut ctx, ix, &f.taker).await);
+    let after = ctx
+        .banks_client
+        .get_account(f.position)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(before.data, after.data);
+}

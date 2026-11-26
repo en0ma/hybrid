@@ -17,7 +17,11 @@ use solana_program::{
 };
 
 pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if data.len() != 28 || accounts.len() != 14 || !matches!(data[0], 33 | 34) || data[1] > 1 {
+    if !matches!(data.len(), 28 | 60)
+        || accounts.len() != 14
+        || !matches!(data[0], 33 | 34)
+        || data[1] > 1
+    {
         return Err(ProgramError::InvalidInstructionData);
     }
     let exact_out = data[0] == 34;
@@ -89,6 +93,13 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         .map_err(|_| ProgramError::InvalidAccountData)?;
     let mut position = PositionAccount::decode_from(&position_account.try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
+    if data.len() == 60
+        && (header.sqrt_price_x64 != u128::from_le_bytes(data[28..44].try_into().unwrap())
+            || header.next_sequence != u64::from_le_bytes(data[44..52].try_into().unwrap())
+            || position.revision != u64::from_le_bytes(data[52..60].try_into().unwrap()))
+    {
+        return Err(ProgramError::InvalidInstructionData);
+    }
     let (pool_key, pool_bump) =
         Pubkey::find_program_address(&[b"passive-pool", market_account.key.as_ref()], program_id);
     let (position_key, position_bump) = Pubkey::find_program_address(

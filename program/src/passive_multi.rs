@@ -40,12 +40,13 @@ pub fn process_batch(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8])
 }
 
 pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if data.len() != 21
+    if data.len() < 21
         || !matches!(data[0], 35 | 36)
         || data[1] > 1
         || data[20] == 0
         || data[20] > 8
         || accounts.len() != 12 + usize::from(data[20])
+        || (data.len() != 21 && data.len() != 45 + 8 * usize::from(data[20]))
     {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -107,6 +108,12 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     {
         return Err(ProgramError::InvalidAccountData);
     }
+    if data.len() != 21
+        && (header.sqrt_price_x64 != u128::from_le_bytes(data[21..37].try_into().unwrap())
+            || header.next_sequence != u64::from_le_bytes(data[37..45].try_into().unwrap()))
+    {
+        return Err(ProgramError::InvalidInstructionData);
+    }
     let mut pool = PoolAccount::decode_from(&pool_account.try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
     let (pool_key, pool_bump) =
@@ -162,6 +169,11 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         }
         let state = PositionAccount::decode_from(&account.try_borrow_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
+        if data.len() != 21
+            && state.revision != u64::from_le_bytes(data[45 + i * 8..53 + i * 8].try_into().unwrap())
+        {
+            return Err(ProgramError::InvalidInstructionData);
+        }
         let owner = Pubkey::new_from_array(state.position.owner);
         let (expected, bump) = Pubkey::find_program_address(
             &[
