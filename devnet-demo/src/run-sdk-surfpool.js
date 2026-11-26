@@ -12,7 +12,7 @@ import {prepareSettlement} from "../../sdk/src/settlement-plan.mjs";
 import {canonicalSqrtPriceX64} from "../../sdk/src/quote-orders.mjs";
 import {buildSettlementClaim,recoverEpochProofs,decodeLazyReserve,reserveVaultFloor} from "../../sdk/src/settlement.mjs";
 import {decodeMakerBalance} from "../../sdk/src/maker-balance.mjs";
-import {simulateSettlement,journalSettlementClaim,loadSettlementLookupTable} from "../../sdk/src/settlement-lifecycle.mjs";
+import {simulateSettlement,journalSettlementClaim,loadSettlementLookupTable,recoverSettlementClaim} from "../../sdk/src/settlement-lifecycle.mjs";
 
 const {Connection,PublicKey,Keypair,SystemProgram,TransactionInstruction,ComputeBudgetProgram}=web3;
 const adapter=createSolanaSettlementAdapter(web3),program=new PublicKey(PROGRAM_ID),token=new PublicKey(TOKEN_PROGRAM_ID);
@@ -112,8 +112,42 @@ async function runCase(rpc,url,side,multi,genesis,dir,report){
  const prepared=prepareSettlement(program,snapshot,{payer:f.payer.publicKey,systemProgram:SystemProgram.programId},
   {baseFill:multi?350n:150n,quoteLimit:multi?(bid?325n:505n):(bid?150n:151n)});
  await writeFile(join(dir,side+"-"+multi+"-roster.json"),json(prepared.plan),{mode:0o600,flag:"wx"});
- // Start with a genuine signed v0 transaction; ALT integration is added separately.
- await signed(rpc,prepared.instruction,f.payer,[f.taker],result,[],prepared);
+ let lookupTables=[];
+ if(multi){
+  const recentSlot=await rpc.getSlot("confirmed");
+  const created=adapter.buildLookupCreate({authority:f.payer.publicKey,payer:f.payer.publicKey,recentSlot});
+  async function lookupTransaction(ix){
+   const {blockhash,lastValidBlockHeight}=await rpc.getLatestBlockhash("confirmed");
+   const tx=new web3.Transaction({feePayer:f.payer.publicKey,recentBlockhash:blockhash}).add(ix);
+   tx.sign(f.payer);
+   const signature=await rpc.sendRawTransaction(tx.serialize(),{skipPreflight:false,maxRetries:0});
+   const confirmation=await rpc.confirmTransaction({signature,blockhash,lastValidBlockHeight},"confirmed");
+   fail(!confirmation.value.err,"ALT transaction failed");
+   return signature;
+  }
+  const createSignature=await lookupTransaction(created.instruction);
+  const addresses=prepared.instruction.keys.filter(k=>!k.isSigner).map(k=>k.pubkey);
+  const extensionSignatures=[];
+  for(let i=0;i<addresses.length;i+=20)extensionSignatures.push(await lookupTransaction(
+    adapter.buildLookupExtend({address:created.address,authority:f.payer.publicKey,payer:f.payer.publicKey,addresses:addresses.slice(i,i+20)})));
+  let table;
+  for(let i=0;i<40;i++){
+   try{table=await loadSettlementLookupTable(rpc,{adapter,address:created.address,authority:f.payer.publicKey,
+    requiredAddresses:addresses,minContextSlot:snapshot.slot});break;}
+   catch(e){if(i===39)throw e;await new Promise(r=>setTimeout(r,250));}
+  }
+  lookupTables=[table];
+  result.lookup={address:created.address.toBase58(),createSignature,extensionSignatures,activationSlot:table.slot};
+ }
+ // Refresh discovery after lookup warmup; reject changed plans.
+ const fresh=await authenticateSettlementCollateral(rpc,{adapter,programId:program,market:f.market.publicKey,
+  side,headOwnerPage:f.head,genesisHex:hex(genesis),taker:f.taker.publicKey,takerBase:f.takerBase,takerQuote:f.takerQuote});
+ const execution=prepareSettlement(program,fresh,{payer:f.payer.publicKey,systemProgram:SystemProgram.programId},
+  {baseFill:prepared.plan.baseFill,quoteLimit:prepared.plan.quoteLimit});
+ fail(json(execution.plan)===json(prepared.plan),"Plan changed after ALT setup");
+ if(multi)lookupTables=[await loadSettlementLookupTable(rpc,{adapter,address:lookupTables[0].address,
+  authority:f.payer.publicKey,requiredAddresses:lookupTables[0].requiredAddresses,minContextSlot:fresh.slot})];
+ await signed(rpc,execution.instruction,f.payer,[f.taker],result,lookupTables,execution);
  const ids=prepared.plan.ticks.map((_,i)=>BigInt(i));
  const load=()=>loadSettlementEpochs(rpc,{adapter,programId:program,market:f.market.publicKey,
   genesisHex:hex(genesis),epochIds:ids,commitment:"confirmed"});
@@ -130,7 +164,38 @@ async function runCase(rpc,url,side,multi,genesis,dir,report){
     maker:f.makers[j].publicKey,custody:f.custody,reserve:f.reserve,vault:bid?f.baseVault:f.quoteVault,
     destination:f.destinations[j],mint:bid?f.baseMint:f.quoteMint,vaultAuthority:f.authority,tokenProgram:token};
    const ix=buildSettlementClaim(program,accounts,epoch,proof);
-   await signed(rpc,ix,f.payer,[f.makers[j]],result);
+   const path=join(dir,side+"-"+multi+"-claim-"+epoch.epochId+"-"+proof.seat+".json");
+   await signed(rpc,ix,f.payer,[f.makers[j]],result,[],null,async evidence=>{
+    await journalSettlementClaim(path,{adapter,programId:program,accounts,epoch,proof,...evidence,
+      genesisHash:genesis.toBase58()});
+   });
+   // Finalized receipt and bitmap must agree before recovery is considered complete.
+   const sig=result.receipts.at(-1).signature;
+   let recovery;
+   for(let attempt=0;attempt<80;attempt++){
+    const statuses=await rpc.getSignatureStatuses([sig],{searchTransactionHistory:true});
+    if(statuses.value[0]?.confirmationStatus==="finalized"){
+     recovery=await recoverSettlementClaim(rpc,{adapter,path,programId:program,market:f.market.publicKey});break;
+    }
+    await new Promise(r=>setTimeout(r,500));
+   }
+   fail(recovery?.claimed&&recovery.status.state==="finalized-success"&&!recovery.canResubmit,"Claim recovery failed");
+   result.receipts.at(-1).recovered=true;
+   const freshEpoch=(await load()).epochs[i];
+   let rejected=false;
+   try{buildSettlementClaim(program,accounts,freshEpoch,proof);}catch{rejected=true;}
+   fail(rejected,"SDK accepted claimed seat");
+   // Force a fresh signed transaction rather than replaying a cached signature.
+   const latest=await rpc.getLatestBlockhash("confirmed");
+   const replay=adapter.compileUnsignedV0({payer:f.payer.publicKey,recentBlockhash:latest.blockhash,instruction:ix,
+     computeBudgetInstructions:[ComputeBudgetProgram.setComputeUnitLimit({units:399999})]});
+   replay.sign([f.payer,f.makers[j]]);
+   const before=await rpc.getMultipleAccountsInfo([epoch.address,f.reserve,f.balances[j],accounts.vault,accounts.destination],"confirmed");
+   const rejectedReplay=await rpc.simulateTransaction(replay,{sigVerify:true,replaceRecentBlockhash:false,commitment:"confirmed"});
+   fail(rejectedReplay.value.err!==null,"On-chain replay simulation succeeded");
+   const after=await rpc.getMultipleAccountsInfo([epoch.address,f.reserve,f.balances[j],accounts.vault,accounts.destination],"confirmed");
+   fail(before.every((a,k)=>a.data.equals(after[k].data)),"Replay changed account state");
+   result.receipts.at(-1).replayRejected=true;
   }
  }
  const final=await load();
@@ -150,7 +215,7 @@ async function main(){
  fail((await rpc.getAccountInfo(program))?.executable,"Deploy SBF first");
  // The reserve domain is an operator assertion. Use a stable local test
  // domain, not a claim of public cluster identity.
- const genesis=new PublicKey(Buffer.alloc(32,81));
+ const genesis=new PublicKey(await rpc.getGenesisHash());
  const dir=resolve(process.env.HYBRID_SDK_EVIDENCE_DIR||"./.surfpool-sdk");
  await mkdir(dir,{recursive:true,mode:0o700});
  const report={network:"surfpool",program:PROGRAM_ID,fixtureSeeded:true,cases:[],complete:false};
