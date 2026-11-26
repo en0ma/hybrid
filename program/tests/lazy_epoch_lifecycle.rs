@@ -3266,3 +3266,318 @@ async fn funded_eight_maker_multipage_ask_executes_and_claims() {
     assert_eq!(amount(&bytes(&mut context, f.taker_base).await), 900);
     assert_eq!(amount(&bytes(&mut context, f.taker_quote).await), 0);
 }
+
+#[tokio::test]
+async fn three_interleaved_ask_bid_ask_epochs_reconcile_shared_vaults() {
+    let mut f = fixture(false);
+    let (bid_page, _) =
+        Pubkey::find_program_address(&[b"bid-page", f.market.as_ref(), &0u32.to_le_bytes()], &ID);
+    let bid_owners = Pubkey::new_unique();
+    let mut header = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
+    header.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
+    header.ask_count = 2;
+    header.set_bid_count(2);
+    header.next_sequence = 5;
+    header.reserved2 = f.owners.to_bytes();
+    let mut tag = [0u8; 16];
+    tag.copy_from_slice(&bid_owners.to_bytes()[..16]);
+    header.set_bid_owner_tag(tag);
+    let mut data = vec![0; MARKET_HEADER_BYTES];
+    header.encode_into(&mut data).unwrap();
+    let test = f.test.as_mut().unwrap();
+    let foreign_market = Pubkey::new_unique();
+    test.add_account(foreign_market, account(data.clone(), ID));
+    test.add_account(f.market, account(data, ID));
+    let mut bids = BidPage::default();
+    let mut owners = AskOwnerPage::default();
+    let bid_destinations = [Pubkey::new_unique(), Pubkey::new_unique()];
+    for (index, (maker, balance, qty)) in [
+        (f.maker_a.pubkey(), f.balance_a, 100u64),
+        (f.maker_b.pubkey(), f.balance_b, 200u64),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        bids.insert(AskEntry {
+            price_x64: Q64,
+            sqrt_price_x64: Q64,
+            base_qty: qty,
+            sequence: index as u64 + 3,
+        })
+        .unwrap();
+        owners.owners[index] = maker.to_bytes();
+        let (_, bump) = Pubkey::find_program_address(
+            &[b"maker-balance", f.market.as_ref(), maker.as_ref()],
+            &ID,
+        );
+        let mut state = MakerBalance::new(bump, f.market.to_bytes(), maker.to_bytes());
+        state.locked_base = qty;
+        state.locked_quote = qty;
+        let mut data = vec![0; MAKER_BALANCE_BYTES];
+        state.encode_into(&mut data).unwrap();
+        test.add_account(balance, account(data, ID));
+        test.add_account(
+            bid_destinations[index],
+            account(token_data(f.base_mint, maker, 0, false), TOKEN),
+        );
+    }
+    owners.len = 2;
+    let mut data = vec![0; BID_PAGE_BYTES];
+    bids.encode_into(&mut data).unwrap();
+    test.add_account(bid_page, account(data, ID));
+    let mut data = vec![0; ASK_OWNER_PAGE_BYTES];
+    owners.encode_into(&mut data).unwrap();
+    test.add_account(bid_owners, account(data, ID));
+    let (_, bump) = Pubkey::find_program_address(&[b"custody", f.market.as_ref()], &ID);
+    let custody = CustodyState {
+        magic: hybrid_state::CUSTODY_MAGIC,
+        version: hybrid_state::STATE_VERSION,
+        bump,
+        base_decimals: 6,
+        quote_decimals: 6,
+        reserved: [0; 4],
+        market: f.market.to_bytes(),
+        base_mint: f.base_mint.to_bytes(),
+        quote_mint: f.quote_mint.to_bytes(),
+        base_vault: f.base_vault.to_bytes(),
+        quote_vault: f.quote_vault.to_bytes(),
+        total_base: 300,
+        total_quote: 300,
+    };
+    let mut data = vec![0; CUSTODY_STATE_BYTES];
+    custody.encode_into(&mut data).unwrap();
+    test.add_account(f.custody, account(data, ID));
+    test.add_account(
+        f.quote_vault,
+        account(
+            token_data(f.quote_mint, f.vault_authority, 300, false),
+            TOKEN,
+        ),
+    );
+    let mut epochs = [f.epoch; 3];
+    for (index, key) in epochs.iter_mut().enumerate().skip(1) {
+        *key = Pubkey::find_program_address(
+            &[
+                b"frozen-epoch",
+                f.market.as_ref(),
+                &(index as u64).to_le_bytes(),
+            ],
+            &ID,
+        )
+        .0;
+    }
+    let mut context = f.test.take().unwrap().start_with_context().await;
+    let payer = context.payer.pubkey();
+    tx(&mut context, initialize(&f, payer), &[&f.market_signer])
+        .await
+        .unwrap();
+
+    // Seal ASK 0, BID 1, ASK 2 against the same reserve, with no claims
+    // until all three independent on-chain roots have been created.
+    tx(&mut context, seal(&f, payer, 150, 151), &[&f.taker])
+        .await
+        .unwrap();
+    let mut bid = seal_bid(&f, payer, 150, 150);
+    bid.accounts[3] = AccountMeta::new(epochs[1], false);
+    bid.accounts[4] = AccountMeta::new(bid_page, false);
+    bid.accounts[5] = AccountMeta::new(bid_owners, false);
+    tx(&mut context, bid, &[&f.taker]).await.unwrap();
+    // A stale epoch ID must be rejected while executable liquidity remains.
+    let stale_before = snapshot(&mut context, &f).await;
+    assert!(tx(&mut context, seal(&f, payer, 150, 151), &[&f.taker])
+        .await
+        .is_err());
+    assert_eq!(snapshot(&mut context, &f).await, stale_before);
+    let mut ask = seal(&f, payer, 150, 151);
+    ask.accounts[3] = AccountMeta::new(epochs[2], false);
+    tx(&mut context, ask, &[&f.taker]).await.unwrap();
+
+    let mut observed = vec![
+        f.market,
+        f.custody,
+        f.reserve,
+        f.ask,
+        f.owners,
+        bid_page,
+        bid_owners,
+        f.balance_a,
+        f.balance_b,
+        f.base_vault,
+        f.quote_vault,
+        f.taker_base,
+        f.taker_quote,
+        f.destination_a,
+        f.destination_b,
+    ];
+    observed.push(foreign_market);
+    observed.extend(epochs);
+    observed.extend(bid_destinations);
+    let mut before = Vec::new();
+    for key in &observed {
+        before.push(context.banks_client.get_account(*key).await.unwrap());
+    }
+    let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
+    assert_eq!(reserve.next_epoch_id, 3);
+    assert_eq!(reserve.maker_base_debit, 300);
+    assert_eq!(reserve.maker_quote_credit, 300);
+    assert_eq!(reserve.maker_base_credit, 149);
+    assert_eq!(reserve.maker_quote_debit, 150);
+    assert_eq!(reserve.vault_floor(0, 150), Ok((150, 452)));
+    assert_eq!(amount(&bytes(&mut context, f.base_vault).await), 150);
+    assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), 452);
+
+    let mut claims = Vec::new();
+    let mut roots = Vec::new();
+    for (index, epoch_key) in epochs.iter().enumerate() {
+        let epoch = FrozenEpochView::decode(&bytes(&mut context, *epoch_key).await).unwrap();
+        assert_eq!(epoch.header.epoch_id, index as u64);
+        assert_eq!(epoch.header.side, u8::from(index == 1));
+        let (weights, amounts) = match index {
+            0 => ([100, 200], [[50, 0, 0, 50, 0, 0], [100, 0, 0, 100, 0, 1]]),
+            1 => ([100, 200], [[0, 50, 50, 0, 0, 0], [0, 99, 100, 0, 1, 0]]),
+            _ => ([50, 100], [[50, 0, 0, 50, 0, 0], [100, 0, 0, 100, 0, 1]]),
+        };
+        let makers = [f.maker_a.pubkey(), f.maker_b.pubkey()];
+        let leaves = [
+            leaf(
+                &epoch.header.commitment,
+                0,
+                makers[0],
+                weights[0],
+                amounts[0],
+            ),
+            leaf(
+                &epoch.header.commitment,
+                1,
+                makers[1],
+                weights[1],
+                amounts[1],
+            ),
+        ];
+        let root = hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\0", &leaves[0], &leaves[1]]).to_bytes();
+        assert_eq!(epoch.header.claim_root, root);
+        assert!(!roots.contains(&root));
+        roots.push(root);
+        let destinations = if index == 1 {
+            bid_destinations
+        } else {
+            [f.destination_a, f.destination_b]
+        };
+        for seat in 0..2 {
+            let mut ix = multipage_bid_claim(
+                &f,
+                *epoch_key,
+                makers[seat],
+                [f.balance_a, f.balance_b][seat],
+                destinations[seat],
+                seat as u32,
+                weights[seat],
+                amounts[seat],
+                &[leaves[seat ^ 1]],
+            );
+            if index != 1 {
+                ix.accounts[6] = AccountMeta::new(f.quote_vault, false);
+                ix.accounts[8] = AccountMeta::new_readonly(f.quote_mint, false);
+            }
+            claims.push(ix);
+        }
+    }
+    // A valid epoch-0 ASK proof cannot be used against the later ASK epoch.
+    let mut wrong = claims[0].clone();
+    wrong.accounts[1] = AccountMeta::new(epochs[2], false);
+    assert!(tx(&mut context, wrong, &[&f.maker_a]).await.is_err());
+    // Nor can the same proof be replayed against an unrelated market.
+    let mut wrong = claims[0].clone();
+    wrong.accounts[0] = AccountMeta::new_readonly(foreign_market, false);
+    assert!(tx(&mut context, wrong, &[&f.maker_a]).await.is_err());
+    for (key, expected) in observed.iter().zip(&before) {
+        assert_eq!(
+            context.banks_client.get_account(*key).await.unwrap(),
+            *expected,
+        );
+    }
+
+    // Deliberately inject a one-atom deficit into each payout vault in
+    // the test bank. Each vault still has enough for the individual payout,
+    // but not enough to honor all outstanding epochs and resting custody.
+    for (vault, claim_index) in [(f.quote_vault, 0usize), (f.base_vault, 2usize)] {
+        let original = context
+            .banks_client
+            .get_account(vault)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut deficient = original.clone();
+        let reduced = amount(&deficient.data) - 1;
+        deficient.data[64..72].copy_from_slice(&reduced.to_le_bytes());
+        context.set_account(&vault, &solana_account::AccountSharedData::from(deficient));
+        let mut deficit_snapshot = Vec::new();
+        for key in &observed {
+            deficit_snapshot.push(context.banks_client.get_account(*key).await.unwrap());
+        }
+        assert!(tx(&mut context, claims[claim_index].clone(), &[&f.maker_a])
+            .await
+            .is_err());
+        for (key, expected) in observed.iter().zip(&deficit_snapshot) {
+            assert_eq!(
+                context.banks_client.get_account(*key).await.unwrap(),
+                *expected,
+            );
+        }
+        context.set_account(&vault, &solana_account::AccountSharedData::from(original));
+    }
+
+    for index in [5usize, 2, 0, 3, 4, 1] {
+        let maker = if index % 2 == 0 {
+            &f.maker_a
+        } else {
+            &f.maker_b
+        };
+        tx(&mut context, claims[index].clone(), &[maker])
+            .await
+            .unwrap();
+        let custody = CustodyState::decode_from(&bytes(&mut context, f.custody).await).unwrap();
+        let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
+        let floor = reserve
+            .vault_floor(custody.total_base, custody.total_quote)
+            .unwrap();
+        assert_eq!(amount(&bytes(&mut context, f.base_vault).await), floor.0);
+        assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), floor.1);
+        let mut snapshot = Vec::new();
+        for key in &observed {
+            snapshot.push(context.banks_client.get_account(*key).await.unwrap());
+        }
+        assert!(tx(&mut context, claims[index].clone(), &[maker])
+            .await
+            .is_err());
+        for (key, expected) in observed.iter().zip(&snapshot) {
+            assert_eq!(
+                context.banks_client.get_account(*key).await.unwrap(),
+                *expected,
+            );
+        }
+    }
+    for key in epochs {
+        let epoch = FrozenEpochView::decode(&bytes(&mut context, key).await).unwrap();
+        assert_eq!(epoch.claimed_count, 2);
+        assert_eq!(epoch.remaining, [0; 6]);
+    }
+    let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
+    assert_eq!(reserve.next_epoch_id, 3);
+    assert_eq!(reserve.maker_base_debit, 0);
+    assert_eq!(reserve.maker_quote_credit, 0);
+    assert_eq!(reserve.maker_base_credit, 0);
+    assert_eq!(reserve.maker_quote_debit, 0);
+    assert_eq!(reserve.vault_floor(0, 150), Ok((1, 152)));
+    assert_eq!(amount(&bytes(&mut context, f.destination_a).await), 100);
+    assert_eq!(amount(&bytes(&mut context, f.destination_b).await), 200);
+    assert_eq!(amount(&bytes(&mut context, bid_destinations[0]).await), 50);
+    assert_eq!(amount(&bytes(&mut context, bid_destinations[1]).await), 99);
+    assert_eq!(amount(&bytes(&mut context, f.taker_base).await), 150);
+    assert_eq!(amount(&bytes(&mut context, f.taker_quote).await), 348);
+    for (balance_key, remaining_quote) in [(f.balance_a, 50), (f.balance_b, 100)] {
+        let balance = MakerBalance::decode_from(&bytes(&mut context, balance_key).await).unwrap();
+        assert_eq!(balance.locked_base, 0);
+        assert_eq!(balance.locked_quote, remaining_quote);
+    }
+}
