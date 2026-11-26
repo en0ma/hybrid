@@ -59,7 +59,15 @@ export function planSettlement(snapshot,{baseFill,quoteLimit}){
 }
 export function prepareSettlement(programId,snapshot,accounts,request){
   const plan=planSettlement(snapshot,request);
-  const instruction=buildSettlementExecution(programId,{...accounts,market:snapshot.market,
+  if(!snapshot.custodyState||!snapshot.takerAmounts)throw new Error("Authenticated collateral snapshot required");
+  if(snapshot.side==="ask"?(snapshot.takerAmounts.quote<plan.quoteTotal||snapshot.custodyState.totalBase<plan.baseFill):
+    (snapshot.takerAmounts.base<plan.baseFill||snapshot.custodyState.totalQuote<plan.quoteTotal))
+    throw new Error("Insufficient taker or custody funds");
+  const instruction=buildSettlementExecution(programId,{...accounts,
+    custody:snapshot.custody,baseVault:snapshot.baseVault,quoteVault:snapshot.quoteVault,
+    baseMint:snapshot.baseMint,quoteMint:snapshot.quoteMint,vaultAuthority:snapshot.vaultAuthority,
+    tokenProgram:snapshot.tokenProgram,taker:snapshot.taker,takerBase:snapshot.takerBase,takerQuote:snapshot.takerQuote,
+    market:snapshot.market,
     reserve:snapshot.reserve,pages:snapshot.pages,epochs:snapshot.epochs,
     makerBalances:snapshot.side==="ask"&&snapshot.pages.length===1?[]:snapshot.makerBalances},
     {side:snapshot.side,baseFill:plan.baseFill,quoteLimit:plan.quoteLimit});

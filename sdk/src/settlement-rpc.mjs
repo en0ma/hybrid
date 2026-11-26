@@ -1,4 +1,5 @@
-import {keyBytes,decodeLazyReserve,decodeFrozenEpoch} from "./settlement.mjs";
+import {decodeMakerBalance} from "./maker-balance.mjs";
+import {keyBytes,decodeLazyReserve,decodeFrozenEpoch,reserveVaultFloor} from "./settlement.mjs";
 import {decodeMarketHeader,decodeOrderPage,decodeOwnerPage} from "./state.mjs";
 
 const hex=k=>keyBytes(k).toString("hex");
@@ -94,4 +95,85 @@ export async function loadSettlementEpochs(connection,{adapter,programId,market,
     return {...e,address:a.key};
   });
   return {slot:r.slot,reserve:state,epochs};
+}
+
+export function decodeSettlementCustody(data){
+  const b=Buffer.from(data);
+  if(b.length!==192||b.subarray(0,8).toString()!=="HYBCUST1"||b[8]!==1||
+    b.subarray(12,16).some(Boolean))throw new Error("Invalid custody layout");
+  const [market,baseMint,quoteMint,baseVault,quoteVault]=[16,48,80,112,144].map(i=>Buffer.from(b.subarray(i,i+32)));
+  if([market,baseMint,quoteMint,baseVault,quoteVault].some(k=>!k.some(Boolean))||
+    eq(baseMint,quoteMint)||eq(baseVault,quoteVault))throw new Error("Invalid custody identity");
+  return {bump:b[9],baseDecimals:b[10],quoteDecimals:b[11],market,baseMint,quoteMint,baseVault,quoteVault,
+    totalBase:b.readBigUInt64LE(176),totalQuote:b.readBigUInt64LE(184)};
+}
+function token(info,program,mint,authority){
+  const b=Buffer.from(owned(info,program));
+  if(b.length!==165||b[108]!==1||!eq(b.subarray(0,32),mint)||!eq(b.subarray(32,64),authority))
+    throw new Error("Invalid or frozen SPL account");
+  return b.readBigUInt64LE(64);
+}
+function mint(info,program,decimals){
+  const b=Buffer.from(owned(info,program));
+  if(b.length!==82||b[45]!==1||b[44]!==decimals)throw new Error("Invalid SPL mint");
+}
+// Second context read repeats every book input. Reject changed data rather
+// than combining an old roster with a new balance or reserve snapshot.
+export async function authenticateSettlementCollateral(connection,{adapter,programId,market,side,
+  headOwnerPage,genesisHex,taker,takerBase,takerQuote,minContextSlot=0,commitment="confirmed"}){
+  const snapshot=await discoverSettlementBook(connection,{adapter,programId,market,side,headOwnerPage,
+    genesisHex,minContextSlot,commitment});
+  const custody=derive(adapter,programId,[seed("custody"),keyBytes(market)]);
+  const authority=derive(adapter,programId,[seed("vault-authority"),keyBytes(market)]);
+  const tokenProgram=adapter.fromBytes(Buffer.from("06ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a9","hex"));
+  const first=await fetchBatch(connection,[custody.key],snapshot.slot,commitment);
+  const initial=decodeSettlementCustody(owned(first.values[0],programId));
+  const addresses=[initial.baseVault,initial.quoteVault,initial.baseMint,initial.quoteMint].map(k=>adapter.fromBytes(k));
+  const bookKeys=[market,snapshot.reserve,...snapshot.pages.flatMap(p=>[p.page,p.ownerPage])];
+  const keys=[...bookKeys,custody.key,...addresses,takerBase,takerQuote,...snapshot.makerBalances];
+  if(new Set(keys.map(hex)).size!==keys.length)throw new Error("Aliased collateral accounts");
+  const read=await fetchBatch(connection,keys,first.slot,commitment);
+  const v=read.values,offset=bookKeys.length;
+  const header=decodeMarketHeader(owned(v[0],programId));
+  const reserve=decodeLazyReserve(owned(v[1],programId));
+  if(!header.collateralizedActive||!eq(header.askOwnerKeyBytes,snapshot.header.askOwnerKeyBytes)||
+    !header.bidOwnerTagBytes.equals(snapshot.header.bidOwnerTagBytes)||
+    header.askCount!==snapshot.header.askCount||header.bidCount!==snapshot.header.bidCount||
+    header.nextSequence!==snapshot.header.nextSequence||
+    reserve.marketHex!==hex(market)||reserve.genesisHex!==genesisHex||reserve.bump!==snapshot.reserveState.bump||
+    reserve.nextEpochId!==snapshot.reserveState.nextEpochId)throw new Error("Book or reserve changed");
+  const rows=[];
+  for(const [i,pair] of snapshot.pages.entries()){
+    const page=decodeOrderPage(owned(v[2+i*2],programId),side);
+    if(page.links.pageIndex!==i||page.links.prevPage!==(i?0:null)||
+      page.links.nextPage!==(i+1<snapshot.pages.length?i+1:null))throw new Error("Page links changed");
+    rows.push(...decodeOwnerPage(owned(v[3+i*2],programId),page));
+  }
+  if(rows.length!==snapshot.orders.length||rows.some((r,i)=>{
+    const o=snapshot.orders[i];return !eq(r.owner,o.owner)||r.sequence!==o.sequence||
+      r.baseQty!==o.baseQty||r.priceX64!==o.priceX64||r.sqrtPriceX64!==o.sqrtPriceX64;
+  }))throw new Error("Book changed during discovery");
+  const state=decodeSettlementCustody(owned(v[offset],programId));
+  if(state.bump!==custody.bump||!eq(state.market,market)||
+    ![state.baseVault,state.quoteVault,state.baseMint,state.quoteMint].every((k,i)=>eq(k,addresses[i])))
+    throw new Error("Custody domain changed");
+  const [baseVault,quoteVault,baseMint,quoteMint]=addresses;
+  const base=token(v[offset+1],tokenProgram,baseMint,authority.key);
+  const quote=token(v[offset+2],tokenProgram,quoteMint,authority.key);
+  mint(v[offset+3],tokenProgram,state.baseDecimals);mint(v[offset+4],tokenProgram,state.quoteDecimals);
+  const takerBaseAmount=token(v[offset+5],tokenProgram,baseMint,taker);
+  const takerQuoteAmount=token(v[offset+6],tokenProgram,quoteMint,taker);
+  const floor=reserveVaultFloor(reserve,state.totalBase,state.totalQuote);
+  if(base<floor.base||quote<floor.quote)throw new Error("Vault deficit");
+  const balances=rows.map((r,i)=>{
+    const expected=derive(adapter,programId,[seed("maker-balance"),keyBytes(market),r.owner]);
+    const b=decodeMakerBalance(owned(v[offset+7+i],programId),{market,maker:r.owner});
+    const required=side==="ask"?r.baseQty:(r.baseQty*r.priceX64+(1n<<64n)-1n)>>64n;
+    if(b.bump!==expected.bump||!eq(expected.key,snapshot.makerBalances[i])||
+      (side==="ask"?b.lockedBase:b.lockedQuote)<required)throw new Error("Maker collateral deficit");
+    return b;
+  });
+  return {...snapshot,slot:read.slot,reserveState:reserve,custody:custody.key,custodyState:state,
+    baseVault,quoteVault,baseMint,quoteMint,vaultAuthority:authority.key,tokenProgram,taker,takerBase,takerQuote,
+    balances,vaultAmounts:{base,quote},takerAmounts:{base:takerBaseAmount,quote:takerQuoteAmount},floor};
 }
