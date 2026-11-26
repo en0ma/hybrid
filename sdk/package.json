@@ -26,7 +26,8 @@
     "./pro-rata-merkle": "./src/pro-rata-merkle.mjs",
     "./pro-rata-epoch-abi": "./src/pro-rata-epoch-abi.mjs",
     "./frozen-pubkey-claim": "./src/frozen-pubkey-claim.mjs",
-    "./settlement": "./src/settlement.mjs"
+    "./settlement": "./src/settlement.mjs",
+    "./settlement-rpc": "./src/settlement-rpc.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
