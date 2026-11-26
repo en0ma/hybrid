@@ -969,9 +969,7 @@ async fn hostile_sell_fee_tiers_fail_closed_in_single_and_multi_lp() {
 async fn funded_partial_redeem_rejects_stale_revision_and_conserves_fees() {
     let mut f = fixture();
     let mut ctx = f.program.take().unwrap().start_with_context().await;
-    assert!(
-        send(&mut ctx, swap(&f, 0, 100, 1, f.base_vault), &f.taker).await
-    );
+    assert!(send(&mut ctx, swap(&f, 0, 100, 1, f.base_vault), &f.taker).await);
     let dest_base = Pubkey::new_unique();
     let dest_quote = Pubkey::new_unique();
     ctx.set_account(
