@@ -56,7 +56,7 @@ async function signed(rpc,ix,payer,signers,report,lookupTables=[],prepared=null,
  Object.assign(entry,{slot:receipt.slot,status:"confirmed",receiptUnits:receipt.meta.computeUnitsConsumed});
  return entry;
 }
-async function setup(rpc,url,side,multi,genesis){
+async function setup(rpc,url,side,multi,genesis,shared=false){
  const market=key(),payer=key(),taker=key(),head=key().publicKey,other=key().publicKey;
  const baseMint=key().publicKey,quoteMint=key().publicKey,baseVault=key().publicKey,quoteVault=key().publicKey;
  const takerBase=key().publicKey,takerQuote=key().publicKey;
@@ -67,6 +67,7 @@ async function setup(rpc,url,side,multi,genesis){
  const bid=side==="bid",locked=rows.reduce((n,r)=>n+(bid?(r.qty*r.price+Q-1n)/Q:r.qty),0n);
  const h=marketBytes(bid?other:head,bid?head:other);
  h.writeUInt16LE(1,10);h.writeUInt32LE(count,bid?20:12);h.writeBigUInt64LE(BigInt(count+1),32);
+ if(shared){h.writeUInt32LE(2,20);h.writeBigUInt64LE(5n,32);}
  await seed(rpc,url,market.publicKey,program,h);
  for(let i=0;i<(multi?2:1);i++){
   const pageRows=rows.slice(i?2:0,i?3:2),page=detachedBookPage(i),owners=detachedBookPage(i,true);
@@ -79,13 +80,28 @@ async function setup(rpc,url,side,multi,genesis){
  }
  const c=Buffer.alloc(192);c.write("HYBCUST1");c[8]=1;c[9]=bump;c[10]=6;c[11]=6;
  [market.publicKey,baseMint,quoteMint,baseVault,quoteVault].forEach((k,i)=>bytes(k).copy(c,16+32*i));
- c.writeBigUInt64LE(bid?0n:locked,176);c.writeBigUInt64LE(bid?locked:0n,184);
+ c.writeBigUInt64LE(bid?0n:locked,176);c.writeBigUInt64LE(shared?300n:bid?locked:0n,184);
  await seed(rpc,url,custody,program,c);
  for(const mint of [baseMint,quoteMint])await seed(rpc,url,mint,token,classicMintBytes(payer.publicKey));
  for(const [address,mint,owner,amount] of [[baseVault,baseMint,authority,bid?0n:locked],
-  [quoteVault,quoteMint,authority,bid?locked:0n],[takerBase,baseMint,taker.publicKey,bid?1000n:0n],
+  [quoteVault,quoteMint,authority,shared?300n:bid?locked:0n],[takerBase,baseMint,taker.publicKey,shared?1000n:bid?1000n:0n],
   [takerQuote,quoteMint,taker.publicKey,bid?0n:1000n]])await seed(rpc,url,address,token,classicTokenBytes(mint,owner,amount));
  const balances=[];
+ const bidMakers=shared?Array.from({length:2},key):[],bidBalances=[],bidDestinations=[];
+ if(shared){
+  const page=detachedBookPage(0),owners=detachedBookPage(0,true);
+  page.writeUInt16LE(2);owners.writeUInt16LE(2);
+  for(const [i,maker] of bidMakers.entries()){
+   const qty=i?200n:100n,o=16+i*48;
+   u128(page,o,Q);u128(page,o+16,canonicalSqrtPriceX64(Q));page.writeBigUInt64LE(qty,o+32);page.writeBigUInt64LE(BigInt(i+3),o+40);
+   bytes(maker.publicKey).copy(owners,16+32*i);
+   const [balance,bump]=derive("maker-balance",bytes(maker.publicKey));bidBalances.push(balance);
+   const b=Buffer.alloc(112);b.write("HYBBAL01");b[8]=1;b[9]=bump;bytes(market.publicKey).copy(b,16);bytes(maker.publicKey).copy(b,48);b.writeBigUInt64LE(qty,104);
+   await seed(rpc,url,balance,program,b);const dest=key().publicKey;bidDestinations.push(dest);
+   await seed(rpc,url,dest,token,classicTokenBytes(baseMint,maker.publicKey));
+  }
+  await seed(rpc,url,derive("bid-page",u32(0))[0],program,page);await seed(rpc,url,other,program,owners);
+ }
  for(const [i,r] of rows.entries()){
   const [balance,bump]=derive("maker-balance",bytes(r.maker.publicKey));balances.push(balance);
   const b=Buffer.alloc(112);b.write("HYBBAL01");b[8]=1;b[9]=bump;
@@ -94,11 +110,11 @@ async function setup(rpc,url,side,multi,genesis){
   await seed(rpc,url,balance,program,b);
   await seed(rpc,url,destinations[i],token,classicTokenBytes(bid?baseMint:quoteMint,r.maker.publicKey));
  }
- for(const actor of [payer,taker,market,...makers]){
+ for(const actor of [payer,taker,market,...makers,...bidMakers]){
   const sig=await rpc.requestAirdrop(actor.publicKey,2000000000);await rpc.confirmTransaction(sig,"confirmed");
  }
  return {market,payer,taker,head,baseMint,quoteMint,baseVault,quoteVault,takerBase,takerQuote,
-  custody,reserve,authority,makers,balances,destinations,rows,genesis,side,multi};
+  custody,reserve,authority,makers,balances,destinations,rows,genesis,side,multi,bidHead:other,bidMakers,bidBalances,bidDestinations};
 }
 async function runCase(rpc,url,side,multi,genesis,dir,report){
  const f=await setup(rpc,url,side,multi,genesis),bid=side==="bid";
@@ -216,6 +232,56 @@ async function runCase(rpc,url,side,multi,genesis,dir,report){
  fail(balances.reduce((n,b)=>n+b.lockedBase,0n)===c.totalBase&&balances.reduce((n,b)=>n+b.lockedQuote,0n)===c.totalQuote,"Maker lock reconciliation failed");
  Object.assign(result,{complete:true,finalReserve:r,finalCustody:c,finalFloor:floor,balances});
 }
+
+async function runShared(rpc,url,genesis,dir,report){
+ const f=await setup(rpc,url,"ask",false,genesis,true);
+ const result={market:f.market.publicKey.toBase58(),receipts:[],epochs:[],complete:false};
+ report.shared=result;
+ const init={programId:program,keys:[meta(f.market.publicKey,false,true),meta(f.custody),meta(f.reserve,true),
+  meta(f.payer.publicKey,true,true),meta(SystemProgram.programId)],data:Buffer.concat([Buffer.from([39]),bytes(genesis)])};
+ await signed(rpc,init,f.payer,[f.market],result);
+ const plans=[];
+ for(const [i,side] of ["ask","bid","ask"].entries()){
+  const snapshot=await authenticateSettlementCollateral(rpc,{adapter,programId:program,market:f.market.publicKey,
+   side,headOwnerPage:side==="ask"?f.head:f.bidHead,genesisHex:hex(genesis),taker:f.taker.publicKey,takerBase:f.takerBase,takerQuote:f.takerQuote});
+  fail(snapshot.reserveState.nextEpochId===BigInt(i),"Unexpected shared epoch ID");
+  const prepared=prepareSettlement(program,snapshot,{payer:f.payer.publicKey,systemProgram:SystemProgram.programId},
+   {baseFill:150n,quoteLimit:side==="ask"?151n:150n});
+  await writeFile(join(dir,"shared-"+i+"-roster.json"),json(prepared.plan),{mode:0o600,flag:"wx"});
+  plans.push(prepared.plan);
+  await signed(rpc,prepared.instruction,f.payer,[f.taker],result,[],prepared);
+ }
+ const load=()=>loadSettlementEpochs(rpc,{adapter,programId:program,market:f.market.publicKey,genesisHex:hex(genesis),
+  epochIds:[0n,1n,2n],commitment:"confirmed"});
+ const sealed=await load();
+ fail(sealed.reserve.nextEpochId===3n&&sealed.epochs.every(e=>e.claimedCount===0),"Expected three simultaneously unclaimed epochs");
+ for(const [i,e] of sealed.epochs.entries()){
+  fail(e.totals.every((n,j)=>n===plans[i].ticks[0].totals[j]),"Shared epoch quote mismatch");
+  result.epochs.push({id:String(e.epochId),side:e.side,root:e.claimRoot,totals:e.totals});
+ }
+ // Deliberately claim later ASK first, then BID, then oldest ASK.
+ for(const i of [2,1,0]){
+  const epoch=sealed.epochs[i],bid=epoch.side==="bid",makers=bid?f.bidMakers:f.makers,
+   balances=bid?f.bidBalances:f.balances,destinations=bid?f.bidDestinations:f.destinations;
+  for(const proof of recoverEpochProofs(epoch,plans[i].ticks[0].makers).reverse()){
+   const j=makers.findIndex(m=>hex(m.publicKey)===proof.makerHex);
+   fail(j>=0,"Shared maker missing");
+   const accounts={market:f.market.publicKey,epoch:epoch.address,makerBalance:balances[j],maker:makers[j].publicKey,
+    custody:f.custody,reserve:f.reserve,vault:bid?f.baseVault:f.quoteVault,destination:destinations[j],
+    mint:bid?f.baseMint:f.quoteMint,vaultAuthority:f.authority,tokenProgram:token};
+   await signed(rpc,buildSettlementClaim(program,accounts,epoch,proof),f.payer,[makers[j]],result);
+  }
+ }
+ const final=await load(),r=final.reserve;
+ fail(final.epochs.every(e=>e.claimedCount===e.makerCount&&e.remaining.every(n=>n===0n)),"Shared claims incomplete");
+ fail([r.makerBaseCredit,r.makerQuoteCredit,r.makerBaseDebit,r.makerQuoteDebit].every(n=>n===0n),"Shared liabilities remain");
+ const [c,b,q]=await rpc.getMultipleAccountsInfo([f.custody,f.baseVault,f.quoteVault],"confirmed");
+ const custody=decodeSettlementCustody(c.data),floor=reserveVaultFloor(r,custody.totalBase,custody.totalQuote);
+ fail(custody.totalBase===0n&&custody.totalQuote===150n&&r.baseFees===1n&&r.quoteFees===2n&&
+  b.data.readBigUInt64LE(64)===floor.base&&q.data.readBigUInt64LE(64)===floor.quote,"Shared final reconciliation failed");
+ Object.assign(result,{complete:true,finalReserve:r,finalFloor:floor});
+}
+
 async function main(){
  const url=clusterConfig("surfpool",process.env.SOLANA_RPC_URL||"http://127.0.0.1:8899").url;
  const rpc=new Connection(url,"confirmed");await assertCluster(rpc,"surfpool");
@@ -227,6 +293,7 @@ async function main(){
  await mkdir(dir,{recursive:true,mode:0o700});
  const report={network:"surfpool",program:PROGRAM_ID,fixtureSeeded:true,cases:[],complete:false};
  try{for(const side of ["ask","bid"])for(const multi of [false,true])await runCase(rpc,url,side,multi,genesis,dir,report);
+  await runShared(rpc,url,genesis,dir,report);
   report.complete=true;
  }catch(error){report.error=error.message;throw error;}
  finally{await writeFile(join(dir,"sdk-settlement-evidence.json"),json(report),{mode:0o600});}

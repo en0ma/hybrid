@@ -146,7 +146,7 @@ export async function recoverSettlementClaim(connection,{adapter,path,programId,
   const status=await observeSignatureStatus(connection,{signature:r.signature,
     expectedGenesisHash:r.genesisHash,lastValidBlockHeight:r.lastValidBlockHeight});
   const result=await loadSettlementEpochs(connection,{adapter,programId,market,genesisHex:r.genesisHex,
-    epochIds:[BigInt(r.epochId)],minContextSlot:Math.max(r.snapshotSlot,status.contextSlot,status.slot??0),
+    epochIds:[BigInt(r.epochId)],minContextSlot:Math.max(r.snapshotSlot,status.slot??0),
     commitment:"finalized"});
   const e=result.epochs[0];
   if(e.commitment!==r.commitment||e.claimRoot!==r.claimRoot||r.seat>=e.makerCount)
