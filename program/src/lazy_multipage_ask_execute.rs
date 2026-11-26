@@ -90,7 +90,7 @@ pub(super) fn execute_and_seal_multipage_ask(
     if !taker.is_signer || !payer.is_signer || !payer.is_writable {
         return Err(ProgramError::MissingRequiredSignature);
     }
-    if *token_program.key != TOKEN_PROGRAM_ID {
+    if *token_program.key != TOKEN_PROGRAM_ID || *system_program.key != Pubkey::default() {
         return Err(ProgramError::IncorrectProgramId);
     }
     if fixed.iter().enumerate().any(|(i, account)| {
@@ -153,7 +153,7 @@ pub(super) fn execute_and_seal_multipage_ask(
     }
     let (pages, owners) = load_multipage_ask_pairs(page_0, owner_0, page_1, owner_1)?;
     let seats: usize = pages.iter().map(|page| page.len()).sum();
-    if seats != balances.len() || seats != market.ask_count() as usize {
+    if seats != balances.len() || seats != market.ask_count as usize {
         return Err(ProgramError::InvalidAccountData);
     }
     let plan = hybrid_state::lazy_multilevel_ask::plan_multilevel_ask(
