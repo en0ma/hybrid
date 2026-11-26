@@ -30,10 +30,10 @@ pub fn process_batch(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8])
         return Err(ProgramError::InvalidInstructionData);
     }
     let count = usize::from(data[1]);
-    let positions = accounts
-        .len()
-        .checked_sub(12)
-        .ok_or(ProgramError::InvalidInstructionData)?;
+    if data.len() < 23 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let positions = usize::from(data[22]);
     if !(1..=8).contains(&positions) {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -43,6 +43,9 @@ pub fn process_batch(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8])
     }
     let guard = &data[guard_start..];
     for (i, segment) in data[2..guard_start].as_chunks::<21>().0.iter().enumerate() {
+        if usize::from(segment[20]) != positions {
+            return Err(ProgramError::InvalidInstructionData);
+        }
         process_segment(
             program_id,
             accounts,
@@ -71,7 +74,7 @@ fn process_segment(
         || data[1] > 1
         || data[20] == 0
         || data[20] > 8
-        || accounts.len() != 12 + usize::from(data[20])
+        || accounts.len() < 12 + usize::from(data[20])
     {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -107,7 +110,7 @@ fn process_segment(
     let quote_mint = &accounts[9];
     let authority = &accounts[10];
     let token_program = &accounts[11];
-    let positions = &accounts[12..];
+    let (positions, book) = accounts[12..].split_at(usize::from(data[20]));
     if !taker.is_signer
         || !market.is_writable
         || !pool_account.is_writable
@@ -126,13 +129,10 @@ fn process_segment(
     let custody = load_custody(program_id, market, custody_account)?;
     let mut header = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    if !header.collateralized_active()
-        || header.ask_count != 0
-        || header.bid_count() != 0
-        || header.boundary_count != 0
-    {
+    if !header.collateralized_active() || header.boundary_count != 0 {
         return Err(ProgramError::InvalidAccountData);
     }
+    let active_limit = active_price_limit(program_id, market.key, &header, buy, book)?;
     if let Some(snapshot) = guard {
         if header.sqrt_price_x64 != u128::from_le_bytes(snapshot[..16].try_into().unwrap())
             || header.next_sequence != u64::from_le_bytes(snapshot[16..24].try_into().unwrap())
@@ -253,7 +253,10 @@ fn process_segment(
                 .ok_or(ProgramError::InvalidInstructionData)?
         };
         let mut liquidity = 0u128;
-        let mut boundary: Option<u128> = None;
+        if active_limit.is_some_and(|edge| if buy { price >= edge } else { price <= edge }) {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        let mut boundary = active_limit;
         for claim in &ledger.positions {
             if claim
                 .range
@@ -436,4 +439,61 @@ fn process_segment(
     pool.encode_into(&mut pool_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
     Ok(())
+}
+
+/// Authenticate the complete relevant single-page book. Linked books are
+/// deliberately rejected here until the hybrid router supports their roster.
+fn active_price_limit(
+    program_id: &Pubkey,
+    market: &Pubkey,
+    header: &hybrid_state::MarketHeader,
+    buy: bool,
+    book: &[AccountInfo],
+) -> Result<Option<u128>, ProgramError> {
+    let count = if buy {
+        usize::from(header.ask_count)
+    } else {
+        usize::from(header.bid_count())
+    };
+    if count == 0 {
+        if !book.is_empty() {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        return Ok(None);
+    }
+    if book.len() != 1 || book[0].owner != program_id {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let seed: &[u8] = if buy { b"ask-page" } else { b"bid-page" };
+    let (expected, _) = Pubkey::find_program_address(
+        &[seed, market.as_ref(), &0u32.to_le_bytes()],
+        program_id,
+    );
+    if *book[0].key != expected {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let (len, links, limit) = if buy {
+        let page = crate::load_active_ask_page(&book[0])?;
+        (
+            page.len(),
+            page.links(),
+            page.as_slice().first().map(|e| e.sqrt_price_x64),
+        )
+    } else {
+        let page = crate::load_active_bid_page(&book[0])?;
+        (
+            page.len(),
+            page.links(),
+            page.as_slice().first().map(|e| e.sqrt_price_x64),
+        )
+    };
+    if len != count
+        || links.page_index != 0
+        || links.prev_page.is_some()
+        || links.next_page.is_some()
+        || limit.is_none()
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    Ok(limit)
 }
