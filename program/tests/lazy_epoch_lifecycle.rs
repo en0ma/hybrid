@@ -3378,14 +3378,32 @@ async fn three_interleaved_ask_bid_ask_epochs_reconcile_shared_vaults() {
     bid.accounts[4] = AccountMeta::new(bid_page, false);
     bid.accounts[5] = AccountMeta::new(bid_owners, false);
     tx(&mut context, bid, &[&f.taker]).await.unwrap();
+    // A stale epoch ID must be rejected while executable liquidity remains.
+    let stale_before = snapshot(&mut context, &f).await;
+    assert!(tx(&mut context, seal(&f, payer, 150, 151), &[&f.taker])
+        .await
+        .is_err());
+    assert_eq!(snapshot(&mut context, &f).await, stale_before);
     let mut ask = seal(&f, payer, 150, 151);
     ask.accounts[3] = AccountMeta::new(epochs[2], false);
     tx(&mut context, ask, &[&f.taker]).await.unwrap();
 
     let mut observed = vec![
-        f.market, f.custody, f.reserve, f.ask, f.owners, bid_page, bid_owners,
-        f.balance_a, f.balance_b, f.base_vault, f.quote_vault, f.taker_base,
-        f.taker_quote, f.destination_a, f.destination_b,
+        f.market,
+        f.custody,
+        f.reserve,
+        f.ask,
+        f.owners,
+        bid_page,
+        bid_owners,
+        f.balance_a,
+        f.balance_b,
+        f.base_vault,
+        f.quote_vault,
+        f.taker_base,
+        f.taker_quote,
+        f.destination_a,
+        f.destination_b,
     ];
     observed.extend(epochs);
     observed.extend(bid_destinations);
@@ -3419,7 +3437,8 @@ async fn three_interleaved_ask_bid_ask_epochs_reconcile_shared_vaults() {
             leaf(&epoch.header.commitment, 0, makers[0], weights[0], amounts[0]),
             leaf(&epoch.header.commitment, 1, makers[1], weights[1], amounts[1]),
         ];
-        let root = hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\0", &leaves[0], &leaves[1]]).to_bytes();
+        let root =
+            hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\0", &leaves[0], &leaves[1]]).to_bytes();
         assert_eq!(epoch.header.claim_root, root);
         assert!(!roots.contains(&root));
         roots.push(root);
@@ -3455,18 +3474,23 @@ async fn three_interleaved_ask_bid_ask_epochs_reconcile_shared_vaults() {
     let mut wrong = claims[0].clone();
     wrong.accounts[0] = AccountMeta::new_readonly(Pubkey::new_unique(), false);
     assert!(tx(&mut context, wrong, &[&f.maker_a]).await.is_err());
-    // Old epoch address must never be reused for a new seal.
-    assert!(tx(&mut context, seal(&f, payer, 1, 2), &[&f.taker]).await.is_err());
     for (key, expected) in observed.iter().zip(&before) {
-        assert_eq!(context.banks_client.get_account(*key).await.unwrap(), *expected);
+        assert_eq!(
+            context.banks_client.get_account(*key).await.unwrap(),
+            *expected,
+        );
     }
 
     for index in [5usize, 2, 0, 3, 4, 1] {
         let maker = if index % 2 == 0 { &f.maker_a } else { &f.maker_b };
-        tx(&mut context, claims[index].clone(), &[maker]).await.unwrap();
+        tx(&mut context, claims[index].clone(), &[maker])
+            .await
+            .unwrap();
         let custody = CustodyState::decode_from(&bytes(&mut context, f.custody).await).unwrap();
         let reserve = LazyReserve::decode(&bytes(&mut context, f.reserve).await).unwrap();
-        let floor = reserve.vault_floor(custody.total_base, custody.total_quote).unwrap();
+        let floor = reserve
+            .vault_floor(custody.total_base, custody.total_quote)
+            .unwrap();
         assert_eq!(amount(&bytes(&mut context, f.base_vault).await), floor.0);
         assert_eq!(amount(&bytes(&mut context, f.quote_vault).await), floor.1);
         let mut snapshot = Vec::new();
@@ -3475,7 +3499,10 @@ async fn three_interleaved_ask_bid_ask_epochs_reconcile_shared_vaults() {
         }
         assert!(tx(&mut context, claims[index].clone(), &[maker]).await.is_err());
         for (key, expected) in observed.iter().zip(&snapshot) {
-            assert_eq!(context.banks_client.get_account(*key).await.unwrap(), *expected);
+            assert_eq!(
+            context.banks_client.get_account(*key).await.unwrap(),
+            *expected,
+        );
         }
     }
     for key in epochs {
