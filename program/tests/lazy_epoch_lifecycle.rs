@@ -3285,6 +3285,8 @@ async fn three_interleaved_ask_bid_ask_epochs_reconcile_shared_vaults() {
     let mut data = vec![0; MARKET_HEADER_BYTES];
     header.encode_into(&mut data).unwrap();
     let test = f.test.as_mut().unwrap();
+    let foreign_market = Pubkey::new_unique();
+    test.add_account(foreign_market, account(data.clone(), ID));
     test.add_account(f.market, account(data, ID));
     let mut bids = BidPage::default();
     let mut owners = AskOwnerPage::default();
@@ -3407,6 +3409,7 @@ async fn three_interleaved_ask_bid_ask_epochs_reconcile_shared_vaults() {
         f.destination_a,
         f.destination_b,
     ];
+    observed.push(foreign_market);
     observed.extend(epochs);
     observed.extend(bid_destinations);
     let mut before = Vec::new();
@@ -3485,13 +3488,43 @@ async fn three_interleaved_ask_bid_ask_epochs_reconcile_shared_vaults() {
     assert!(tx(&mut context, wrong, &[&f.maker_a]).await.is_err());
     // Nor can the same proof be replayed against an unrelated market.
     let mut wrong = claims[0].clone();
-    wrong.accounts[0] = AccountMeta::new_readonly(Pubkey::new_unique(), false);
+    wrong.accounts[0] = AccountMeta::new_readonly(foreign_market, false);
     assert!(tx(&mut context, wrong, &[&f.maker_a]).await.is_err());
     for (key, expected) in observed.iter().zip(&before) {
         assert_eq!(
             context.banks_client.get_account(*key).await.unwrap(),
             *expected,
         );
+    }
+
+    // Deliberately inject a one-atom deficit into each payout vault in
+    // the test bank. Each vault still has enough for the individual payout,
+    // but not enough to honor all outstanding epochs and resting custody.
+    for (vault, claim_index) in [(f.quote_vault, 0usize), (f.base_vault, 2usize)] {
+        let original = context
+            .banks_client
+            .get_account(vault)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut deficient = original.clone();
+        let reduced = amount(&deficient.data) - 1;
+        deficient.data[64..72].copy_from_slice(&reduced.to_le_bytes());
+        context.set_account(&vault, &solana_account::AccountSharedData::from(deficient));
+        let mut deficit_snapshot = Vec::new();
+        for key in &observed {
+            deficit_snapshot.push(context.banks_client.get_account(*key).await.unwrap());
+        }
+        assert!(tx(&mut context, claims[claim_index].clone(), &[&f.maker_a])
+            .await
+            .is_err());
+        for (key, expected) in observed.iter().zip(&deficit_snapshot) {
+            assert_eq!(
+                context.banks_client.get_account(*key).await.unwrap(),
+                *expected,
+            );
+        }
+        context.set_account(&vault, &solana_account::AccountSharedData::from(original));
     }
 
     for index in [5usize, 2, 0, 3, 4, 1] {
@@ -3542,4 +3575,9 @@ async fn three_interleaved_ask_bid_ask_epochs_reconcile_shared_vaults() {
     assert_eq!(amount(&bytes(&mut context, bid_destinations[1]).await), 99);
     assert_eq!(amount(&bytes(&mut context, f.taker_base).await), 150);
     assert_eq!(amount(&bytes(&mut context, f.taker_quote).await), 348);
+    for (balance_key, remaining_quote) in [(f.balance_a, 50), (f.balance_b, 100)] {
+        let balance = MakerBalance::decode_from(&bytes(&mut context, balance_key).await).unwrap();
+        assert_eq!(balance.locked_base, 0);
+        assert_eq!(balance.locked_quote, remaining_quote);
+    }
 }
