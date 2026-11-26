@@ -3270,10 +3270,8 @@ async fn funded_eight_maker_multipage_ask_executes_and_claims() {
 #[tokio::test]
 async fn three_interleaved_ask_bid_ask_epochs_reconcile_shared_vaults() {
     let mut f = fixture(false);
-    let (bid_page, _) = Pubkey::find_program_address(
-        &[b"bid-page", f.market.as_ref(), &0u32.to_le_bytes()],
-        &ID,
-    );
+    let (bid_page, _) =
+        Pubkey::find_program_address(&[b"bid-page", f.market.as_ref(), &0u32.to_le_bytes()], &ID);
     let bid_owners = Pubkey::new_unique();
     let mut header = MarketHeader::new(1, Q64, 1_000_000, 1, 1);
     header.flags |= MARKET_FLAG_COLLATERALIZED_ACTIVE;
@@ -3357,7 +3355,11 @@ async fn three_interleaved_ask_bid_ask_epochs_reconcile_shared_vaults() {
     let mut epochs = [f.epoch; 3];
     for (index, key) in epochs.iter_mut().enumerate().skip(1) {
         *key = Pubkey::find_program_address(
-            &[b"frozen-epoch", f.market.as_ref(), &(index as u64).to_le_bytes()],
+            &[
+                b"frozen-epoch",
+                f.market.as_ref(),
+                &(index as u64).to_le_bytes(),
+            ],
             &ID,
         )
         .0;
@@ -3434,11 +3436,22 @@ async fn three_interleaved_ask_bid_ask_epochs_reconcile_shared_vaults() {
         };
         let makers = [f.maker_a.pubkey(), f.maker_b.pubkey()];
         let leaves = [
-            leaf(&epoch.header.commitment, 0, makers[0], weights[0], amounts[0]),
-            leaf(&epoch.header.commitment, 1, makers[1], weights[1], amounts[1]),
+            leaf(
+                &epoch.header.commitment,
+                0,
+                makers[0],
+                weights[0],
+                amounts[0],
+            ),
+            leaf(
+                &epoch.header.commitment,
+                1,
+                makers[1],
+                weights[1],
+                amounts[1],
+            ),
         ];
-        let root =
-            hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\0", &leaves[0], &leaves[1]]).to_bytes();
+        let root = hashv(&[b"HYBRID_MAKER_PUBKEY_NODE_V1\0", &leaves[0], &leaves[1]]).to_bytes();
         assert_eq!(epoch.header.claim_root, root);
         assert!(!roots.contains(&root));
         roots.push(root);
@@ -3482,7 +3495,11 @@ async fn three_interleaved_ask_bid_ask_epochs_reconcile_shared_vaults() {
     }
 
     for index in [5usize, 2, 0, 3, 4, 1] {
-        let maker = if index % 2 == 0 { &f.maker_a } else { &f.maker_b };
+        let maker = if index % 2 == 0 {
+            &f.maker_a
+        } else {
+            &f.maker_b
+        };
         tx(&mut context, claims[index].clone(), &[maker])
             .await
             .unwrap();
@@ -3497,12 +3514,14 @@ async fn three_interleaved_ask_bid_ask_epochs_reconcile_shared_vaults() {
         for key in &observed {
             snapshot.push(context.banks_client.get_account(*key).await.unwrap());
         }
-        assert!(tx(&mut context, claims[index].clone(), &[maker]).await.is_err());
+        assert!(tx(&mut context, claims[index].clone(), &[maker])
+            .await
+            .is_err());
         for (key, expected) in observed.iter().zip(&snapshot) {
             assert_eq!(
-            context.banks_client.get_account(*key).await.unwrap(),
-            *expected,
-        );
+                context.banks_client.get_account(*key).await.unwrap(),
+                *expected,
+            );
         }
     }
     for key in epochs {
