@@ -8,6 +8,7 @@ pub mod lazy_reserve;
 pub mod multipage_ask;
 pub mod multipage_bid;
 pub mod passive;
+pub mod passive_claim_v2;
 pub mod passive_execution;
 pub mod passive_lifecycle;
 pub mod passive_segments;
