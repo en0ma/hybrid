@@ -414,7 +414,7 @@ fn passive_base_delta(
         .ok_or(QuoteError::Overflow)
 }
 
-fn passive_to_target(state: PassiveState, target_sqrt_x64: u128) -> Result<Quote, QuoteError> {
+pub fn passive_to_target(state: PassiveState, target_sqrt_x64: u128) -> Result<Quote, QuoteError> {
     if state.liquidity == 0 {
         return Err(QuoteError::ZeroLiquidity);
     }

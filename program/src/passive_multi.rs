@@ -6,7 +6,7 @@ use crate::{
 };
 use hybrid_engine::{
     passive_exact_out::{buy_exact_out, sell_exact_out},
-    quote_base_in_for_quote_out, quote_quote_in_for_base_out, PassiveState,
+    passive_to_target, quote_base_in_for_quote_out, quote_quote_in_for_base_out, PassiveState,
 };
 use hybrid_state::{
     passive::{PoolAccount, PositionAccount},
@@ -234,115 +234,100 @@ fn process_segment(
     ledger
         .verify()
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    let segment_price = if buy {
-        header.sqrt_price_x64
-    } else {
-        header
-            .sqrt_price_x64
-            .checked_sub(1)
-            .ok_or(ProgramError::InvalidInstructionData)?
-    };
-    let mut active_liquidity = 0u128;
-    for claim in &ledger.positions {
-        if claim
-            .range
-            .active_at(segment_price)
-            .map_err(|_| ProgramError::InvalidAccountData)?
-        {
-            active_liquidity = active_liquidity
-                .checked_add(claim.range.liquidity)
-                .ok_or(ProgramError::InvalidAccountData)?;
-        }
-    }
-    if active_liquidity == 0 {
-        return Err(ProgramError::InsufficientFunds);
-    }
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
-    let state = PassiveState {
-        sqrt_price_x64: header.sqrt_price_x64,
-        liquidity: active_liquidity,
-    };
-    let (gross, fee, quote) = if exact_out {
-        let first = if buy {
-            buy_exact_out(state, output)
-        } else {
-            sell_exact_out(state, output)
+    let mut price = header.sqrt_price_x64;
+    let mut gross = 0u64;
+    let mut total_out = 0u64;
+    // A monotone route crosses at most two endpoints per supplied LP.
+    for _ in 0..=2 * positions.len() {
+        let remaining = input - gross;
+        if remaining == 0 || (exact_out && total_out >= output) {
+            break;
         }
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-        let gross = u64::try_from(
-            (u128::from(first.amount_in) * 10_000).div_ceil(10_000 - u128::from(bps)),
-        )
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-        if gross > input {
+        let segment_price = if buy {
+            price
+        } else {
+            price.checked_sub(1).ok_or(ProgramError::InvalidInstructionData)?
+        };
+        let mut liquidity = 0u128;
+        let mut boundary: Option<u128> = None;
+        for claim in &ledger.positions {
+            if claim.range.active_at(segment_price).map_err(|_| ProgramError::InvalidAccountData)? {
+                liquidity = liquidity.checked_add(claim.range.liquidity)
+                    .ok_or(ProgramError::InvalidAccountData)?;
+            }
+            for edge in [claim.range.lower_sqrt_price_x64, claim.range.upper_sqrt_price_x64] {
+                if buy && edge > price && boundary.is_none_or(|b| edge < b)
+                    || !buy && edge < price && boundary.is_none_or(|b| edge > b)
+                {
+                    boundary = Some(edge);
+                }
+            }
+        }
+        if liquidity == 0 {
+            return Err(ProgramError::InsufficientFunds);
+        }
+        let state = PassiveState { sqrt_price_x64: price, liquidity };
+        let fee_for = |amount: u64| -> u64 {
+            ((u128::from(amount) * u128::from(bps)).div_ceil(10_000)) as u64
+        };
+        let gross_for = |net: u64| -> Result<u64, ProgramError> {
+            u64::try_from((u128::from(net) * 10_000).div_ceil(10_000 - u128::from(bps)))
+                .map_err(|_| ProgramError::InvalidInstructionData)
+        };
+        let net = remaining - fee_for(remaining);
+        let mut leg_gross = remaining;
+        let mut quote = if buy {
+            quote_quote_in_for_base_out(state, net)
+        } else {
+            quote_base_in_for_quote_out(state, net)
+        }.map_err(|_| ProgramError::InvalidInstructionData)?;
+        if let Some(edge) = boundary {
+            if buy && quote.next_sqrt_price_x64 >= edge {
+                let target = passive_to_target(state, edge)
+                    .map_err(|_| ProgramError::InvalidInstructionData)?;
+                let cost = gross_for(target.amount_in)?;
+                if cost <= remaining {
+                    quote = target;
+                    leg_gross = cost;
+                }
+            } else if !buy && quote.next_sqrt_price_x64 < edge {
+                // Downward exact-boundary pricing is not yet supported.
+                return Err(ProgramError::InvalidInstructionData);
+            }
+        }
+        if exact_out && quote.amount_out >= output - total_out {
+            let target = output - total_out;
+            let exact = if buy { buy_exact_out(state, target) } else { sell_exact_out(state, target) }
+                .map_err(|_| ProgramError::InvalidInstructionData)?;
+            let cost = gross_for(exact.amount_in)?;
+            if cost <= leg_gross {
+                quote = exact;
+                leg_gross = cost;
+            }
+        }
+        if let Some(edge) = boundary {
+            if buy && quote.next_sqrt_price_x64 > edge || !buy && quote.next_sqrt_price_x64 < edge {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+        }
+        let fee = fee_for(leg_gross);
+        if leg_gross == 0 || fee == 0 || quote.amount_out == 0 || quote.next_sqrt_price_x64 == price {
             return Err(ProgramError::InvalidInstructionData);
         }
-        let fee = u64::try_from((u128::from(gross) * u128::from(bps)).div_ceil(10_000))
-            .map_err(|_| ProgramError::InvalidInstructionData)?;
-        let net = gross
-            .checked_sub(fee)
-            .ok_or(ProgramError::InvalidInstructionData)?;
-        let q = if buy {
-            quote_quote_in_for_base_out(state, net)
+        let trade = if buy {
+            SegmentTrade::Buy { quote_in: leg_gross, base_out: quote.amount_out, quote_fee: fee }
         } else {
-            quote_base_in_for_quote_out(state, net)
-        }
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-        (gross, fee, q)
-    } else {
-        let fee = u64::try_from((u128::from(input) * u128::from(bps)).div_ceil(10_000))
-            .map_err(|_| ProgramError::InvalidInstructionData)?;
-        let net = input
-            .checked_sub(fee)
-            .ok_or(ProgramError::InvalidInstructionData)?;
-        let q = if buy {
-            quote_quote_in_for_base_out(state, net)
-        } else {
-            quote_base_in_for_quote_out(state, net)
-        }
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-        (input, fee, q)
-    };
-    if fee == 0 || quote.amount_out < output || quote.amount_out == 0 {
+            SegmentTrade::Sell { base_in: leg_gross, quote_out: quote.amount_out, base_fee: fee }
+        };
+        ledger.apply_segment(segment_price, trade).map_err(|_| ProgramError::InsufficientFunds)?;
+        gross = gross.checked_add(leg_gross).ok_or(ProgramError::InvalidInstructionData)?;
+        total_out = total_out.checked_add(quote.amount_out).ok_or(ProgramError::InvalidInstructionData)?;
+        price = quote.next_sqrt_price_x64;
+    }
+    if total_out < output || (!exact_out && gross != input) {
         return Err(ProgramError::InvalidInstructionData);
     }
-    // No single segment may jump over a range boundary. Endpoint equality
-    // is permitted: the next segment reselects the appropriate active LPs.
-    let start_price = header.sqrt_price_x64;
-    let end_price = quote.next_sqrt_price_x64;
-    for claim in &ledger.positions {
-        let lo = claim.range.lower_sqrt_price_x64;
-        let hi = claim.range.upper_sqrt_price_x64;
-        let crossed = if buy {
-            end_price < start_price
-                || (start_price < lo && lo < end_price)
-                || (start_price < hi && hi < end_price)
-        } else {
-            end_price > start_price
-                || (end_price < lo && lo < start_price)
-                || (end_price < hi && hi < start_price)
-        };
-        if crossed {
-            return Err(ProgramError::InvalidInstructionData);
-        }
-    }
-    // Compound the fee into the per-position principal, so the legacy
-    // authenticated close transfers current LP inventory including fees.
-    let trade = if buy {
-        SegmentTrade::Buy {
-            quote_in: gross,
-            base_out: quote.amount_out,
-            quote_fee: fee,
-        }
-    } else {
-        SegmentTrade::Sell {
-            base_in: gross,
-            quote_out: quote.amount_out,
-            base_fee: fee,
-        }
-    };
-    ledger
-        .apply_segment(segment_price, trade)
-        .map_err(|_| ProgramError::InsufficientFunds)?;
     let bump = [authority_bump];
     let seeds: &[&[u8]] = &[b"vault-authority", market.key.as_ref(), &bump];
     if buy {
@@ -361,7 +346,7 @@ fn process_segment(
             taker_base,
             authority,
             token_program,
-            (quote.amount_out, custody.base_decimals),
+            (total_out, custody.base_decimals),
             Some(seeds),
         )?;
     } else {
@@ -380,7 +365,7 @@ fn process_segment(
             taker_quote,
             authority,
             token_program,
-            (quote.amount_out, custody.quote_decimals),
+            (total_out, custody.quote_decimals),
             Some(seeds),
         )?;
     }
@@ -399,7 +384,7 @@ fn process_segment(
     }
     pool.pool = ledger.pool;
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
-    header.sqrt_price_x64 = quote.next_sqrt_price_x64;
+    header.sqrt_price_x64 = price;
     header
         .encode_into(&mut market.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;

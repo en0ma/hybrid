@@ -234,8 +234,10 @@ async fn send(
             .unwrap()
             .unwrap();
         let header = MarketHeader::decode_from(&market.data).unwrap();
-        ix.data.extend_from_slice(&header.sqrt_price_x64.to_le_bytes());
-        ix.data.extend_from_slice(&header.next_sequence.to_le_bytes());
+        ix.data
+            .extend_from_slice(&header.sqrt_price_x64.to_le_bytes());
+        ix.data
+            .extend_from_slice(&header.next_sequence.to_le_bytes());
         for index in position_indices {
             let account = ctx
                 .banks_client

@@ -17,11 +17,7 @@ use solana_program::{
 };
 
 pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if data.len() != 60
-        || accounts.len() != 14
-        || !matches!(data[0], 33 | 34)
-        || data[1] > 1
-    {
+    if data.len() != 60 || accounts.len() != 14 || !matches!(data[0], 33 | 34) || data[1] > 1 {
         return Err(ProgramError::InvalidInstructionData);
     }
     let exact_out = data[0] == 34;
