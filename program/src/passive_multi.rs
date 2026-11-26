@@ -451,9 +451,9 @@ fn active_price_limit(
     book: &[AccountInfo],
 ) -> Result<Option<u128>, ProgramError> {
     let count = if buy {
-        usize::from(header.ask_count)
+        header.ask_count as usize
     } else {
-        usize::from(header.bid_count())
+        header.bid_count() as usize
     };
     if count == 0 {
         if !book.is_empty() {
@@ -465,10 +465,8 @@ fn active_price_limit(
         return Err(ProgramError::InvalidAccountData);
     }
     let seed: &[u8] = if buy { b"ask-page" } else { b"bid-page" };
-    let (expected, _) = Pubkey::find_program_address(
-        &[seed, market.as_ref(), &0u32.to_le_bytes()],
-        program_id,
-    );
+    let (expected, _) =
+        Pubkey::find_program_address(&[seed, market.as_ref(), &0u32.to_le_bytes()], program_id);
     if *book[0].key != expected {
         return Err(ProgramError::InvalidSeeds);
     }
