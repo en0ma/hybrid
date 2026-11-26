@@ -1,14 +1,22 @@
-# Milestone 81: Public devnet active execution
+# Milestone 81: Funded Surfpool SDK integration and settlement verification
 
-Status: planned / draft. Depends on milestone 80. Rebase onto main after predecessor merges; do not treat this plan as completed implementation.
+Status: implementation in progress. Depends on merged milestone 80.
+Scope revised at operator direction: public devnet deployment is not an exit gate for this milestone. Public-network readiness remains a separate requirement.
 
-## Scope and acceptance
+## Acceptance
 
-Authorized deploy, real independent funded wallets and six-stage public devnet lifecycle; independent RPC auditor and non-secret evidence; no injected accounts or private keys in artifacts.
+- Compile and deploy the fixed-ID SBF program to an isolated loopback Surfpool runtime.
+- Preserve the existing funded six-stage active-order lifecycle gate.
+- Exercise SDK-derived execution and claim transactions against actual SBF, including bounded ASK/BID single-page and multipage cases, actual v0/ALT packing, and multiple independent frozen epochs.
+- Recover claims from persisted rosters and durable signed intents; independently inspect RPC receipts, epoch bitmaps, reserve liabilities, maker balances, vault amounts and fees.
+- Reject replay and unsafe recovery; retain non-secret evidence only.
+- Keep existing ABI, compute, ELF, fuzz and provenance gates unchanged.
 
-## Required exit gates
+Surfpool-only deployment and fixture seeding are permitted. These are not public deployment or permissionless provisioning evidence. No public RPC or real funds are required.
 
-- [ ] Implementation and positive/negative tests committed.
-- [ ] Exact-head CI green including SBF, CU, ELF, provenance and funded lifecycle gates (do not weaken existing limits).
-- [ ] Document evidence and limitations; independent review of security-sensitive code.
-- [ ] Review and merge sequentially with expected head SHA. No production activation without explicit approval.
+## Exit gates
+
+- [ ] Actual signed SDK lifecycle receipts and independently verified state reconciliation.
+- [ ] Positive and negative tests, exact-head CI green.
+- [ ] Document measured evidence, fixture assumptions and outstanding independent security review.
+- [ ] No production activation.
