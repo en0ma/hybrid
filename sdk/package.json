@@ -25,12 +25,20 @@
     "./pro-rata-epoch": "./src/pro-rata-epoch.mjs",
     "./pro-rata-merkle": "./src/pro-rata-merkle.mjs",
     "./pro-rata-epoch-abi": "./src/pro-rata-epoch-abi.mjs",
-    "./frozen-pubkey-claim": "./src/frozen-pubkey-claim.mjs"
+    "./frozen-pubkey-claim": "./src/frozen-pubkey-claim.mjs",
+    "./settlement": "./src/settlement.mjs",
+    "./settlement-rpc": "./src/settlement-rpc.mjs",
+    "./settlement-plan": "./src/settlement-plan.mjs",
+    "./settlement-lifecycle": "./src/settlement-lifecycle.mjs",
+    "./settlement-solana": "./src/settlement-solana.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@solana/web3.js": "1.98.4"
   }
 }

@@ -19,5 +19,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Install pinned SDK test dependency
+        run: npm --prefix sdk install --ignore-scripts --no-audit --no-fund --package-lock=false
       - name: Run client ABI tests
         run: npm --prefix sdk test
