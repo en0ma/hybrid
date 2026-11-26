@@ -103,7 +103,11 @@ fn store_multipage_ask_updates<'a>(
 }
 
 enum PageUpdates {
-    Bid(Vec<hybrid_state::BidPage>, Vec<hybrid_state::BidOwnerPage>, Vec<hybrid_state::MakerBalance>),
+    Bid(
+        Vec<hybrid_state::BidPage>,
+        Vec<hybrid_state::BidOwnerPage>,
+        Vec<hybrid_state::MakerBalance>,
+    ),
     Ask(Vec<hybrid_state::AskPage>, Vec<hybrid_state::AskOwnerPage>),
 }
 
@@ -181,14 +185,22 @@ pub(super) fn execute_and_seal_multipage(
     }
     let mut market = hybrid_state::MarketHeader::decode_from(&market_account.try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    let count = if is_bid { market.bid_count() } else { market.ask_count };
+    let count = if is_bid {
+        market.bid_count()
+    } else {
+        market.ask_count
+    };
     if !market.collateralized_active() || count == 0 {
         return Err(ProgramError::InvalidAccountData);
     }
     for (index, (page, owner)) in [(page_0, owner_0), (page_1, owner_1)].iter().enumerate() {
         let index_bytes = (index as u32).to_le_bytes();
         let (expected, _) = Pubkey::find_program_address(
-            &[if is_bid { b"bid-page" } else { b"ask-page" }, market_account.key.as_ref(), &index_bytes],
+            &[
+                if is_bid { b"bid-page" } else { b"ask-page" },
+                market_account.key.as_ref(),
+                &index_bytes,
+            ],
             program_id,
         );
         if *page.key != expected {
@@ -202,7 +214,11 @@ pub(super) fn execute_and_seal_multipage(
             }
         } else {
             let (expected_owner, _) = Pubkey::find_program_address(
-                &[if is_bid { b"bid-owner-page" } else { b"ask-owner-page" }, market_account.key.as_ref(), &index_bytes],
+                &[
+                    if is_bid { b"bid-owner-page" } else { b"ask-owner-page" },
+                    market_account.key.as_ref(),
+                    &index_bytes,
+                ],
                 program_id,
             );
             if *owner.key != expected_owner {
@@ -363,7 +379,11 @@ pub(super) fn execute_and_seal_multipage(
                 .map_err(|_| ProgramError::InvalidAccountData)?;
             headers.push(header);
         }
-        (plan.quote_paid, headers, PageUpdates::Bid(next_pages, next_owners, updated_balances))
+        (
+            plan.quote_paid,
+            headers,
+            PageUpdates::Bid(next_pages, next_owners, updated_balances),
+        )
     } else {
         let (pages, owners) = load_multipage_ask_pairs(page_0, owner_0, page_1, owner_1)?;
         let seats: usize = pages.iter().map(|page| page.len()).sum();
