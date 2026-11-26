@@ -10,9 +10,9 @@ use super::*;
 ///     payer, system_program, and then one maker-balance PDA for
 ///     each flattened canonical BID entry.
 ///
-/// Exactly two distinct price ticks and two linked pages. This smaller
-/// launch envelope is intentionally separate from opcode 42's ABI.
-const MAX_ATOMIC_BID_MAKERS: usize = 8;
+/// Exactly two distinct price ticks and two linked pages, with at most
+/// sixteen canonical maker rows. Larger rosters require v0/ALT packing.
+const MAX_ATOMIC_BID_MAKERS: usize = 16;
 const FIXED_ACCOUNTS: usize = 20;
 
 /// Decode directly into heap-backed vectors. Avoid constructing two 1.5 KiB
