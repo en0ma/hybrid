@@ -6,6 +6,7 @@ on:
       - ".github/workflows/surfpool-funded.yml"
       - "devnet-demo/src/**"
       - "program/**"
+      - "sdk/**"
 
 permissions:
   contents: read
@@ -86,18 +87,35 @@ jobs:
           console.log(JSON.stringify({market:evidence.market,stages:run.signatures,
             tradeSettlement:evidence.tradeSettlement},null,2));
           '
+      - name: Execute funded settlement SDK against deployed SBF
+        run: node src/run-sdk-surfpool.js
+      - name: Require signed settlement SDK evidence
+        run: |
+          node --input-type=module -e '
+          import {readFileSync} from "node:fs";
+          const r=JSON.parse(readFileSync(".surfpool-sdk/sdk-settlement-evidence.json"));
+          if(!r.complete||!r.shared?.complete||r.shared.epochs.length!==3||r.shared.receipts.filter(x=>x.opcode===40).length!==6||r.cases.length!==4||r.cases.some(c=>!c.complete||
+            c.receipts.some(x=>x.status!=="confirmed")||
+            c.receipts.filter(x=>x.opcode===40).some(x=>!x.recovered||!x.replayRejected)||
+            (c.multi&&!c.lookup?.createSignature)))throw Error("Incomplete SDK settlement evidence");
+          console.log(JSON.stringify(r.cases.map(c=>({side:c.side,multi:c.multi,receipts:c.receipts})),null,2));
+          '
       - name: Upload non-secret evidence on success or failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: surfpool-funded-evidence-${{ github.run_id }}
           if-no-files-found: warn
+          include-hidden-files: true
           retention-days: 7
           path: |
             devnet-demo/.surfpool-fixture/run-report.json
             devnet-demo/.surfpool-fixture/provision-evidence.json
             devnet-demo/.surfpool-fixture/lifecycle-evidence.json
             devnet-demo/.surfpool-fixture/verified-receipts.json
+            devnet-demo/.surfpool-sdk/sdk-settlement-evidence.json
+            devnet-demo/.surfpool-sdk/*-roster.json
+            devnet-demo/.surfpool-sdk/*-claim-*.json
             devnet-demo/surfpool.log
           # Never upload .surfpool-fixture/*.json glob: it contains secret keypairs.
       - name: Stop local runtime
