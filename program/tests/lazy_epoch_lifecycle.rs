@@ -1349,23 +1349,27 @@ async fn exercise_sixteen_maker_multipage_bid(freeze_quote_destination: bool) {
         .await
         .unwrap();
     if freeze_quote_destination {
-        assert!(outcome.result.is_err());
-        let metadata = outcome.metadata.unwrap();
-        assert!(
-            metadata
-                .log_messages
-                .iter()
-                .any(|line| line.contains("Account is frozen")),
-            "expected the SPL quote transfer to reject the frozen destination"
-        );
+        let error = outcome.result.unwrap_err();
         assert_eq!(
-            metadata
-                .log_messages
+            format!("{error:?}"),
+            "InstructionError(1, Custom(17))",
+            "expected SPL Token AccountFrozen on the settlement instruction"
+        );
+        let metadata = outcome.metadata.unwrap();
+        // The bank may duplicate native CPI log entries and omit SPL's
+        // human-readable messages. Require ordered runtime success/failure.
+        let success = format!("Program {TOKEN} success");
+        let failure = format!("Program {TOKEN} failed: custom program error: 0x11");
+        let first_success = metadata
+            .log_messages
+            .iter()
+            .position(|line| line == &success)
+            .expect("base transfer must succeed before quote transfer");
+        assert!(
+            metadata.log_messages[first_success + 1..]
                 .iter()
-                .filter(|line| line.contains("Instruction: TransferChecked"))
-                .count(),
-            2,
-            "both checked SPL transfers must have been attempted"
+                .any(|line| line == &failure),
+            "quote transfer must fail with AccountFrozen after base transfer"
         );
         for (key, expected) in observed.iter().zip(&before) {
             assert_eq!(
