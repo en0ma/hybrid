@@ -175,7 +175,14 @@ async function runCase(rpc,url,side,multi,genesis,dir,report){
    for(let attempt=0;attempt<80;attempt++){
     const statuses=await rpc.getSignatureStatuses([sig],{searchTransactionHistory:true});
     if(statuses.value[0]?.confirmationStatus==="finalized"){
-     recovery=await recoverSettlementClaim(rpc,{adapter,path,programId:program,market:f.market.publicKey});break;
+     try{
+      recovery=await recoverSettlementClaim(rpc,{adapter,path,programId:program,market:f.market.publicKey});
+      break;
+     }catch(error){
+      // Signature status context can lead the finalized account bank.
+      // Retry only this transient RPC error; never lower the required slot.
+      if(!/minimum context slot has not been reached/i.test(error.message))throw error;
+     }
     }
     await new Promise(r=>setTimeout(r,500));
    }
@@ -221,6 +228,7 @@ async function main(){
  const report={network:"surfpool",program:PROGRAM_ID,fixtureSeeded:true,cases:[],complete:false};
  try{for(const side of ["ask","bid"])for(const multi of [false,true])await runCase(rpc,url,side,multi,genesis,dir,report);
   report.complete=true;
- }finally{await writeFile(join(dir,"sdk-settlement-evidence.json"),json(report),{mode:0o600});}
+ }catch(error){report.error=error.message;throw error;}
+ finally{await writeFile(join(dir,"sdk-settlement-evidence.json"),json(report),{mode:0o600});}
 }
 main().catch(e=>{console.error(e.message);process.exitCode=1;});

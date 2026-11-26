@@ -106,6 +106,7 @@ jobs:
         with:
           name: surfpool-funded-evidence-${{ github.run_id }}
           if-no-files-found: warn
+          include-hidden-files: true
           retention-days: 7
           path: |
             devnet-demo/.surfpool-fixture/run-report.json
