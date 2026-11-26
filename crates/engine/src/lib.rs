@@ -442,6 +442,27 @@ pub fn passive_to_target(state: PassiveState, target_sqrt_x64: u128) -> Result<Q
     })
 }
 
+/// Price a downward segment at its exact boundary, rounding input up and output down.
+pub fn passive_sell_to_target(state: PassiveState, target: u128) -> Result<Quote, QuoteError> {
+    if state.liquidity == 0 {
+        return Err(QuoteError::ZeroLiquidity);
+    }
+    if target == 0 || target >= state.sqrt_price_x64 {
+        return Err(QuoteError::InvalidPrice);
+    }
+    let amount_in = range_base_ceil(state.liquidity, target, state.sqrt_price_x64)?;
+    let amount_out = u64::try_from(mul_q64_floor(
+        state.liquidity,
+        state.sqrt_price_x64 - target,
+    )?)
+    .map_err(|_| QuoteError::Overflow)?;
+    Ok(Quote {
+        amount_in,
+        amount_out,
+        next_sqrt_price_x64: target,
+    })
+}
+
 pub fn quote_for_base_at_price(base: u64, price_x64: u128) -> Result<u64, QuoteError> {
     let q = mul_q64_ceil(u128::from(base), price_x64)?;
     u64::try_from(q).map_err(|_| QuoteError::Overflow)

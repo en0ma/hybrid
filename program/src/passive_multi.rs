@@ -6,7 +6,7 @@ use crate::{
 };
 use hybrid_engine::{
     passive_exact_out::{buy_exact_out, sell_exact_out},
-    passive_to_target, quote_base_in_for_quote_out, quote_quote_in_for_base_out, PassiveState,
+    passive_sell_to_target, passive_to_target, quote_base_in_for_quote_out, quote_quote_in_for_base_out, PassiveState,
 };
 use hybrid_state::{
     passive::{PoolAccount, PositionAccount},
@@ -247,16 +247,26 @@ fn process_segment(
         let segment_price = if buy {
             price
         } else {
-            price.checked_sub(1).ok_or(ProgramError::InvalidInstructionData)?
+            price
+                .checked_sub(1)
+                .ok_or(ProgramError::InvalidInstructionData)?
         };
         let mut liquidity = 0u128;
         let mut boundary: Option<u128> = None;
         for claim in &ledger.positions {
-            if claim.range.active_at(segment_price).map_err(|_| ProgramError::InvalidAccountData)? {
-                liquidity = liquidity.checked_add(claim.range.liquidity)
+            if claim
+                .range
+                .active_at(segment_price)
+                .map_err(|_| ProgramError::InvalidAccountData)?
+            {
+                liquidity = liquidity
+                    .checked_add(claim.range.liquidity)
                     .ok_or(ProgramError::InvalidAccountData)?;
             }
-            for edge in [claim.range.lower_sqrt_price_x64, claim.range.upper_sqrt_price_x64] {
+            for edge in [
+                claim.range.lower_sqrt_price_x64,
+                claim.range.upper_sqrt_price_x64,
+            ] {
                 if buy && edge > price && boundary.is_none_or(|b| edge < b)
                     || !buy && edge < price && boundary.is_none_or(|b| edge > b)
                 {
@@ -267,7 +277,10 @@ fn process_segment(
         if liquidity == 0 {
             return Err(ProgramError::InsufficientFunds);
         }
-        let state = PassiveState { sqrt_price_x64: price, liquidity };
+        let state = PassiveState {
+            sqrt_price_x64: price,
+            liquidity,
+        };
         let fee_for = |amount: u64| -> u64 {
             ((u128::from(amount) * u128::from(bps)).div_ceil(10_000)) as u64
         };
@@ -277,33 +290,49 @@ fn process_segment(
         };
         let net = remaining - fee_for(remaining);
         let mut leg_gross = remaining;
-        let mut quote = if buy {
-            quote_quote_in_for_base_out(state, net)
-        } else {
-            quote_base_in_for_quote_out(state, net)
-        }.map_err(|_| ProgramError::InvalidInstructionData)?;
-        if let Some(edge) = boundary {
-            if buy && quote.next_sqrt_price_x64 >= edge {
-                let target = passive_to_target(state, edge)
-                    .map_err(|_| ProgramError::InvalidInstructionData)?;
-                let cost = gross_for(target.amount_in)?;
-                if cost <= remaining {
-                    quote = target;
-                    leg_gross = cost;
-                }
-            } else if !buy && quote.next_sqrt_price_x64 < edge {
-                // Downward exact-boundary pricing is not yet supported.
-                return Err(ProgramError::InvalidInstructionData);
+        // Compute the boundary cost before attempting an unbounded quote.
+        // If affordable, stop exactly there, not one rounded atom beyond.
+        let boundary_quote = boundary.and_then(|edge| {
+            if buy {
+                passive_to_target(state, edge).ok()
+            } else {
+                passive_sell_to_target(state, edge).ok()
             }
-        }
+        });
+        let mut quote = if let Some(target) = boundary_quote.filter(|q| q.amount_in <= net) {
+            leg_gross = gross_for(target.amount_in)?;
+            target
+        } else {
+            if buy {
+                quote_quote_in_for_base_out(state, net)
+            } else {
+                quote_base_in_for_quote_out(state, net)
+            }
+            .map_err(|_| ProgramError::InvalidInstructionData)?
+        };
         if exact_out && quote.amount_out >= output - total_out {
             let target = output - total_out;
-            let exact = if buy { buy_exact_out(state, target) } else { sell_exact_out(state, target) }
-                .map_err(|_| ProgramError::InvalidInstructionData)?;
-            let cost = gross_for(exact.amount_in)?;
-            if cost <= leg_gross {
-                quote = exact;
-                leg_gross = cost;
+            // A boundary payment is already the conservative quote at that edge.
+            // Use the ordinary exact-out solver only if it stays in this segment.
+            let exact = if buy {
+                buy_exact_out(state, target)
+            } else {
+                sell_exact_out(state, target)
+            };
+            if let Ok(exact) = exact {
+                let cost = gross_for(exact.amount_in)?;
+                if cost <= leg_gross
+                    && boundary.is_none_or(|edge| {
+                        if buy {
+                            exact.next_sqrt_price_x64 <= edge
+                        } else {
+                            exact.next_sqrt_price_x64 >= edge
+                        }
+                    })
+                {
+                    quote = exact;
+                    leg_gross = cost;
+                }
             }
         }
         if let Some(edge) = boundary {
@@ -312,17 +341,32 @@ fn process_segment(
             }
         }
         let fee = fee_for(leg_gross);
-        if leg_gross == 0 || fee == 0 || quote.amount_out == 0 || quote.next_sqrt_price_x64 == price {
+        if leg_gross == 0 || fee == 0 || quote.amount_out == 0 || quote.next_sqrt_price_x64 == price
+        {
             return Err(ProgramError::InvalidInstructionData);
         }
         let trade = if buy {
-            SegmentTrade::Buy { quote_in: leg_gross, base_out: quote.amount_out, quote_fee: fee }
+            SegmentTrade::Buy {
+                quote_in: leg_gross,
+                base_out: quote.amount_out,
+                quote_fee: fee,
+            }
         } else {
-            SegmentTrade::Sell { base_in: leg_gross, quote_out: quote.amount_out, base_fee: fee }
+            SegmentTrade::Sell {
+                base_in: leg_gross,
+                quote_out: quote.amount_out,
+                base_fee: fee,
+            }
         };
-        ledger.apply_segment(segment_price, trade).map_err(|_| ProgramError::InsufficientFunds)?;
-        gross = gross.checked_add(leg_gross).ok_or(ProgramError::InvalidInstructionData)?;
-        total_out = total_out.checked_add(quote.amount_out).ok_or(ProgramError::InvalidInstructionData)?;
+        ledger
+            .apply_segment(segment_price, trade)
+            .map_err(|_| ProgramError::InsufficientFunds)?;
+        gross = gross
+            .checked_add(leg_gross)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        total_out = total_out
+            .checked_add(quote.amount_out)
+            .ok_or(ProgramError::InvalidInstructionData)?;
         price = quote.next_sqrt_price_x64;
     }
     if total_out < output || (!exact_out && gross != input) {

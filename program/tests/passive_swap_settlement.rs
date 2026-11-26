@@ -1122,3 +1122,75 @@ async fn guarded_single_swap_rejects_stale_price_and_revision() {
         .unwrap();
     assert_eq!(before.data, after.data);
 }
+
+#[tokio::test]
+async fn automatic_range_crossing_buy_and_sell_conserves_lp_claims() {
+    let (mut f, second, _lp) = multi_fixture();
+    let mut positions = vec![f.position, second];
+    positions.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
+    let account_state = ctx.banks_client.get_account(second).await.unwrap().unwrap();
+    let mut position = PositionAccount::decode_from(&account_state.data).unwrap();
+    position.position.lower_sqrt_price_x64 = Q64 * 2;
+    position.position.upper_sqrt_price_x64 = Q64 * 4;
+    let mut bytes = vec![0; PASSIVE_POSITION_BYTES];
+    position.encode_into(&mut bytes).unwrap();
+    ctx.set_account(&second, &account(bytes, ID).into());
+    ctx.set_account(
+        &f.taker_quote,
+        &token_account(f.quote_mint, f.taker.pubkey(), 5_000).into(),
+    );
+    assert!(
+        send(
+            &mut ctx,
+            multi_instruction(&f, 35, 0, 1_111, 1, &positions),
+            &f.taker
+        )
+        .await
+    );
+    let market = ctx
+        .banks_client
+        .get_account(f.market)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        MarketHeader::decode_from(&market.data)
+            .unwrap()
+            .sqrt_price_x64
+            > Q64 * 2
+    );
+    assert!(
+        send(
+            &mut ctx,
+            multi_instruction(&f, 35, 1, 100, 1, &positions),
+            &f.taker
+        )
+        .await
+    );
+    let market = ctx
+        .banks_client
+        .get_account(f.market)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        MarketHeader::decode_from(&market.data)
+            .unwrap()
+            .sqrt_price_x64
+            < Q64 * 2
+    );
+    let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    let pool = PoolAccount::decode_from(&pool.data).unwrap().pool;
+    let mut sums = PassivePool::default();
+    for key in positions {
+        let a = ctx.banks_client.get_account(key).await.unwrap().unwrap();
+        let p = PositionAccount::decode_from(&a.data).unwrap();
+        sums.base_reserve += p.position.base_principal;
+        sums.quote_reserve += p.position.quote_principal;
+        sums.accrued_base_fees += p.base_fees;
+        sums.accrued_quote_fees += p.quote_fees;
+        sums.total_liquidity += p.position.liquidity;
+    }
+    assert_eq!(sums, pool);
+}
