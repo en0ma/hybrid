@@ -27,7 +27,8 @@
     "./pro-rata-epoch-abi": "./src/pro-rata-epoch-abi.mjs",
     "./frozen-pubkey-claim": "./src/frozen-pubkey-claim.mjs",
     "./settlement": "./src/settlement.mjs",
-    "./settlement-rpc": "./src/settlement-rpc.mjs"
+    "./settlement-rpc": "./src/settlement-rpc.mjs",
+    "./settlement-plan": "./src/settlement-plan.mjs"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"
