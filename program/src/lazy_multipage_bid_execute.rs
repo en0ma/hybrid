@@ -215,7 +215,11 @@ pub(super) fn execute_and_seal_multipage(
         } else {
             let (expected_owner, _) = Pubkey::find_program_address(
                 &[
-                    if is_bid { b"bid-owner-page" } else { b"ask-owner-page" },
+                    if is_bid {
+                        b"bid-owner-page"
+                    } else {
+                        b"ask-owner-page"
+                    },
                     market_account.key.as_ref(),
                     &index_bytes,
                 ],

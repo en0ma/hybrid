@@ -39,7 +39,9 @@ fn epoch_commitment(
     if weights.len() > MAX_LAZY_SEATS {
         return Err(ProgramError::InvalidAccountData);
     }
-    lazy_bid_execute::shared_epoch_commitment(market, program, genesis, epoch, owners, weights, totals, 0)
+    lazy_bid_execute::shared_epoch_commitment(
+        market, program, genesis, epoch, owners, weights, totals, 0,
+    )
 }
 
 fn sealed_claim_root(
