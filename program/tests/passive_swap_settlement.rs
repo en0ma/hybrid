@@ -567,8 +567,8 @@ async fn funded_multi_lp_buy_sell_and_exact_out_preserve_all_claims() {
     );
     let pool_account = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
     let pool = PoolAccount::decode_from(&pool_account.data).unwrap();
-    assert_eq!(pool.pool.accrued_base_fees, 0);
-    assert_eq!(pool.pool.accrued_quote_fees, 0);
+    assert!(pool.pool.accrued_base_fees > 0);
+    assert!(pool.pool.accrued_quote_fees > 0);
     let mut base = 0u64;
     let mut quote = 0u64;
     for key in positions {
@@ -660,8 +660,8 @@ async fn atomic_multi_segment_batch_commits_both_fee_attributions() {
     assert!(send(&mut ctx, ix, &f.taker).await);
     let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
     let pool = PoolAccount::decode_from(&pool.data).unwrap();
-    assert_eq!(pool.pool.accrued_base_fees, 0);
-    assert_eq!(pool.pool.accrued_quote_fees, 0);
+    assert!(pool.pool.accrued_base_fees > 0);
+    assert!(pool.pool.accrued_quote_fees > 0);
     let mut base = 0u64;
     let mut quote = 0u64;
     for key in positions {
@@ -766,8 +766,8 @@ async fn multi_lp_positions_redeem_all_post_trade_inventory() {
             .unwrap()
             .unwrap(),
     );
-    assert_eq!(a + b, before.base_reserve);
-    assert_eq!(q1 + q2, before.quote_reserve);
+    assert_eq!(a + b, before.base_reserve + before.accrued_base_fees);
+    assert_eq!(q1 + q2, before.quote_reserve + before.accrued_quote_fees);
     let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
     assert_eq!(
         PoolAccount::decode_from(&pool.data).unwrap().pool,

@@ -275,6 +275,56 @@ pub struct PositionAccount {
 }
 
 impl PositionAccount {
+    /// Burn a checked fraction of the current claim. Final burn receives dust.
+    pub fn redeem(
+        &mut self,
+        pool: &mut PassivePool,
+        expected_revision: u64,
+        burn: u128,
+    ) -> Result<(u64, u64), PassiveAccountingError> {
+        use crate::passive_segments::proportion;
+        self.validate()?;
+        let liquidity = self.position.liquidity;
+        if expected_revision != self.revision || burn == 0 || burn > liquidity {
+            return Err(PassiveAccountingError::InvalidPosition);
+        }
+        let mut p = *self;
+        let mut next = *pool;
+        let base = proportion(p.position.base_principal, burn, liquidity)?;
+        let quote = proportion(p.position.quote_principal, burn, liquidity)?;
+        let bf = proportion(p.base_fees, burn, liquidity)?;
+        let qf = proportion(p.quote_fees, burn, liquidity)?;
+        let payout = (
+            base.checked_add(bf).ok_or(PassiveAccountingError::Overflow)?,
+            quote.checked_add(qf).ok_or(PassiveAccountingError::Overflow)?,
+        );
+        if payout == (0, 0) && burn != liquidity {
+            return Err(PassiveAccountingError::ZeroAmount);
+        }
+        next.base_reserve = next.base_reserve.checked_sub(base)
+            .ok_or(PassiveAccountingError::InsufficientReserves)?;
+        next.quote_reserve = next.quote_reserve.checked_sub(quote)
+            .ok_or(PassiveAccountingError::InsufficientReserves)?;
+        next.accrued_base_fees = next.accrued_base_fees.checked_sub(bf)
+            .ok_or(PassiveAccountingError::InsufficientReserves)?;
+        next.accrued_quote_fees = next.accrued_quote_fees.checked_sub(qf)
+            .ok_or(PassiveAccountingError::InsufficientReserves)?;
+        next.total_liquidity = next.total_liquidity.checked_sub(burn)
+            .ok_or(PassiveAccountingError::InsufficientLiquidity)?;
+        p.position.base_principal -= base;
+        p.position.quote_principal -= quote;
+        p.position.liquidity -= burn;
+        p.base_fees -= bf;
+        p.quote_fees -= qf;
+        p.revision = p.revision.checked_add(1).ok_or(PassiveAccountingError::Overflow)?;
+        if burn != liquidity {
+            p.validate()?;
+        }
+        *pool = next;
+        *self = p;
+        Ok(payout)
+    }
+
     pub fn validate(&self) -> Result<(), PassiveAccountingError> {
         let p = &self.position;
         if self.market == [0; 32]

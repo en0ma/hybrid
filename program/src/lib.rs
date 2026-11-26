@@ -2470,7 +2470,7 @@ fn process_close_passive_position(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    if data.len() != 9 || data[0] != 21 || accounts.len() != 13 {
+    if !matches!(data.len(), 9 | 33) || data[0] != 21 || accounts.len() != 13 {
         return Err(ProgramError::InvalidInstructionData);
     }
     let market = &accounts[0];
@@ -2501,7 +2501,7 @@ fn process_close_passive_position(
     let mut pool =
         hybrid_state::passive::PoolAccount::decode_from(&pool_account.try_borrow_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-    let state =
+    let mut state =
         hybrid_state::passive::PositionAccount::decode_from(&position_account.try_borrow_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
 
@@ -2570,20 +2570,16 @@ fn process_close_passive_position(
 
     // Both active maker claims and passive LP claims must remain funded.
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
-    let payout_base = state.position.base_principal.checked_add(state.base_fees)
-        .ok_or(ProgramError::InvalidAccountData)?;
-    let payout_quote = state.position.quote_principal.checked_add(state.quote_fees)
-        .ok_or(ProgramError::InvalidAccountData)?;
-    pool.pool.base_reserve = pool.pool.base_reserve.checked_sub(state.position.base_principal)
-        .ok_or(ProgramError::InsufficientFunds)?;
-    pool.pool.quote_reserve = pool.pool.quote_reserve.checked_sub(state.position.quote_principal)
-        .ok_or(ProgramError::InsufficientFunds)?;
-    pool.pool.total_liquidity = pool.pool.total_liquidity.checked_sub(state.position.liquidity)
-        .ok_or(ProgramError::InsufficientFunds)?;
-    pool.pool.accrued_base_fees = pool.pool.accrued_base_fees.checked_sub(state.base_fees)
-        .ok_or(ProgramError::InsufficientFunds)?;
-    pool.pool.accrued_quote_fees = pool.pool.accrued_quote_fees.checked_sub(state.quote_fees)
-        .ok_or(ProgramError::InsufficientFunds)?;
+    let (revision, burn) = if data.len() == 33 {
+        (
+            u64::from_le_bytes(data[9..17].try_into().unwrap()),
+            u128::from_le_bytes(data[17..33].try_into().unwrap()),
+        )
+    } else {
+        (state.revision, state.position.liquidity)
+    };
+    let (payout_base, payout_quote) = state.redeem(&mut pool.pool, revision, burn)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
 
     let bump = [authority_bump];
     let seeds: &[&[u8]] = &[b"vault-authority", market.key.as_ref(), &bump];
@@ -2613,6 +2609,10 @@ fn process_close_passive_position(
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
     pool.encode_into(&mut pool_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
+    if state.position.liquidity != 0 {
+        return state.encode_into(&mut position_account.try_borrow_mut_data()?)
+            .map_err(|_| ProgramError::InvalidAccountData);
+    }
     // A zeroed position cannot decode again. A second withdrawal fails.
     position_account.try_borrow_mut_data()?.fill(0);
     // Return the position account's rent to the LP.
