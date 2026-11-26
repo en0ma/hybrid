@@ -964,3 +964,104 @@ async fn hostile_sell_fee_tiers_fail_closed_in_single_and_multi_lp() {
         assert_eq!(p.pool.accrued_base_fees, 0);
     }
 }
+
+#[tokio::test]
+async fn funded_partial_redeem_rejects_stale_revision_and_conserves_fees() {
+    let mut f = fixture();
+    let mut ctx = f.program.take().unwrap().start_with_context().await;
+    assert!(
+        send(&mut ctx, swap(&f, 0, 100, 1, f.base_vault), &f.taker).await
+    );
+    let dest_base = Pubkey::new_unique();
+    let dest_quote = Pubkey::new_unique();
+    ctx.set_account(
+        &dest_base,
+        &token_account(f.base_mint, f.lp.pubkey(), 0).into(),
+    );
+    ctx.set_account(
+        &dest_quote,
+        &token_account(f.quote_mint, f.lp.pubkey(), 0).into(),
+    );
+    let redeem = |revision: u64, burn: u128| {
+        let mut data = vec![21];
+        data.extend_from_slice(&42u64.to_le_bytes());
+        data.extend_from_slice(&revision.to_le_bytes());
+        data.extend_from_slice(&burn.to_le_bytes());
+        Instruction {
+            program_id: ID,
+            accounts: vec![
+                AccountMeta::new_readonly(f.market, false),
+                AccountMeta::new_readonly(f.custody, false),
+                AccountMeta::new(f.pool, false),
+                AccountMeta::new(f.position, false),
+                AccountMeta::new(f.lp.pubkey(), true),
+                AccountMeta::new(f.base_vault, false),
+                AccountMeta::new(f.quote_vault, false),
+                AccountMeta::new(dest_base, false),
+                AccountMeta::new(dest_quote, false),
+                AccountMeta::new_readonly(f.base_mint, false),
+                AccountMeta::new_readonly(f.quote_mint, false),
+                AccountMeta::new_readonly(f.authority, false),
+                AccountMeta::new_readonly(TOKEN_PROGRAM_ID, false),
+            ],
+            data,
+        }
+    };
+    let original = ctx
+        .banks_client
+        .get_account(f.position)
+        .await
+        .unwrap()
+        .unwrap();
+    let original = PositionAccount::decode_from(&original.data).unwrap();
+    assert_eq!(original.revision, 2);
+    assert_eq!(original.quote_fees, 1);
+    assert!(send(&mut ctx, redeem(2, 333), &f.lp).await);
+    let partial = ctx
+        .banks_client
+        .get_account(f.position)
+        .await
+        .unwrap()
+        .unwrap();
+    let partial = PositionAccount::decode_from(&partial.data).unwrap();
+    assert_eq!(partial.position.liquidity, 667);
+    assert_eq!(partial.revision, 3);
+    assert_eq!(partial.quote_fees, 1);
+    assert!(!send(&mut ctx, redeem(2, 334), &f.lp).await);
+    let unchanged = ctx
+        .banks_client
+        .get_account(f.position)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        PositionAccount::decode_from(&unchanged.data).unwrap(),
+        partial
+    );
+    assert!(send(&mut ctx, redeem(3, 667), &f.lp).await);
+    let base = ctx
+        .banks_client
+        .get_account(dest_base)
+        .await
+        .unwrap()
+        .unwrap();
+    let quote = ctx
+        .banks_client
+        .get_account(dest_quote)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        amount(&base),
+        original.position.base_principal + original.base_fees
+    );
+    assert_eq!(
+        amount(&quote),
+        original.position.quote_principal + original.quote_fees
+    );
+    let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+    assert_eq!(
+        PoolAccount::decode_from(&pool.data).unwrap().pool,
+        PassivePool::default()
+    );
+}
