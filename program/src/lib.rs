@@ -44,7 +44,6 @@ mod frozen_claim_preflight;
 mod lazy_ask_execute;
 mod lazy_bid_execute;
 mod lazy_multilevel_bid;
-mod lazy_multipage_ask_execute;
 mod lazy_multipage_bid_execute;
 mod lazy_reserve;
 mod linked_maker;
@@ -162,11 +161,8 @@ pub fn process_instruction(
         Some(41) => lazy_ask_execute::execute_and_seal_ask(_program_id, _accounts, data),
         Some(42) => lazy_bid_execute::execute_and_seal_bid(_program_id, _accounts, data),
         Some(43) => lazy_multilevel_bid::preflight_multilevel_bid(_program_id, _accounts, data),
-        Some(44) => {
-            lazy_multipage_bid_execute::execute_and_seal_multipage_bid(_program_id, _accounts, data)
-        }
-        Some(45) => {
-            lazy_multipage_ask_execute::execute_and_seal_multipage_ask(_program_id, _accounts, data)
+        Some(44 | 45) => {
+            lazy_multipage_bid_execute::execute_and_seal_multipage(_program_id, _accounts, data)
         }
         _ => Err(ProgramError::InvalidInstructionData),
     }
