@@ -245,7 +245,7 @@ fn store_ask_page_updates(
 }
 
 #[inline(never)]
-fn store_ask_data_page(
+pub(super) fn store_ask_data_page(
     account: &AccountInfo,
     index: usize,
     next: Option<&hybrid_state::AskPage>,
@@ -259,7 +259,7 @@ fn store_ask_data_page(
 }
 
 #[inline(never)]
-fn store_ask_owner_page(
+pub(super) fn store_ask_owner_page(
     account: &AccountInfo,
     index: usize,
     next: Option<&hybrid_state::AskOwnerPage>,

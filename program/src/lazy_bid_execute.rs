@@ -197,7 +197,9 @@ pub(super) fn token_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
     ))
 }
 
-pub(super) fn epoch_commitment(
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn shared_epoch_commitment(
     market: &Pubkey,
     program: &Pubkey,
     genesis: &[u8; 32],
@@ -205,6 +207,7 @@ pub(super) fn epoch_commitment(
     owners: &[[u8; 32]],
     weights: &[u64],
     totals: [u64; 6],
+    side: u8,
 ) -> Result<[u8; 32], ProgramError> {
     if weights.is_empty() || weights.len() > MAX_LAZY_SEATS || owners.len() != weights.len() {
         return Err(ProgramError::InvalidAccountData);
@@ -224,7 +227,7 @@ pub(super) fn epoch_commitment(
     append(genesis);
     append(&epoch.0.to_le_bytes());
     append(&epoch.1.to_le_bytes());
-    append(&[1]); // bid side
+    append(&[side]);
     append(&(weights.len() as u32).to_le_bytes());
     for (index, (owner, weight)) in owners.iter().zip(weights).enumerate() {
         append(&(index as u32).to_le_bytes());
@@ -237,11 +240,24 @@ pub(super) fn epoch_commitment(
     Ok(solana_program::hash::hash(&bytes[..used]).to_bytes())
 }
 
-pub(super) fn sealed_claim_root(
+pub(super) fn epoch_commitment(
+    market: &Pubkey,
+    program: &Pubkey,
+    genesis: &[u8; 32],
+    epoch: (u64, u128),
+    owners: &[[u8; 32]],
+    weights: &[u64],
+    totals: [u64; 6],
+) -> Result<[u8; 32], ProgramError> {
+    shared_epoch_commitment(market, program, genesis, epoch, owners, weights, totals, 1)
+}
+
+#[inline(never)]
+pub(super) fn shared_claim_root(
     epoch_commitment: &[u8; 32],
     owners: &[[u8; 32]],
     weights: &[u64],
-    allocations: &[hybrid_state::lazy_pro_rata::MakerBidAllocation],
+    allocations: &[[u64; 6]],
 ) -> Result<[u8; 32], ProgramError> {
     if owners.is_empty()
         || owners.len() > MAX_LAZY_SEATS
@@ -257,15 +273,7 @@ pub(super) fn sealed_claim_root(
         owners.iter().zip(weights).zip(allocations).enumerate()
     {
         let seat = (index as u32).to_le_bytes();
-        let claim = [
-            0,
-            allocation.base_proceeds,
-            allocation.quote_spent,
-            0,
-            allocation.base_fee,
-            0,
-        ];
-        let amounts = claim.map(u64::to_le_bytes);
+        let amounts = allocation.map(u64::to_le_bytes);
         nodes[index] = solana_program::hash::hashv(&[
             LEAF_DOMAIN,
             epoch_commitment,
@@ -296,6 +304,19 @@ pub(super) fn sealed_claim_root(
         count = next;
     }
     Ok(nodes[0])
+}
+
+pub(super) fn sealed_claim_root(
+    epoch_commitment: &[u8; 32],
+    owners: &[[u8; 32]],
+    weights: &[u64],
+    allocations: &[hybrid_state::lazy_pro_rata::MakerBidAllocation],
+) -> Result<[u8; 32], ProgramError> {
+    let claims: Vec<_> = allocations
+        .iter()
+        .map(|a| [0, a.base_proceeds, a.quote_spent, 0, a.base_fee, 0])
+        .collect();
+    shared_claim_root(epoch_commitment, owners, weights, &claims)
 }
 
 #[inline(never)]
