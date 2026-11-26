@@ -187,7 +187,10 @@ pub fn plan_multilevel_ask(
         });
     }
     if remaining != 0
-        || quote_total.checked_add(fee_total).ok_or(AskPlanError::Arithmetic)? > max_quote_in
+        || quote_total
+            .checked_add(fee_total)
+            .ok_or(AskPlanError::Arithmetic)?
+            > max_quote_in
     {
         return Err(AskPlanError::InvalidFill);
     }
@@ -198,4 +201,3 @@ pub fn plan_multilevel_ask(
         quote_fee: fee_total,
     })
 }
-
