@@ -214,9 +214,40 @@ fn swap(f: &Fixture, side: u8, gross_in: u64, min_out: u64, vault: Pubkey) -> In
 
 async fn send(
     ctx: &mut solana_program_test::ProgramTestContext,
-    ix: Instruction,
+    mut ix: Instruction,
     signer: &Keypair,
 ) -> bool {
+    // Build a fresh authenticated snapshot unless the test supplies one.
+    let position_indices: Vec<usize> = match ix.data[0] {
+        33 | 34 if ix.data.len() == 28 => vec![3],
+        35 | 36 if ix.data.len() == 21 => (12..ix.accounts.len()).collect(),
+        37 if ix.data.len() == 2 + usize::from(ix.data[1]) * 21 => {
+            (12..ix.accounts.len()).collect()
+        }
+        _ => Vec::new(),
+    };
+    if !position_indices.is_empty() {
+        let market = ctx
+            .banks_client
+            .get_account(ix.accounts[0].pubkey)
+            .await
+            .unwrap()
+            .unwrap();
+        let header = MarketHeader::decode_from(&market.data).unwrap();
+        ix.data.extend_from_slice(&header.sqrt_price_x64.to_le_bytes());
+        ix.data.extend_from_slice(&header.next_sequence.to_le_bytes());
+        for index in position_indices {
+            let account = ctx
+                .banks_client
+                .get_account(ix.accounts[index].pubkey)
+                .await
+                .unwrap();
+            let revision = account
+                .and_then(|a| PositionAccount::decode_from(&a.data).ok())
+                .map_or(0, |p| p.revision);
+            ix.data.extend_from_slice(&revision.to_le_bytes());
+        }
+    }
     let hash = ctx.get_new_latest_blockhash().await.unwrap();
     let tx = Transaction::new_signed_with_payer(
         &[ix],

@@ -1,7 +1,7 @@
 //! Guarded single-position passive SPL settlement. No multi-LP settlement is
 //! permitted: fees are wholly attributable to the sole authenticated LP.
 //! Opcode 33: side:u8 (0 buy, 1 sell), gross_in:u64, min_out:u64,
-//! fee_bps:u16, position_nonce:u64. Exactly 28 bytes.
+//! fee_bps:u16, position_nonce:u64. Expected sqrt price:u128, sequence:u64, revision:u64. Exactly 60 bytes.
 use crate::{
     check_passive_vault_coverage, checked_token_amount, load_custody, token_account_fields,
     transfer_checked, TOKEN_PROGRAM_ID,
@@ -17,7 +17,7 @@ use solana_program::{
 };
 
 pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if !matches!(data.len(), 28 | 60)
+    if data.len() != 60
         || accounts.len() != 14
         || !matches!(data[0], 33 | 34)
         || data[1] > 1
@@ -93,10 +93,9 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         .map_err(|_| ProgramError::InvalidAccountData)?;
     let mut position = PositionAccount::decode_from(&position_account.try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    if data.len() == 60
-        && (header.sqrt_price_x64 != u128::from_le_bytes(data[28..44].try_into().unwrap())
-            || header.next_sequence != u64::from_le_bytes(data[44..52].try_into().unwrap())
-            || position.revision != u64::from_le_bytes(data[52..60].try_into().unwrap()))
+    if header.sqrt_price_x64 != u128::from_le_bytes(data[28..44].try_into().unwrap())
+        || header.next_sequence != u64::from_le_bytes(data[44..52].try_into().unwrap())
+        || position.revision != u64::from_le_bytes(data[52..60].try_into().unwrap())
     {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -132,8 +131,7 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     {
         return Err(ProgramError::InvalidSeeds);
     }
-    // The existing position format has no per-position fee counter. Only
-    // one-LP pools can safely allocate pool fees without double claiming.
+    // The single-position path must account for the entire pool.
     if pool.pool.total_liquidity != position.position.liquidity
         || pool.pool.base_reserve != position.position.base_principal
         || pool.pool.quote_reserve != position.position.quote_principal

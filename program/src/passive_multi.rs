@@ -25,28 +25,52 @@ use solana_program::{
 /// Execute up to eight separately verified segments atomically. Any failed
 /// leg causes Solana to roll back all earlier CPI transfers and state writes.
 pub fn process_batch(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if data.len() < 2
-        || data[0] != 37
-        || data[1] == 0
-        || data[1] > 8
-        || data.len() != 2 + usize::from(data[1]) * 21
-    {
+    if data.len() < 2 || data[0] != 37 || data[1] == 0 || data[1] > 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
-    for segment in data[2..].as_chunks::<21>().0 {
-        process(program_id, accounts, segment)?;
+    let count = usize::from(data[1]);
+    let positions = accounts
+        .len()
+        .checked_sub(12)
+        .ok_or(ProgramError::InvalidInstructionData)?;
+    if !(1..=8).contains(&positions) {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let guard_start = 2 + count * 21;
+    if data.len() != guard_start + 24 + 8 * positions {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let guard = &data[guard_start..];
+    for (i, segment) in data[2..guard_start].as_chunks::<21>().0.iter().enumerate() {
+        process_segment(
+            program_id,
+            accounts,
+            segment,
+            if i == 0 { Some(guard) } else { None },
+        )?;
     }
     Ok(())
 }
 
 pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if data.len() < 21
+    if data.len() < 21 || data.len() != 45 + 8 * usize::from(data[20]) {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    process_segment(program_id, accounts, &data[..21], Some(&data[21..]))
+}
+
+fn process_segment(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+    guard: Option<&[u8]>,
+) -> ProgramResult {
+    if data.len() != 21
         || !matches!(data[0], 35 | 36)
         || data[1] > 1
         || data[20] == 0
         || data[20] > 8
         || accounts.len() != 12 + usize::from(data[20])
-        || (data.len() != 21 && data.len() != 45 + 8 * usize::from(data[20]))
     {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -108,11 +132,12 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     {
         return Err(ProgramError::InvalidAccountData);
     }
-    if data.len() != 21
-        && (header.sqrt_price_x64 != u128::from_le_bytes(data[21..37].try_into().unwrap())
-            || header.next_sequence != u64::from_le_bytes(data[37..45].try_into().unwrap()))
-    {
-        return Err(ProgramError::InvalidInstructionData);
+    if let Some(snapshot) = guard {
+        if header.sqrt_price_x64 != u128::from_le_bytes(snapshot[..16].try_into().unwrap())
+            || header.next_sequence != u64::from_le_bytes(snapshot[16..24].try_into().unwrap())
+        {
+            return Err(ProgramError::InvalidInstructionData);
+        }
     }
     let mut pool = PoolAccount::decode_from(&pool_account.try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
@@ -169,10 +194,12 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         }
         let state = PositionAccount::decode_from(&account.try_borrow_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        if data.len() != 21
-            && state.revision != u64::from_le_bytes(data[45 + i * 8..53 + i * 8].try_into().unwrap())
-        {
-            return Err(ProgramError::InvalidInstructionData);
+        if let Some(snapshot) = guard {
+            if state.revision
+                != u64::from_le_bytes(snapshot[24 + i * 8..32 + i * 8].try_into().unwrap())
+            {
+                return Err(ProgramError::InvalidInstructionData);
+            }
         }
         let owner = Pubkey::new_from_array(state.position.owner);
         let (expected, bump) = Pubkey::find_program_address(
