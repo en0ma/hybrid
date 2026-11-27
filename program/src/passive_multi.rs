@@ -373,7 +373,9 @@ fn process_segment(
             .ok_or(ProgramError::InvalidInstructionData)?;
         price = quote.next_sqrt_price_x64;
     }
-    if total_out < output || (!exact_out && gross != input) {
+    if (exact_out && total_out != output)
+        || (!exact_out && (total_out < output || gross != input))
+    {
         return Err(ProgramError::InvalidInstructionData);
     }
     let bump = [authority_bump];
@@ -460,7 +462,7 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
     let pages = usize::from(data[3]);
     let end = 4 + usize::from(data[1]) * 21;
     let fixed = 12 + n;
-    if data.len() != end + 24 + 8 * n || accounts.len() <= fixed + 2 * pages + 1 {
+    if data.len() != end + 40 + 8 * n || accounts.len() <= fixed + 2 * pages + 1 {
         return Err(ProgramError::InvalidInstructionData);
     }
     let market = &accounts[0];
@@ -472,6 +474,19 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
         return Err(ProgramError::InvalidInstructionData);
     }
     let buy = side == 0;
+    let limits = end + 24 + 8 * n;
+    let max_input = u64::from_le_bytes(data[limits..limits + 8].try_into().unwrap());
+    let min_output = u64::from_le_bytes(data[limits + 8..].try_into().unwrap());
+    if max_input == 0 || min_output == 0 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (input_account, output_account) = if buy {
+        (&accounts[5], &accounts[4])
+    } else {
+        (&accounts[4], &accounts[5])
+    };
+    let input_before = crate::checked_token_amount(input_account)?;
+    let output_before = crate::checked_token_amount(output_account)?;
     let mut passive = accounts[..fixed].to_vec();
     passive.extend(book.iter().step_by(2).cloned());
     let snapshot = &data[end..];
@@ -544,7 +559,17 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
             return Err(ProgramError::InvalidInstructionData);
         }
     }
-    check_hybrid_coverage(program_id, accounts, &reserve)
+    check_hybrid_coverage(program_id, accounts, &reserve)?;
+    let spent = input_before
+        .checked_sub(crate::checked_token_amount(input_account)?)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let received = crate::checked_token_amount(output_account)?
+        .checked_sub(output_before)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    if spent == 0 || spent > max_input || received < min_output {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    Ok(())
 }
 
 /// Verify the sum of all three liability classes against canonical vaults.
