@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import * as web3 from "@solana/web3.js";
 import {PublicKey,Keypair,VersionedTransaction} from "@solana/web3.js";
 import {mkdtemp,rm,writeFile,stat} from "node:fs/promises";
+import {createServer} from "node:http";
+import {once} from "node:events";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {createSolanaSettlementAdapter} from "../src/settlement-solana.mjs";
@@ -266,6 +268,30 @@ test("kill switch and interrupted durable state block reservation",async()=>{
 });
 
 const sandboxControl={...control,sandboxSubmit:true};
+async function withSubmitServer(connection,handler,operation){
+  const errors=[];
+  const server=createServer(async(req,res)=>{
+    try{
+      const chunks=[];for await(const chunk of req)chunks.push(chunk);
+      assert.equal(req.method,"POST");
+      const value=JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      assert.equal(value.method,"sendTransaction");
+      await handler(value,res);
+    }catch(e){errors.push(e);res.destroy();}
+  });
+  server.listen(0,"127.0.0.1");await once(server,"listening");
+  connection.rpcEndpoint="http://127.0.0.1:"+server.address().port;
+  try{
+    await operation();
+    if(errors.length)throw errors[0];
+  }finally{
+    server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
+  }
+}
+function replySignature(value,res,signature){
+  res.setHeader("Content-Type","application/json");
+  res.end(JSON.stringify({jsonrpc:"2.0",id:value.id,result:signature}));
+}
 async function preparedFixture(callback){
   await sessionFixture(async({f,sessionPath,reserve})=>{
     const r=await reserve();
@@ -289,14 +315,15 @@ async function preparedFixture(callback){
 test("sandbox submission persists intent before send, matches receipt and blocks further work",async()=>{
   await preparedFixture(async({f,sessionPath,transaction,prepared,opts})=>{
     let sends=0;
-    f.connection.sendRawTransaction=async(bytes,options)=>{
-      sends++;assert.deepEqual(bytes,Buffer.from(transaction.serialize()));
-      assert.equal(options.maxRetries,0);assert.equal(options.skipPreflight,false);
+    await withSubmitServer(f.connection,async(value,res)=>{
+      sends++;assert.deepEqual(Buffer.from(value.params[0],"base64"),Buffer.from(transaction.serialize()));
+      assert.equal(value.params[1].maxRetries,0);assert.equal(value.params[1].skipPreflight,false);
       assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"submitted");
-      return prepared.signature;
-    };
-    const result=await submitSandboxMakerIntent(f.connection,opts);
-    assert.equal(result.state,"submitted");assert.equal(sends,1);
+      replySignature(value,res,prepared.signature);
+    },async()=>{
+      const result=await submitSandboxMakerIntent(f.connection,opts);
+      assert.equal(result.state,"submitted");assert.equal(sends,1);
+    });
     f.connection.getSignatureStatuses=async()=>({context:{slot:104},
       value:[{slot:103,confirmationStatus:"finalized",err:null}]});
     f.connection.getTransaction=async()=>({version:0,slot:103,meta:{err:null},
@@ -311,13 +338,16 @@ test("sandbox submission persists intent before send, matches receipt and blocks
 test("ambiguous send is never retried, and null history cannot release",async()=>{
   await preparedFixture(async({f,sessionPath,opts})=>{
     let sends=0;
-    f.connection.sendRawTransaction=async()=>{sends++;throw new Error("RPC disconnected");};
-    assert.equal((await submitSandboxMakerIntent(f.connection,opts)).state,"unknown");
-    assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"submitted");
-    const status=await finalizeSandboxMakerIntent(f.connection,opts);
-    assert.equal(status.state,"unknown");assert.equal(status.canRelease,false);
-    await assert.rejects(submitSandboxMakerIntent(f.connection,opts),/duplicate submission/);
-    assert.equal(sends,1);
+    await withSubmitServer(f.connection,async(value,res)=>{
+      sends++;res.destroy();
+    },async()=>{
+      assert.equal((await submitSandboxMakerIntent(f.connection,opts)).state,"unknown");
+      assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"submitted");
+      const status=await finalizeSandboxMakerIntent(f.connection,opts);
+      assert.equal(status.state,"unknown");assert.equal(status.canRelease,false);
+      await assert.rejects(submitSandboxMakerIntent(f.connection,opts),/duplicate submission/);
+      assert.equal(sends,1);
+    });
   });
 });
 test("sandbox refuses public RPC and requires explicit submit switch",async()=>{
@@ -330,12 +360,28 @@ test("sandbox refuses public RPC and requires explicit submit switch",async()=>{
 });
 test("finalized status without matching full receipt never retires journal",async()=>{
   await preparedFixture(async({f,sessionPath,prepared,opts})=>{
-    f.connection.sendRawTransaction=async()=>prepared.signature;
-    await submitSandboxMakerIntent(f.connection,opts);
+    await withSubmitServer(f.connection,async(value,res)=>replySignature(value,res,prepared.signature),
+      async()=>{await submitSandboxMakerIntent(f.connection,opts);});
     f.connection.getSignatureStatuses=async()=>({context:{slot:104},
       value:[{slot:103,confirmationStatus:"finalized",err:null}]});
     f.connection.getTransaction=async()=>null;
     await assert.rejects(finalizeSandboxMakerIntent(f.connection,opts),/receipt does not match/);
     assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"submitted");
+  });
+});
+
+test("HTTP 429 sends exactly one POST even with Retry-After and blocks duplicate submission",async()=>{
+  await preparedFixture(async({f,sessionPath,opts})=>{
+    let posts=0,web3Calls=0;
+    f.connection.sendRawTransaction=async()=>{web3Calls++;throw new Error("Forbidden retrying transport");};
+    await withSubmitServer(f.connection,async(value,res)=>{
+      posts++;res.writeHead(429,{"Retry-After":"0"});res.end("rate limited");
+    },async()=>{
+      const result=await submitSandboxMakerIntent(f.connection,opts);
+      assert.equal(result.state,"unknown");assert.equal(result.canRetry,false);
+      assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"submitted");
+      await assert.rejects(submitSandboxMakerIntent(f.connection,opts),/duplicate submission/);
+      assert.equal(posts,1);assert.equal(web3Calls,0);
+    });
   });
 });

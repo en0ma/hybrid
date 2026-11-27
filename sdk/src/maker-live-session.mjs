@@ -4,6 +4,7 @@
 import {open,readFile,rename,lstat} from "node:fs/promises";
 import {dirname} from "node:path";
 import {createHash} from "node:crypto";
+import {request as httpRequest} from "node:http";
 import {keyBytes} from "./settlement.mjs";
 import {planLiveMakerQuotes} from "./maker-live-plan.mjs";
 import {withMakerJournalLock,assertFirstWireSignature} from "./maker-journal-guard.mjs";
@@ -205,6 +206,43 @@ function sandbox(connection,control){
   if(url.protocol!=="http:"||!["127.0.0.1","[::1]"].includes(url.hostname)||
     !url.port||url.username||url.password||url.pathname!=="/"||url.search||url.hash)
     throw new Error("Loopback RPC required; public cluster submission disabled");
+  return url;
+}
+// Bypass web3.js retry-on-429 transport. No redirects, agent, middleware
+// or retry loop; a single native HTTP request is the entire send attempt.
+function sendSandboxWireOnce(url,wire,minContextSlot){
+  const body=JSON.stringify({jsonrpc:"2.0",id:1,method:"sendTransaction",params:[
+    wire.toString("base64"),{encoding:"base64",skipPreflight:false,
+      preflightCommitment:"confirmed",maxRetries:0,minContextSlot},
+  ]});
+  return new Promise((resolve,reject)=>{
+    const req=httpRequest(url,{method:"POST",agent:false,headers:{
+      "Content-Type":"application/json","Content-Length":Buffer.byteLength(body),
+      "Connection":"close",
+    }},res=>{
+      if(res.statusCode!==200){res.destroy();reject(new Error("Uncertain HTTP submission response"));return;}
+      const chunks=[];let size=0;
+      res.on("data",chunk=>{
+        size+=chunk.length;
+        if(size>8192){res.destroy(new Error("Oversized RPC response"));return;}
+        chunks.push(chunk);
+      });
+      res.on("error",reject);
+      res.on("aborted",()=>reject(new Error("Interrupted RPC response")));
+      res.on("end",()=>{
+        try{
+          const value=JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          if(value?.jsonrpc!=="2.0"||value.id!==1||value.error!==undefined||
+            typeof value.result!=="string")throw new Error("Uncertain RPC submission result");
+          resolve(value.result);
+        }catch(e){reject(e);}
+      });
+    });
+    req.on("error",reject);
+    const timer=setTimeout(()=>req.destroy(new Error("Sandbox submission timeout")),5000);
+    req.on("close",()=>clearTimeout(timer));
+    req.end(body);
+  });
 }
 async function verifiedJournal(path,state){
   if(await exists(journal(path)+".pending"))throw new Error("Interrupted transaction journal update");
@@ -278,12 +316,9 @@ export async function submitSandboxMakerIntent(connection,{sessionPath,snapshotO
       !integer(sendHeight)||sendHeight>intent.lastValidBlockHeight||
       await connection.getGenesisHash()!==record.genesisHash)
       throw new Error("Prepared wire no longer fresh at broadcast");
-    sandbox(connection,control);
+    const endpoint=sandbox(connection,control);
     try{
-      const returned=await connection.sendRawTransaction(Buffer.from(wire),{
-        skipPreflight:false,preflightCommitment:"confirmed",maxRetries:0,
-        minContextSlot:evidence.simulationSlot,
-      });
+      const returned=await sendSandboxWireOnce(endpoint,wire,evidence.simulationSlot);
       return {state:returned===record.signature?"submitted":"unknown",
         signature:record.signature,canRetry:false,requiresIndependentReconciliation:true};
     }catch{
