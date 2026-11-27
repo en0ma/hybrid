@@ -68,6 +68,7 @@ export function prepareSettlement(programId,snapshot,accounts,request){
     baseMint:snapshot.baseMint,quoteMint:snapshot.quoteMint,vaultAuthority:snapshot.vaultAuthority,
     tokenProgram:snapshot.tokenProgram,taker:snapshot.taker,takerBase:snapshot.takerBase,takerQuote:snapshot.takerQuote,
     market:snapshot.market,
+    marketFlags:snapshot.header?.flags,aggregateGuard:snapshot.aggregateGuard,
     reserve:snapshot.reserve,pages:snapshot.pages,epochs:snapshot.epochs,
     makerBalances:snapshot.side==="ask"&&snapshot.pages.length===1?[]:snapshot.makerBalances},
     {side:snapshot.side,baseFill:plan.baseFill,quoteLimit:plan.quoteLimit});

@@ -94,7 +94,7 @@ jobs:
           node --input-type=module -e '
           import {readFileSync} from "node:fs";
           const r=JSON.parse(readFileSync(".surfpool-sdk/sdk-settlement-evidence.json"));
-          if(!r.complete||!r.shared?.complete||r.shared.epochs.length!==3||r.shared.receipts.filter(x=>x.opcode===40).length!==6||r.cases.length!==4||r.cases.some(c=>!c.complete||
+          if(!r.complete||!r.shared?.complete||!r.shared.aggregateGuardVerified||r.shared.epochs.length!==3||r.shared.receipts.filter(x=>x.opcode===40).length!==6||r.cases.length!==4||r.cases.some(c=>!c.complete||
             c.receipts.some(x=>x.status!=="confirmed")||
             c.receipts.filter(x=>x.opcode===40).some(x=>!x.recovered||!x.replayRejected)||
             (c.multi&&!c.lookup?.createSignature)))throw Error("Incomplete SDK settlement evidence");

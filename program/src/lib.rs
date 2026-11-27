@@ -56,7 +56,103 @@ mod passive_multi;
 const PASSIVE_FEE_BPS: u16 = 100;
 mod passive_swap;
 
+// The market flag is monotone: initializing either liability ledger opts
+// every token-moving instruction into the canonical aggregate guard.
+const MARKET_FLAG_AGGREGATE_GUARD: u16 = 2;
+
 pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if matches!(
+        data.first(),
+        Some(13..=18 | 20 | 21 | 23..=26 | 33..=37 | 40..=42 | 44 | 45)
+    ) {
+        let market = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
+        if market.owner != program_id {
+            return Err(ProgramError::IncorrectProgramId);
+        }
+        let header = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        if header.flags & MARKET_FLAG_AGGREGATE_GUARD != 0 {
+            let split = accounts
+                .len()
+                .checked_sub(4)
+                .ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let (inner, tail) = accounts.split_at(split);
+            let guard = [&tail[0], &tail[1], &tail[2], &tail[3]];
+            let custody_index = if data[0] == 40 { 4 } else { 1 };
+            let custody = inner
+                .get(custody_index)
+                .ok_or(ProgramError::NotEnoughAccountKeys)?;
+            verify_aggregate_coverage(program_id, market, custody, guard)?;
+            dispatch_instruction(program_id, inner, data)?;
+            return verify_aggregate_coverage(program_id, market, custody, guard);
+        }
+    }
+    dispatch_instruction(program_id, accounts, data)
+}
+
+// Guard tail: canonical passive pool, lazy reserve, base vault, quote vault.
+// A missing ledger must be proven by its canonical system-owned empty PDA.
+#[inline(never)]
+fn verify_aggregate_coverage(
+    program_id: &Pubkey,
+    market: &AccountInfo,
+    custody_account: &AccountInfo,
+    guard: [&AccountInfo; 4],
+) -> ProgramResult {
+    let custody = load_custody(program_id, market, custody_account)?;
+    let (pool_key, bump) =
+        Pubkey::find_program_address(&[b"passive-pool", market.key.as_ref()], program_id);
+    let (reserve_key, _) =
+        Pubkey::find_program_address(&[b"lazy-reserve", market.key.as_ref()], program_id);
+    if *guard[0].key != pool_key
+        || *guard[1].key != reserve_key
+        || guard[2].key.to_bytes() != custody.base_vault
+        || guard[3].key.to_bytes() != custody.quote_vault
+    {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let pool = if guard[0].owner == program_id {
+        let state = hybrid_state::passive::PoolAccount::decode_from(&guard[0].try_borrow_data()?)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        if state.market != market.key.to_bytes() || state.bump != bump {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        state.pool
+    } else if *guard[0].owner == Pubkey::default() && guard[0].data_is_empty() {
+        hybrid_state::passive::PassivePool::default()
+    } else {
+        return Err(ProgramError::InvalidAccountData);
+    };
+    let (base, quote) = if guard[1].owner == program_id {
+        lazy_reserve::load_lazy_reserve(program_id, market, guard[1])?
+            .vault_floor(custody.total_base, custody.total_quote)
+            .map_err(|_| ProgramError::InvalidAccountData)?
+    } else if *guard[1].owner == Pubkey::default() && guard[1].data_is_empty() {
+        (custody.total_base, custody.total_quote)
+    } else {
+        return Err(ProgramError::InvalidAccountData);
+    };
+    let (authority, _) =
+        Pubkey::find_program_address(&[b"vault-authority", market.key.as_ref()], program_id);
+    if token_account_fields(guard[2])? != (custody.base_mint, authority.to_bytes())
+        || token_account_fields(guard[3])? != (custody.quote_mint, authority.to_bytes())
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    pool.verify_vault_coverage(
+        base,
+        quote,
+        checked_token_amount(guard[2])?,
+        checked_token_amount(guard[3])?,
+    )
+    .map_err(|_| ProgramError::InsufficientFunds)
+}
+
+fn dispatch_instruction(
     _program_id: &Pubkey,
     _accounts: &[AccountInfo],
     data: &[u8],
@@ -164,6 +260,7 @@ pub fn process_instruction(
         Some(44 | 45) => {
             lazy_multipage_bid_execute::execute_and_seal_multipage(_program_id, _accounts, data)
         }
+        Some(46) => passive_multi::process_hybrid(_program_id, _accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }
@@ -1646,28 +1743,6 @@ fn process_withdraw(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) 
 }
 
 const MAX_SWAP_MAKER_ACCOUNTS: usize = 8;
-const BUY_SWAP_FIXED_ACCOUNTS: usize = 11;
-
-fn parse_buy_swap(data: &[u8]) -> Result<(u8, u64, u64), ProgramError> {
-    if data.len() != 17 || (data[0] != 15 && data[0] != 16) {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    let amount = u64::from_le_bytes(
-        data[1..9]
-            .try_into()
-            .map_err(|_| ProgramError::InvalidInstructionData)?,
-    );
-    let limit = u64::from_le_bytes(
-        data[9..17]
-            .try_into()
-            .map_err(|_| ProgramError::InvalidInstructionData)?,
-    );
-    if amount == 0 || limit == 0 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-    Ok((data[0], amount, limit))
-}
-
 #[inline(never)]
 fn load_owner_page_box(
     account: &AccountInfo,
@@ -1709,218 +1784,22 @@ fn plan_active_buy(
 }
 
 fn process_buy_swap(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if accounts.len() <= BUY_SWAP_FIXED_ACCOUNTS
-        || accounts.len() > BUY_SWAP_FIXED_ACCOUNTS + MAX_SWAP_MAKER_ACCOUNTS
-    {
-        return Err(ProgramError::NotEnoughAccountKeys);
+    if data.len() != 17 || !matches!(data[0], 15 | 16) || accounts.len() < 12 {
+        return Err(ProgramError::InvalidInstructionData);
     }
-    let (opcode, amount, limit) = parse_buy_swap(data)?;
-    let market_account = &accounts[0];
-    let custody_account = &accounts[1];
-    let ask_account = &accounts[2];
-    let owner_account = &accounts[3];
-    let taker = &accounts[4];
-    let taker_quote = &accounts[5];
-    let taker_base = &accounts[6];
-    let quote_vault = &accounts[7];
-    let base_vault = &accounts[8];
-    let vault_authority = &accounts[9];
-    let token_program = &accounts[10];
-    let maker_accounts = &accounts[BUY_SWAP_FIXED_ACCOUNTS..];
-
-    if !taker.is_signer {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-    if market_account.owner != program_id
-        || ask_account.owner != program_id
-        || owner_account.owner != program_id
-    {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-    if !market_account.is_writable
-        || !custody_account.is_writable
-        || !ask_account.is_writable
-        || !owner_account.is_writable
-        || !taker_quote.is_writable
-        || !taker_base.is_writable
-        || !quote_vault.is_writable
-        || !base_vault.is_writable
-        || maker_accounts.iter().any(|account| !account.is_writable)
-    {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    let market_data = market_account.try_borrow_data()?;
-    let mut market = hybrid_state::MarketHeader::decode_from(&market_data)
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    drop(market_data);
-    if !market.collateralized_active() {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    let index_bytes = 0u32.to_le_bytes();
-    let (expected_ask, _) = Pubkey::find_program_address(
-        &[b"ask-page", market_account.key.as_ref(), &index_bytes],
-        program_id,
-    );
-    if *ask_account.key != expected_ask || market.reserved2 != owner_account.key.to_bytes() {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    let mut asks = load_active_ask_page(ask_account)?;
-    let mut owners = load_owner_page_box(owner_account)?;
-    owners
-        .validate_parallel(&asks)
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    if market.ask_count as usize != asks.len() {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    // Legacy swap accounts contain only page 0. Reject linked books rather
-    // than settling a prefix while leaving subsequent pages untouched.
-    let links = asks.links();
-    if links.page_index != 0 || links.prev_page.is_some() || links.next_page.is_some() {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    let mut custody = load_custody(program_id, market_account, custody_account)?;
-    if quote_vault.key.to_bytes() != custody.quote_vault
-        || base_vault.key.to_bytes() != custody.base_vault
-        || *token_program.key != TOKEN_PROGRAM_ID
-    {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    let (expected_authority, authority_bump) = Pubkey::find_program_address(
-        &[b"vault-authority", market_account.key.as_ref()],
-        program_id,
-    );
-    if *vault_authority.key != expected_authority {
-        return Err(ProgramError::InvalidSeeds);
-    }
-
-    let (taker_quote_mint, taker_quote_owner) = token_account_fields(taker_quote)?;
-    let (taker_base_mint, taker_base_owner) = token_account_fields(taker_base)?;
-    let (quote_vault_mint, quote_vault_owner) = token_account_fields(quote_vault)?;
-    let (base_vault_mint, base_vault_owner) = token_account_fields(base_vault)?;
-    if taker_quote_owner != taker.key.to_bytes()
-        || taker_base_owner != taker.key.to_bytes()
-        || taker_quote_mint != custody.quote_mint
-        || taker_base_mint != custody.base_mint
-        || quote_vault_mint != custody.quote_mint
-        || base_vault_mint != custody.base_mint
-        || quote_vault_owner != expected_authority.to_bytes()
-        || base_vault_owner != expected_authority.to_bytes()
-    {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    let ask_limits = asks
-        .as_slice()
-        .iter()
-        .copied()
-        .map(hybrid_state::AskEntry::as_limit_ask)
-        .collect::<Vec<_>>();
-    let plan = plan_active_buy(opcode, market.sqrt_price_x64, &ask_limits, amount, limit)?;
-    let fills = &plan.fills[..usize::from(plan.fill_count)];
-
-    let mut maker_states = Vec::with_capacity(maker_accounts.len());
-    for account in maker_accounts {
-        if maker_accounts
+    let mut mapped = Vec::with_capacity(accounts.len());
+    mapped.extend(
+        [0, 1, 4, 5, 6, 7, 8, 9, 10, 2, 3]
             .iter()
-            .filter(|candidate| candidate.key == account.key)
-            .count()
-            != 1
-        {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        let data = account.try_borrow_data()?;
-        let state = hybrid_state::MakerBalance::decode_from(&data)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-        drop(data);
-        if state.market != market_account.key.to_bytes() {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        let checked =
-            load_maker_balance_for_owner(program_id, market_account, account, state.owner)?;
-        maker_states.push(checked);
-    }
-
-    let mut fill_balance_indexes = Vec::with_capacity(fills.len());
-    for fill in fills {
-        let owner = owners.owners[usize::from(fill.ask_index)];
-        let index = maker_states
-            .iter()
-            .position(|balance| balance.owner == owner)
-            .ok_or(ProgramError::NotEnoughAccountKeys)?;
-        fill_balance_indexes.push(index);
-    }
-
-    let mut settled_states = maker_states.clone();
-    for (fill, index) in fills.iter().zip(fill_balance_indexes.iter().copied()) {
-        settled_states[index]
-            .settle_ask(fill.base_qty, fill.quote_qty)
-            .map_err(|_| ProgramError::InsufficientFunds)?;
-    }
-
-    let removed = hybrid_state::apply_active_fills_to_ask_page(&mut asks, &mut owners, fills)
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    market.ask_count = market
-        .ask_count
-        .checked_sub(u32::try_from(removed).map_err(|_| ProgramError::InvalidAccountData)?)
-        .ok_or(ProgramError::InvalidAccountData)?;
-
-    custody.total_quote = custody
-        .total_quote
-        .checked_add(plan.amount_in)
-        .ok_or(ProgramError::InvalidAccountData)?;
-    custody.total_base = custody
-        .total_base
-        .checked_sub(plan.amount_out)
-        .ok_or(ProgramError::InsufficientFunds)?;
-
-    transfer_tokens(
-        taker_quote,
-        quote_vault,
-        taker,
-        token_program,
-        plan.amount_in,
-        None,
-    )?;
-    let bump = [authority_bump];
-    let seeds: &[&[u8]] = &[b"vault-authority", market_account.key.as_ref(), &bump];
-    transfer_tokens(
-        base_vault,
-        taker_base,
-        vault_authority,
-        token_program,
-        plan.amount_out,
-        Some(seeds),
-    )?;
-
-    {
-        let mut data = market_account.try_borrow_mut_data()?;
-        market
-            .encode_into(&mut data)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-    }
-    {
-        let mut data = ask_account.try_borrow_mut_data()?;
-        asks.encode_into(&mut data)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-    }
-    {
-        let mut data = owner_account.try_borrow_mut_data()?;
-        owners
-            .encode_into(&mut data)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-    }
-    for (account, state) in maker_accounts.iter().zip(settled_states.iter()) {
-        store_maker_balance(account, state)?;
-    }
-    store_custody(custody_account, &custody)
+            .map(|&i| accounts[i].clone()),
+    );
+    mapped.extend(accounts[11..].iter().cloned());
+    let mut instruction = [0u8; 18];
+    instruction[0] = data[0] + 8;
+    instruction[1] = 1;
+    instruction[2..].copy_from_slice(&data[1..]);
+    multipage_buy::process_multipage_buy(program_id, &mapped, &instruction)
 }
-
-const SELL_SWAP_FIXED_ACCOUNTS: usize = 11;
 
 /// Exact-in (17): base input and minimum quote output.
 /// Exact-out (18): quote output and maximum base input.
@@ -1959,236 +1838,21 @@ fn plan_active_sell(
 
 #[inline(never)]
 fn process_sell_swap(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if accounts.len() <= SELL_SWAP_FIXED_ACCOUNTS
-        || accounts.len() > SELL_SWAP_FIXED_ACCOUNTS + MAX_SWAP_MAKER_ACCOUNTS
-        || data.len() != 17
-    {
-        return Err(ProgramError::NotEnoughAccountKeys);
-    }
-    let opcode = data[0];
-    if opcode != 17 && opcode != 18 {
+    if data.len() != 17 || !matches!(data[0], 17 | 18) || accounts.len() < 12 {
         return Err(ProgramError::InvalidInstructionData);
     }
-    let amount = u64::from_le_bytes(
-        data[1..9]
-            .try_into()
-            .map_err(|_| ProgramError::InvalidInstructionData)?,
-    );
-    let limit = u64::from_le_bytes(
-        data[9..17]
-            .try_into()
-            .map_err(|_| ProgramError::InvalidInstructionData)?,
-    );
-    if amount == 0 || limit == 0 {
-        return Err(ProgramError::InvalidInstructionData);
-    }
-
-    let market_account = &accounts[0];
-    let custody_account = &accounts[1];
-    let bid_account = &accounts[2];
-    let owner_account = &accounts[3];
-    let taker = &accounts[4];
-    let taker_base = &accounts[5];
-    let taker_quote = &accounts[6];
-    let base_vault = &accounts[7];
-    let quote_vault = &accounts[8];
-    let vault_authority = &accounts[9];
-    let token_program = &accounts[10];
-    let maker_accounts = &accounts[SELL_SWAP_FIXED_ACCOUNTS..];
-
-    if !taker.is_signer {
-        return Err(ProgramError::MissingRequiredSignature);
-    }
-    if market_account.owner != program_id
-        || bid_account.owner != program_id
-        || owner_account.owner != program_id
-    {
-        return Err(ProgramError::IncorrectProgramId);
-    }
-    if !market_account.is_writable
-        || !custody_account.is_writable
-        || !bid_account.is_writable
-        || !owner_account.is_writable
-        || !taker_base.is_writable
-        || !taker_quote.is_writable
-        || !base_vault.is_writable
-        || !quote_vault.is_writable
-        || maker_accounts.iter().any(|account| !account.is_writable)
-    {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    let market_data = market_account.try_borrow_data()?;
-    let mut market = hybrid_state::MarketHeader::decode_from(&market_data)
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    drop(market_data);
-    if !market.collateralized_active() {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let index_bytes = 0u32.to_le_bytes();
-    let (expected_bid, _) = Pubkey::find_program_address(
-        &[b"bid-page", market_account.key.as_ref(), &index_bytes],
-        program_id,
-    );
-    if *bid_account.key != expected_bid || market.bid_owner_tag() != owner_tag(owner_account.key) {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    let mut bids = load_active_bid_page(bid_account)?;
-    let mut owners = load_owner_page_box(owner_account)?;
-    if bids.len() != owners.len()
-        || bids.links() != owners.links()
-        || bids.len() != market.bid_count() as usize
-    {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let links = bids.links();
-    if links.page_index != 0 || links.prev_page.is_some() || links.next_page.is_some() {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    let mut custody = load_custody(program_id, market_account, custody_account)?;
-    if base_vault.key.to_bytes() != custody.base_vault
-        || quote_vault.key.to_bytes() != custody.quote_vault
-        || *token_program.key != TOKEN_PROGRAM_ID
-    {
-        return Err(ProgramError::InvalidAccountData);
-    }
-    let (expected_authority, authority_bump) = Pubkey::find_program_address(
-        &[b"vault-authority", market_account.key.as_ref()],
-        program_id,
-    );
-    if *vault_authority.key != expected_authority {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    let (taker_base_mint, taker_base_owner) = token_account_fields(taker_base)?;
-    let (taker_quote_mint, taker_quote_owner) = token_account_fields(taker_quote)?;
-    let (base_vault_mint, base_vault_owner) = token_account_fields(base_vault)?;
-    let (quote_vault_mint, quote_vault_owner) = token_account_fields(quote_vault)?;
-    if taker_base_owner != taker.key.to_bytes()
-        || taker_quote_owner != taker.key.to_bytes()
-        || taker_base_mint != custody.base_mint
-        || taker_quote_mint != custody.quote_mint
-        || base_vault_mint != custody.base_mint
-        || quote_vault_mint != custody.quote_mint
-        || base_vault_owner != expected_authority.to_bytes()
-        || quote_vault_owner != expected_authority.to_bytes()
-    {
-        return Err(ProgramError::InvalidAccountData);
-    }
-
-    let limits = bids
-        .as_slice()
-        .iter()
-        .copied()
-        .map(hybrid_state::BidEntry::as_limit_ask)
-        .collect::<Vec<_>>();
-    let plan = plan_active_sell(opcode, market.sqrt_price_x64, &limits, amount, limit)?;
-    let fills = &plan.fills[..usize::from(plan.fill_count)];
-
-    let mut maker_states = Vec::with_capacity(maker_accounts.len());
-    for account in maker_accounts {
-        if maker_accounts
+    let mut mapped = Vec::with_capacity(accounts.len());
+    mapped.extend(
+        [0, 1, 4, 5, 6, 7, 8, 9, 10, 2, 3]
             .iter()
-            .filter(|candidate| candidate.key == account.key)
-            .count()
-            != 1
-        {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        let data = account.try_borrow_data()?;
-        let state = hybrid_state::MakerBalance::decode_from(&data)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-        drop(data);
-        if state.market != market_account.key.to_bytes() {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        maker_states.push(load_maker_balance_for_owner(
-            program_id,
-            market_account,
-            account,
-            state.owner,
-        )?);
-    }
-    let mut settled_states = maker_states.clone();
-    for fill in fills {
-        let index = usize::from(fill.bid_index);
-        let owner = owners.owners[index];
-        let maker_index = maker_states
-            .iter()
-            .position(|balance| balance.owner == owner)
-            .ok_or(ProgramError::NotEnoughAccountKeys)?;
-        let original = bids.entries[index].base_qty;
-        let remaining = original
-            .checked_sub(fill.base_qty)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        settled_states[maker_index]
-            .settle_bid_fill(
-                original,
-                remaining,
-                bids.entries[index].price_x64,
-                fill.base_qty,
-                fill.quote_qty,
-            )
-            .map_err(|_| ProgramError::InsufficientFunds)?;
-    }
-
-    let removed = hybrid_state::apply_active_fills_to_bid_page(&mut bids, &mut owners, fills)
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    let next_count = market
-        .bid_count()
-        .checked_sub(u32::try_from(removed).map_err(|_| ProgramError::InvalidAccountData)?)
-        .ok_or(ProgramError::InvalidAccountData)?;
-    market.set_bid_count(next_count);
-
-    custody.total_base = custody
-        .total_base
-        .checked_add(plan.amount_in)
-        .ok_or(ProgramError::InvalidAccountData)?;
-    custody.total_quote = custody
-        .total_quote
-        .checked_sub(plan.amount_out)
-        .ok_or(ProgramError::InsufficientFunds)?;
-
-    transfer_tokens(
-        taker_base,
-        base_vault,
-        taker,
-        token_program,
-        plan.amount_in,
-        None,
-    )?;
-    let bump = [authority_bump];
-    let seeds: &[&[u8]] = &[b"vault-authority", market_account.key.as_ref(), &bump];
-    transfer_tokens(
-        quote_vault,
-        taker_quote,
-        vault_authority,
-        token_program,
-        plan.amount_out,
-        Some(seeds),
-    )?;
-
-    {
-        let mut data = market_account.try_borrow_mut_data()?;
-        market
-            .encode_into(&mut data)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-    }
-    {
-        let mut data = bid_account.try_borrow_mut_data()?;
-        bids.encode_into(&mut data)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-    }
-    {
-        let mut data = owner_account.try_borrow_mut_data()?;
-        owners
-            .encode_into(&mut data)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-    }
-    for (account, state) in maker_accounts.iter().zip(settled_states.iter()) {
-        store_maker_balance(account, state)?;
-    }
-    store_custody(custody_account, &custody)
+            .map(|&i| accounts[i].clone()),
+    );
+    mapped.extend(accounts[11..].iter().cloned());
+    let mut instruction = [0u8; 18];
+    instruction[0] = data[0] + 8;
+    instruction[1] = 1;
+    instruction[2..].copy_from_slice(&data[1..]);
+    multipage_sell::process_multipage_sell(program_id, &mapped, &instruction)
 }
 
 #[inline(never)]
@@ -2209,9 +1873,9 @@ fn process_init_passive_pool(
         return Err(ProgramError::IncorrectProgramId);
     }
     load_custody(program_id, market, custody)?;
-    let market_state = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
+    let mut market_state = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    if !market_state.collateralized_active() {
+    if !market.is_writable || !market_state.collateralized_active() {
         return Err(ProgramError::InvalidAccountData);
     }
     let (expected, bump) =
@@ -2235,6 +1899,10 @@ fn process_init_passive_pool(
     };
     state
         .encode_into(&mut pool_account.try_borrow_mut_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    market_state.flags |= MARKET_FLAG_AGGREGATE_GUARD;
+    market_state
+        .encode_into(&mut market.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)
 }
 
@@ -2405,9 +2073,6 @@ fn process_open_passive_position(
     }
     // Until per-position fee-growth accounting is on-chain, adding a new
     // claimant after trading would let it capture another LP's earned fees.
-    if pool.pool.accrued_base_fees != 0 || pool.pool.accrued_quote_fees != 0 {
-        return Err(ProgramError::InvalidAccountData);
-    }
     // Do not accept more LP claims when pre-existing custody is insolvent.
     // The deposits in this instruction are checked again after the CPIs.
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
@@ -2452,6 +2117,9 @@ fn process_open_passive_position(
     }
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
     let state = hybrid_state::passive::PositionAccount {
+        base_fees: 0,
+        quote_fees: 0,
+        revision: 1,
         bump,
         market: market.key.to_bytes(),
         nonce,
@@ -2470,7 +2138,7 @@ fn process_close_passive_position(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    if data.len() != 9 || data[0] != 21 || accounts.len() != 13 {
+    if !matches!(data.len(), 9 | 33) || data[0] != 21 || accounts.len() != 13 {
         return Err(ProgramError::InvalidInstructionData);
     }
     let market = &accounts[0];
@@ -2501,7 +2169,7 @@ fn process_close_passive_position(
     let mut pool =
         hybrid_state::passive::PoolAccount::decode_from(&pool_account.try_borrow_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-    let state =
+    let mut state =
         hybrid_state::passive::PositionAccount::decode_from(&position_account.try_borrow_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
 
@@ -2570,35 +2238,17 @@ fn process_close_passive_position(
 
     // Both active maker claims and passive LP claims must remain funded.
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
-    // A pool fee balance can be attributed only to the sole position.
-    // Multi-position pools retain principal-only withdrawals and cannot
-    // withdraw unassigned trading fees until per-position accounts migrate.
-    let sole = pool.pool.total_liquidity == state.position.liquidity
-        && pool.pool.base_reserve == state.position.base_principal
-        && pool.pool.quote_reserve == state.position.quote_principal;
-    let fee_base = if sole { pool.pool.accrued_base_fees } else { 0 };
-    let fee_quote = if sole {
-        pool.pool.accrued_quote_fees
+    let (revision, burn) = if data.len() == 33 {
+        (
+            u64::from_le_bytes(data[9..17].try_into().unwrap()),
+            u128::from_le_bytes(data[17..33].try_into().unwrap()),
+        )
     } else {
-        0
+        (state.revision, state.position.liquidity)
     };
-    let payout_base = state
-        .position
-        .base_principal
-        .checked_add(fee_base)
-        .ok_or(ProgramError::InvalidAccountData)?;
-    let payout_quote = state
-        .position
-        .quote_principal
-        .checked_add(fee_quote)
-        .ok_or(ProgramError::InvalidAccountData)?;
-    pool.pool
-        .withdraw(&state.position)
-        .map_err(|_| ProgramError::InsufficientFunds)?;
-    if sole {
-        pool.pool.accrued_base_fees = 0;
-        pool.pool.accrued_quote_fees = 0;
-    }
+    let (payout_base, payout_quote) = state
+        .redeem(&mut pool.pool, revision, burn)
+        .map_err(|_| ProgramError::InvalidInstructionData)?;
 
     let bump = [authority_bump];
     let seeds: &[&[u8]] = &[b"vault-authority", market.key.as_ref(), &bump];
@@ -2628,15 +2278,14 @@ fn process_close_passive_position(
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
     pool.encode_into(&mut pool_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    // A zeroed position cannot decode again. A second withdrawal fails.
+    if state.position.liquidity != 0 {
+        return state
+            .encode_into(&mut position_account.try_borrow_mut_data()?)
+            .map_err(|_| ProgramError::InvalidAccountData);
+    }
+    // Retain the rent-exempt, program-owned PDA as a permanent tombstone.
+    // The zeroed data cannot decode and create_program_pda cannot recreate
+    // an existing program-owned account, even with the same owner and nonce.
     position_account.try_borrow_mut_data()?.fill(0);
-    // Return the position account's rent to the LP.
-    let rent = position_account.lamports();
-    let new_lp_lamports = lp
-        .lamports()
-        .checked_add(rent)
-        .ok_or(ProgramError::InvalidAccountData)?;
-    **position_account.try_borrow_mut_lamports()? = 0;
-    **lp.try_borrow_mut_lamports()? = new_lp_lamports;
     Ok(())
 }

@@ -41,3 +41,5 @@ Instructions have **different account order requirements**. Never interchange an
 <Info>
 The authoritative source for complete account order, validation and evolving ABI is `program/src/lib.rs`, `program/src/multipage_buy.rs`, `program/src/multipage_sell.rs`, and `program/src/linked_maker.rs`.
 </Info>
+
+Passive swaps require an initial snapshot guard: expected sqrt price (`u128` LE), market next sequence (`u64` LE), then each supplied LP position revision (`u64` LE, in account order). Opcode 33/34 appends this to its 28-byte payload; opcode 35/36 appends it to its 21-byte payload. Opcode 37 appends a single initial guard after all 21-byte legs; subsequent legs execute atomically against the preceding leg's state. Unguarded payloads are rejected.

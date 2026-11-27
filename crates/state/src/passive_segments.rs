@@ -40,7 +40,7 @@ pub struct SegmentedPool {
 /// floor(amount * numerator / denominator) without a potentially overflowing
 /// amount * numerator intermediate. Checked quotient-and-remainder decomposition
 /// also supports liquidity denominators above u64::MAX.
-fn proportion(
+pub(crate) fn proportion(
     amount: u64,
     numerator: u128,
     denominator: u128,

@@ -1,13 +1,12 @@
 //! Authenticated, funded multi-position passive settlement, one price segment.
-//! Fee proceeds are compounded into each LP's current redeemable principal;
-//! pool accrued-fee counters must be zero in this accounting mode.
+//! LP fee claims remain segregated from current inventory.
 use crate::{
     check_passive_vault_coverage, load_custody, token_account_fields, transfer_checked,
     TOKEN_PROGRAM_ID,
 };
 use hybrid_engine::{
-    passive_exact_out::{buy_exact_out, sell_exact_out},
-    quote_base_in_for_quote_out, quote_quote_in_for_base_out, PassiveState,
+    passive_sell_to_target, passive_to_target, quote_base_in_for_quote_out,
+    quote_quote_in_for_base_out, PassiveState,
 };
 use hybrid_state::{
     passive::{PoolAccount, PositionAccount},
@@ -26,27 +25,55 @@ use solana_program::{
 /// Execute up to eight separately verified segments atomically. Any failed
 /// leg causes Solana to roll back all earlier CPI transfers and state writes.
 pub fn process_batch(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if data.len() < 2
-        || data[0] != 37
-        || data[1] == 0
-        || data[1] > 8
-        || data.len() != 2 + usize::from(data[1]) * 21
-    {
+    if data.len() < 2 || data[0] != 37 || data[1] == 0 || data[1] > 8 {
         return Err(ProgramError::InvalidInstructionData);
     }
-    for segment in data[2..].as_chunks::<21>().0 {
-        process(program_id, accounts, segment)?;
+    let count = usize::from(data[1]);
+    if data.len() < 23 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let positions = usize::from(data[22]);
+    if !(1..=8).contains(&positions) {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let guard_start = 2 + count * 21;
+    if data.len() != guard_start + 24 + 8 * positions {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let guard = &data[guard_start..];
+    for (i, segment) in data[2..guard_start].as_chunks::<21>().0.iter().enumerate() {
+        if usize::from(segment[20]) != positions {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        process_segment(
+            program_id,
+            accounts,
+            segment,
+            if i == 0 { Some(guard) } else { None },
+        )?;
     }
     Ok(())
 }
 
 pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    if data.len() < 21 || data.len() != 45 + 8 * usize::from(data[20]) {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    process_segment(program_id, accounts, &data[..21], Some(&data[21..]))
+}
+
+fn process_segment(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+    guard: Option<&[u8]>,
+) -> ProgramResult {
     if data.len() != 21
         || !matches!(data[0], 35 | 36)
         || data[1] > 1
         || data[20] == 0
         || data[20] > 8
-        || accounts.len() != 12 + usize::from(data[20])
+        || accounts.len() < 12 + usize::from(data[20])
     {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -82,7 +109,7 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     let quote_mint = &accounts[9];
     let authority = &accounts[10];
     let token_program = &accounts[11];
-    let positions = &accounts[12..];
+    let (positions, book) = accounts[12..].split_at(usize::from(data[20]));
     if !taker.is_signer
         || !market.is_writable
         || !pool_account.is_writable
@@ -101,12 +128,16 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     let custody = load_custody(program_id, market, custody_account)?;
     let mut header = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    if !header.collateralized_active()
-        || header.ask_count != 0
-        || header.bid_count() != 0
-        || header.boundary_count != 0
-    {
+    if !header.collateralized_active() || header.boundary_count != 0 {
         return Err(ProgramError::InvalidAccountData);
+    }
+    let active_limit = active_price_limit(program_id, market.key, &header, buy, book)?;
+    if let Some(snapshot) = guard {
+        if header.sqrt_price_x64 != u128::from_le_bytes(snapshot[..16].try_into().unwrap())
+            || header.next_sequence != u64::from_le_bytes(snapshot[16..24].try_into().unwrap())
+        {
+            return Err(ProgramError::InvalidInstructionData);
+        }
     }
     let mut pool = PoolAccount::decode_from(&pool_account.try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
@@ -123,8 +154,6 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         || *quote_vault.key != Pubkey::new_from_array(custody.quote_vault)
         || *base_mint.key != Pubkey::new_from_array(custody.base_mint)
         || *quote_mint.key != Pubkey::new_from_array(custody.quote_mint)
-        || pool.pool.accrued_base_fees != 0
-        || pool.pool.accrued_quote_fees != 0
     {
         return Err(ProgramError::InvalidSeeds);
     }
@@ -165,6 +194,13 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
         }
         let state = PositionAccount::decode_from(&account.try_borrow_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
+        if let Some(snapshot) = guard {
+            if state.revision
+                != u64::from_le_bytes(snapshot[24 + i * 8..32 + i * 8].try_into().unwrap())
+            {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+        }
         let owner = Pubkey::new_from_array(state.position.owner);
         let (expected, bump) = Pubkey::find_program_address(
             &[
@@ -186,8 +222,8 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
             },
             base: state.position.base_principal,
             quote: state.position.quote_principal,
-            base_fees: 0,
-            quote_fees: 0,
+            base_fees: state.base_fees,
+            quote_fees: state.quote_fees,
         });
         states.push(state);
     }
@@ -198,143 +234,175 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
     ledger
         .verify()
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    let segment_price = if buy {
-        header.sqrt_price_x64
-    } else {
-        header
-            .sqrt_price_x64
-            .checked_sub(1)
-            .ok_or(ProgramError::InvalidInstructionData)?
-    };
-    let mut active_liquidity = 0u128;
-    for claim in &ledger.positions {
-        if claim
-            .range
-            .active_at(segment_price)
-            .map_err(|_| ProgramError::InvalidAccountData)?
-        {
-            active_liquidity = active_liquidity
-                .checked_add(claim.range.liquidity)
-                .ok_or(ProgramError::InvalidAccountData)?;
-        }
-    }
-    if active_liquidity == 0 {
-        return Err(ProgramError::InsufficientFunds);
-    }
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
-    let state = PassiveState {
-        sqrt_price_x64: header.sqrt_price_x64,
-        liquidity: active_liquidity,
-    };
-    let (gross, fee, quote) = if exact_out {
-        let first = if buy {
-            buy_exact_out(state, output)
-        } else {
-            sell_exact_out(state, output)
+    let mut price = header.sqrt_price_x64;
+    let mut gross = 0u64;
+    let mut total_out = 0u64;
+    // A monotone route crosses at most two endpoints per supplied LP.
+    for _ in 0..=2 * positions.len() {
+        let remaining = input - gross;
+        if remaining == 0 || (exact_out && total_out >= output) {
+            break;
         }
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-        let gross = u64::try_from(
-            (u128::from(first.amount_in) * 10_000).div_ceil(10_000 - u128::from(bps)),
-        )
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-        if gross > input {
+        let segment_price = if buy {
+            price
+        } else {
+            price
+                .checked_sub(1)
+                .ok_or(ProgramError::InvalidInstructionData)?
+        };
+        let mut liquidity = 0u128;
+        if active_limit.is_some_and(|edge| if buy { price >= edge } else { price <= edge }) {
             return Err(ProgramError::InvalidInstructionData);
         }
-        let fee = u64::try_from((u128::from(gross) * u128::from(bps)).div_ceil(10_000))
-            .map_err(|_| ProgramError::InvalidInstructionData)?;
-        let net = gross
-            .checked_sub(fee)
-            .ok_or(ProgramError::InvalidInstructionData)?;
-        let q = if buy {
-            quote_quote_in_for_base_out(state, net)
-        } else {
-            quote_base_in_for_quote_out(state, net)
+        let mut boundary = active_limit;
+        for claim in &ledger.positions {
+            if claim
+                .range
+                .active_at(segment_price)
+                .map_err(|_| ProgramError::InvalidAccountData)?
+            {
+                liquidity = liquidity
+                    .checked_add(claim.range.liquidity)
+                    .ok_or(ProgramError::InvalidAccountData)?;
+            }
+            for edge in [
+                claim.range.lower_sqrt_price_x64,
+                claim.range.upper_sqrt_price_x64,
+            ] {
+                if buy && edge > price && boundary.is_none_or(|b| edge < b)
+                    || !buy && edge < price && boundary.is_none_or(|b| edge > b)
+                {
+                    boundary = Some(edge);
+                }
+            }
         }
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-        (gross, fee, q)
-    } else {
-        let fee = u64::try_from((u128::from(input) * u128::from(bps)).div_ceil(10_000))
-            .map_err(|_| ProgramError::InvalidInstructionData)?;
-        let net = input
-            .checked_sub(fee)
-            .ok_or(ProgramError::InvalidInstructionData)?;
-        let q = if buy {
-            quote_quote_in_for_base_out(state, net)
-        } else {
-            quote_base_in_for_quote_out(state, net)
+        if liquidity == 0 {
+            return Err(ProgramError::InsufficientFunds);
         }
-        .map_err(|_| ProgramError::InvalidInstructionData)?;
-        (input, fee, q)
-    };
-    if fee == 0 || quote.amount_out < output || quote.amount_out == 0 {
+        let state = PassiveState {
+            sqrt_price_x64: price,
+            liquidity,
+        };
+        let fee_for = |amount: u64| -> u64 {
+            ((u128::from(amount) * u128::from(bps)).div_ceil(10_000)) as u64
+        };
+        let gross_for = |net: u64| -> Result<u64, ProgramError> {
+            u64::try_from((u128::from(net) * 10_000).div_ceil(10_000 - u128::from(bps)))
+                .map_err(|_| ProgramError::InvalidInstructionData)
+        };
+        let net = remaining - fee_for(remaining);
+        let mut leg_gross = remaining;
+        // Compute the boundary cost before attempting an unbounded quote.
+        // If affordable, stop exactly there, not one rounded atom beyond.
+        let boundary_quote = boundary.and_then(|edge| {
+            if buy {
+                passive_to_target(state, edge).ok()
+            } else {
+                passive_sell_to_target(state, edge).ok()
+            }
+        });
+        let affordable_boundary = boundary_quote.filter(|q| q.amount_in <= net);
+        let at_boundary = affordable_boundary.is_some();
+        let mut quote = if let Some(target) = affordable_boundary {
+            leg_gross = gross_for(target.amount_in)?;
+            target
+        } else {
+            if buy {
+                quote_quote_in_for_base_out(state, net)
+            } else {
+                quote_base_in_for_quote_out(state, net)
+            }
+            .map_err(|_| ProgramError::InvalidInstructionData)?
+        };
+        if exact_out && quote.amount_out >= output - total_out {
+            let target = output - total_out;
+            // The current quote already proves an affordable upper bound.
+            // Do not search all of u64: that is unnecessarily expensive on SBF.
+            let mut low = 1u64;
+            let mut high = quote.amount_in;
+            while low < high {
+                let mid = low + (high - low) / 2;
+                let candidate = if buy {
+                    quote_quote_in_for_base_out(state, mid)
+                } else {
+                    quote_base_in_for_quote_out(state, mid)
+                }
+                .map_err(|_| ProgramError::InvalidInstructionData)?;
+                if candidate.amount_out >= target {
+                    high = mid;
+                } else {
+                    low = mid + 1;
+                }
+            }
+            // Reuse the original quote when the entire proven segment input
+            // is necessary (including a conservatively priced boundary).
+            if low < quote.amount_in {
+                let exact = if buy {
+                    quote_quote_in_for_base_out(state, low)
+                } else {
+                    quote_base_in_for_quote_out(state, low)
+                }
+                .map_err(|_| ProgramError::InvalidInstructionData)?;
+                if exact.amount_out < target
+                    || boundary.is_some_and(|edge| {
+                        if buy {
+                            exact.next_sqrt_price_x64 > edge
+                        } else {
+                            exact.next_sqrt_price_x64 < edge
+                        }
+                    })
+                {
+                    return Err(ProgramError::InvalidInstructionData);
+                }
+                leg_gross = gross_for(exact.amount_in)?;
+                quote = exact;
+            } else if !at_boundary {
+                leg_gross = gross_for(quote.amount_in)?;
+            }
+            // Integer input may buy more than the requested output. Keep
+            // the conservative input and price movement; the surplus stays
+            // in LP inventory rather than being transferred to the taker.
+            quote.amount_out = target;
+        }
+        if let Some(edge) = boundary {
+            if buy && quote.next_sqrt_price_x64 > edge || !buy && quote.next_sqrt_price_x64 < edge {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+        }
+        let fee = fee_for(leg_gross);
+        if leg_gross == 0 || fee == 0 || quote.amount_out == 0 || quote.next_sqrt_price_x64 == price
+        {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        let trade = if buy {
+            SegmentTrade::Buy {
+                quote_in: leg_gross,
+                base_out: quote.amount_out,
+                quote_fee: fee,
+            }
+        } else {
+            SegmentTrade::Sell {
+                base_in: leg_gross,
+                quote_out: quote.amount_out,
+                base_fee: fee,
+            }
+        };
+        ledger
+            .apply_segment(segment_price, trade)
+            .map_err(|_| ProgramError::InsufficientFunds)?;
+        gross = gross
+            .checked_add(leg_gross)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        total_out = total_out
+            .checked_add(quote.amount_out)
+            .ok_or(ProgramError::InvalidInstructionData)?;
+        price = quote.next_sqrt_price_x64;
+    }
+    if (exact_out && total_out != output) || (!exact_out && (total_out < output || gross != input))
+    {
         return Err(ProgramError::InvalidInstructionData);
     }
-    // No single segment may jump over a range boundary. Endpoint equality
-    // is permitted: the next segment reselects the appropriate active LPs.
-    let start_price = header.sqrt_price_x64;
-    let end_price = quote.next_sqrt_price_x64;
-    for claim in &ledger.positions {
-        let lo = claim.range.lower_sqrt_price_x64;
-        let hi = claim.range.upper_sqrt_price_x64;
-        let crossed = if buy {
-            end_price < start_price
-                || (start_price < lo && lo < end_price)
-                || (start_price < hi && hi < end_price)
-        } else {
-            end_price > start_price
-                || (end_price < lo && lo < start_price)
-                || (end_price < hi && hi < start_price)
-        };
-        if crossed {
-            return Err(ProgramError::InvalidInstructionData);
-        }
-    }
-    // Compound the fee into the per-position principal, so the legacy
-    // authenticated close transfers current LP inventory including fees.
-    let trade = if buy {
-        SegmentTrade::Buy {
-            quote_in: gross,
-            base_out: quote.amount_out,
-            quote_fee: fee,
-        }
-    } else {
-        SegmentTrade::Sell {
-            base_in: gross,
-            quote_out: quote.amount_out,
-            base_fee: fee,
-        }
-    };
-    ledger
-        .apply_segment(segment_price, trade)
-        .map_err(|_| ProgramError::InsufficientFunds)?;
-    for claim in &mut ledger.positions {
-        claim.base = claim
-            .base
-            .checked_add(claim.base_fees)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        claim.quote = claim
-            .quote
-            .checked_add(claim.quote_fees)
-            .ok_or(ProgramError::InvalidAccountData)?;
-        claim.base_fees = 0;
-        claim.quote_fees = 0;
-    }
-    ledger.pool.base_reserve = ledger
-        .pool
-        .base_reserve
-        .checked_add(ledger.pool.accrued_base_fees)
-        .ok_or(ProgramError::InvalidAccountData)?;
-    ledger.pool.quote_reserve = ledger
-        .pool
-        .quote_reserve
-        .checked_add(ledger.pool.accrued_quote_fees)
-        .ok_or(ProgramError::InvalidAccountData)?;
-    ledger.pool.accrued_base_fees = 0;
-    ledger.pool.accrued_quote_fees = 0;
-    ledger
-        .verify()
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-
     let bump = [authority_bump];
     let seeds: &[&[u8]] = &[b"vault-authority", market.key.as_ref(), &bump];
     if buy {
@@ -353,7 +421,7 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
             taker_base,
             authority,
             token_program,
-            (quote.amount_out, custody.base_decimals),
+            (total_out, custody.base_decimals),
             Some(seeds),
         )?;
     } else {
@@ -372,24 +440,292 @@ pub fn process(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> Pr
             taker_quote,
             authority,
             token_program,
-            (quote.amount_out, custody.quote_decimals),
+            (total_out, custody.quote_decimals),
             Some(seeds),
         )?;
     }
     for (i, account) in positions.iter().enumerate() {
         states[i].position.base_principal = ledger.positions[i].base;
         states[i].position.quote_principal = ledger.positions[i].quote;
+        states[i].base_fees = ledger.positions[i].base_fees;
+        states[i].quote_fees = ledger.positions[i].quote_fees;
+        states[i].revision = states[i]
+            .revision
+            .checked_add(1)
+            .ok_or(ProgramError::InvalidAccountData)?;
         states[i]
             .encode_into(&mut account.try_borrow_mut_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
     }
     pool.pool = ledger.pool;
     check_passive_vault_coverage(&custody, &pool.pool, base_vault, quote_vault)?;
-    header.sqrt_price_x64 = quote.next_sqrt_price_x64;
+    header.sqrt_price_x64 = price;
     header
         .encode_into(&mut market.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
     pool.encode_into(&mut pool_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
     Ok(())
+}
+
+/// Opcode 46: one atomic, same-direction route of up to eight legs.
+/// Each 21-byte leg uses the passive ABI or an active exact-in/out opcode
+/// (23..26), side, amount, limit, zero fee, and page count.
+/// Prefix: normal passive accounts and LP roster, canonical lazy reserve,
+/// then page/owner pairs and maker balances. Header: 46, legs, LPs, pages.
+/// The initial snapshot follows the legs; each leg observes live state.
+#[inline(never)]
+pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    if data.len() < 4
+        || !(1..=8).contains(&data[1])
+        || !(1..=8).contains(&data[2])
+        || !(1..=8).contains(&data[3])
+    {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let n = usize::from(data[2]);
+    let pages = usize::from(data[3]);
+    let end = 4 + usize::from(data[1]) * 21;
+    let fixed = 12 + n;
+    if data.len() != end + 40 + 8 * n || accounts.len() <= fixed + 2 * pages + 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let market = &accounts[0];
+    // Unlike the generic guard, hybrid execution requires both ledgers.
+    if accounts[2].owner != program_id || accounts[fixed].owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    let guard = [&accounts[2], &accounts[fixed], &accounts[6], &accounts[7]];
+    let book = &accounts[fixed + 1..fixed + 1 + 2 * pages];
+    let makers = &accounts[fixed + 1 + 2 * pages..];
+    let side = data[5];
+    if side > 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let buy = side == 0;
+    let limits = end + 24 + 8 * n;
+    let max_input = u64::from_le_bytes(data[limits..limits + 8].try_into().unwrap());
+    let min_output = u64::from_le_bytes(data[limits + 8..].try_into().unwrap());
+    if max_input == 0 || min_output == 0 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let (input_account, output_account) = if buy {
+        (&accounts[5], &accounts[4])
+    } else {
+        (&accounts[4], &accounts[5])
+    };
+    let input_before = crate::checked_token_amount(input_account)?;
+    let output_before = crate::checked_token_amount(output_account)?;
+    // The signed roster remains fixed, but successful active fills may
+    // compact the book and detach a trailing suffix during this instruction.
+    let mut live_pages = pages;
+    let snapshot = &data[end..];
+    let header = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    if header.sqrt_price_x64 != u128::from_le_bytes(snapshot[..16].try_into().unwrap())
+        || header.next_sequence != u64::from_le_bytes(snapshot[16..24].try_into().unwrap())
+    {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    for (i, account) in accounts[12..fixed].iter().enumerate() {
+        let state = PositionAccount::decode_from(&account.try_borrow_data()?)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        if state.revision
+            != u64::from_le_bytes(snapshot[24 + i * 8..32 + i * 8].try_into().unwrap())
+        {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+    }
+    let mut active = Vec::new();
+    let indices = if buy {
+        [0, 1, 3, 5, 4, 7, 6, 10, 11]
+    } else {
+        [0, 1, 3, 4, 5, 6, 7, 10, 11]
+    };
+    active.extend(indices.iter().map(|&i| accounts[i].clone()));
+    let mut passive = Vec::with_capacity(fixed + pages);
+    let mut buy_scratch = crate::multipage_buy::BuyScratch::default();
+    let mut sell_scratch = crate::multipage_sell::SellScratch::default();
+    active.reserve_exact(2 * pages + makers.len());
+    // Authenticate all fixed ledger and vault identities before any CPI.
+    // Subsequent legs cannot replace these accounts: active and passive
+    // handlers write only settlement state and use the canonical SPL
+    // transfer instructions. Re-read live liabilities after each leg.
+    crate::verify_aggregate_coverage(program_id, market, &accounts[1], guard)?;
+    for leg in data[4..end].as_chunks::<21>().0 {
+        let live_book = &book[..2 * live_pages];
+        if leg[1] != side {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        if matches!(leg[0], 35 | 36) && usize::from(leg[20]) == n {
+            passive.clear();
+            passive.extend(accounts[..fixed].iter().cloned());
+            passive.extend(live_book.iter().step_by(2).cloned());
+            process_segment(program_id, &passive, leg, None)?;
+        } else if matches!((buy, leg[0]), (true, 23 | 24) | (false, 25 | 26))
+            && leg[18..20] == [0, 0]
+            && usize::from(leg[20]) == pages
+        {
+            let h = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
+                .map_err(|_| ProgramError::InvalidAccountData)?;
+            // The bounded handler authenticates the full chain and checks
+            // the best order and every fill against this live price. Avoid
+            // decoding all the same pages a second time on the bump heap.
+            let edge = h.sqrt_price_x64;
+            let mut instruction = [0u8; 18];
+            instruction[0] = leg[0];
+            instruction[1] = live_pages as u8;
+            instruction[2..].copy_from_slice(&leg[2..18]);
+            active.truncate(9);
+            active.extend(live_book.iter().cloned());
+            active.extend(makers.iter().cloned());
+            // The existing active handler authenticates owners and all makers.
+            live_pages = if buy {
+                crate::multipage_buy::process_multipage_buy_bounded(
+                    program_id,
+                    &active,
+                    &instruction,
+                    Some(edge),
+                    &mut buy_scratch,
+                )?
+            } else {
+                crate::multipage_sell::process_multipage_sell_bounded(
+                    program_id,
+                    &active,
+                    &instruction,
+                    Some(edge),
+                    &mut sell_scratch,
+                )?
+            };
+            // Both handlers authenticate the complete live chain, validate
+            // compacted pages and sidecars, and write detached empty suffixes
+            // before returning the exact surviving count.
+        } else {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        verify_hybrid_live_coverage(&accounts[1], guard)?;
+    }
+    let spent = input_before
+        .checked_sub(crate::checked_token_amount(input_account)?)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    let received = crate::checked_token_amount(output_account)?
+        .checked_sub(output_before)
+        .ok_or(ProgramError::InvalidAccountData)?;
+    if spent == 0 || spent > max_input || received < min_output {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    Ok(())
+}
+
+/// Only called after the fixed accounts pass canonical aggregate
+/// authentication in this instruction. No route leg can change their
+/// identities, and the reserve is not writable by any leg handler.
+/// Decode all three liability classes afresh and enforce the combined
+/// floor before allowing another leg or returning success.
+#[inline(never)]
+fn verify_hybrid_live_coverage(
+    custody_account: &AccountInfo,
+    guard: [&AccountInfo; 4],
+) -> ProgramResult {
+    let custody = hybrid_state::CustodyState::decode_from(&custody_account.try_borrow_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    let pool = PoolAccount::decode_from(&guard[0].try_borrow_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    let reserve = hybrid_state::lazy_reserve::LazyReserve::decode(&guard[1].try_borrow_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    let (base, quote) = reserve
+        .vault_floor(custody.total_base, custody.total_quote)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    pool.pool
+        .verify_vault_coverage(
+            base,
+            quote,
+            crate::checked_token_amount(guard[2])?,
+            crate::checked_token_amount(guard[3])?,
+        )
+        .map_err(|_| ProgramError::InsufficientFunds)
+}
+
+/// Authenticate all pages of the relevant side, including cross-page priority.
+fn active_price_limit(
+    program_id: &Pubkey,
+    market: &Pubkey,
+    header: &hybrid_state::MarketHeader,
+    buy: bool,
+    book: &[AccountInfo],
+) -> Result<Option<u128>, ProgramError> {
+    let count = if buy {
+        header.ask_count as usize
+    } else {
+        header.bid_count() as usize
+    };
+    if book.is_empty() {
+        return if count == 0 {
+            Ok(None)
+        } else {
+            Err(ProgramError::InvalidAccountData)
+        };
+    }
+    if book.len() > 8 {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    let seed: &[u8] = if buy { b"ask-page" } else { b"bid-page" };
+    let mut total = 0usize;
+    let mut best = None;
+    let mut previous: Option<(u128, u64)> = None;
+    for (index, account) in book.iter().enumerate() {
+        let (expected, _) = Pubkey::find_program_address(
+            &[seed, market.as_ref(), &(index as u32).to_le_bytes()],
+            program_id,
+        );
+        if account.owner != program_id || *account.key != expected {
+            return Err(ProgramError::InvalidSeeds);
+        }
+        let (len, links, first, last) = if buy {
+            let page = crate::load_active_ask_page(account)?;
+            (
+                page.len(),
+                page.links(),
+                page.as_slice()
+                    .first()
+                    .map(|e| (e.price_x64, e.sequence, e.sqrt_price_x64)),
+                page.as_slice().last().map(|e| (e.price_x64, e.sequence)),
+            )
+        } else {
+            let page = crate::load_active_bid_page(account)?;
+            (
+                page.len(),
+                page.links(),
+                page.as_slice()
+                    .first()
+                    .map(|e| (e.price_x64, e.sequence, e.sqrt_price_x64)),
+                page.as_slice().last().map(|e| (e.price_x64, e.sequence)),
+            )
+        };
+        if links.page_index != index as u32
+            || links.prev_page != index.checked_sub(1).map(|i| i as u32)
+            || links.next_page != (index + 1 < book.len()).then_some((index + 1) as u32)
+        {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if let Some((price, sequence, sqrt)) = first {
+            if let Some((prior, seq)) = previous {
+                if (buy && prior > price)
+                    || (!buy && prior < price)
+                    || (prior == price && seq >= sequence)
+                {
+                    return Err(ProgramError::InvalidAccountData);
+                }
+            }
+            if best.is_none() {
+                best = Some(sqrt);
+            }
+            previous = last;
+        }
+        total += len;
+    }
+    if total != count {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    Ok(best)
 }

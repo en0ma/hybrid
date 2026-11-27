@@ -185,7 +185,7 @@ impl PassivePosition {
 
 /// Fixed-width account formats. No Rust memory layout is persisted.
 pub const PASSIVE_POOL_BYTES: usize = 112;
-pub const PASSIVE_POSITION_BYTES: usize = 160;
+pub const PASSIVE_POSITION_BYTES: usize = 176;
 pub const PASSIVE_POOL_MAGIC: [u8; 8] = *b"HYBPOOL1";
 pub const PASSIVE_POSITION_MAGIC: [u8; 8] = *b"HYBPOS01";
 
@@ -269,11 +269,100 @@ pub struct PositionAccount {
     pub market: [u8; 32],
     pub nonce: u64,
     pub position: PassivePosition,
+    pub base_fees: u64,
+    pub quote_fees: u64,
+    pub revision: u64,
 }
 
 impl PositionAccount {
+    /// Burn a checked fraction of the current claim. Final burn receives dust.
+    pub fn redeem(
+        &mut self,
+        pool: &mut PassivePool,
+        expected_revision: u64,
+        burn: u128,
+    ) -> Result<(u64, u64), PassiveAccountingError> {
+        use crate::passive_segments::proportion;
+        self.validate()?;
+        let liquidity = self.position.liquidity;
+        if expected_revision != self.revision || burn == 0 || burn > liquidity {
+            return Err(PassiveAccountingError::InvalidPosition);
+        }
+        let mut p = *self;
+        let mut next = *pool;
+        let base = proportion(p.position.base_principal, burn, liquidity)?;
+        let quote = proportion(p.position.quote_principal, burn, liquidity)?;
+        let bf = proportion(p.base_fees, burn, liquidity)?;
+        let qf = proportion(p.quote_fees, burn, liquidity)?;
+        let payout = (
+            base.checked_add(bf)
+                .ok_or(PassiveAccountingError::Overflow)?,
+            quote
+                .checked_add(qf)
+                .ok_or(PassiveAccountingError::Overflow)?,
+        );
+        if payout == (0, 0) && burn != liquidity {
+            return Err(PassiveAccountingError::ZeroAmount);
+        }
+        next.base_reserve = next
+            .base_reserve
+            .checked_sub(base)
+            .ok_or(PassiveAccountingError::InsufficientReserves)?;
+        next.quote_reserve = next
+            .quote_reserve
+            .checked_sub(quote)
+            .ok_or(PassiveAccountingError::InsufficientReserves)?;
+        next.accrued_base_fees = next
+            .accrued_base_fees
+            .checked_sub(bf)
+            .ok_or(PassiveAccountingError::InsufficientReserves)?;
+        next.accrued_quote_fees = next
+            .accrued_quote_fees
+            .checked_sub(qf)
+            .ok_or(PassiveAccountingError::InsufficientReserves)?;
+        next.total_liquidity = next
+            .total_liquidity
+            .checked_sub(burn)
+            .ok_or(PassiveAccountingError::InsufficientLiquidity)?;
+        p.position.base_principal -= base;
+        p.position.quote_principal -= quote;
+        p.position.liquidity -= burn;
+        p.base_fees -= bf;
+        p.quote_fees -= qf;
+        p.revision = p
+            .revision
+            .checked_add(1)
+            .ok_or(PassiveAccountingError::Overflow)?;
+        if burn != liquidity {
+            p.validate()?;
+        }
+        *pool = next;
+        *self = p;
+        Ok(payout)
+    }
+
+    pub fn validate(&self) -> Result<(), PassiveAccountingError> {
+        let p = &self.position;
+        if self.market == [0; 32]
+            || p.owner == [0; 32]
+            || p.lower_sqrt_price_x64 == 0
+            || p.lower_sqrt_price_x64 >= p.upper_sqrt_price_x64
+            || p.liquidity == 0
+            || self.revision == 0
+        {
+            return Err(PassiveAccountingError::InvalidPosition);
+        }
+        p.base_principal
+            .checked_add(self.base_fees)
+            .ok_or(PassiveAccountingError::Overflow)?;
+        p.quote_principal
+            .checked_add(self.quote_fees)
+            .ok_or(PassiveAccountingError::Overflow)?;
+        Ok(())
+    }
+
     pub fn encode_into(&self, out: &mut [u8]) -> Result<(), PassiveAccountingError> {
-        self.position.validate()?;
+        self.validate()?;
         if out.len() != PASSIVE_POSITION_BYTES || self.market == [0; 32] {
             return Err(PassiveAccountingError::InvalidPosition);
         }
@@ -289,6 +378,9 @@ impl PositionAccount {
         out[120..136].copy_from_slice(&self.position.liquidity.to_le_bytes());
         out[136..144].copy_from_slice(&self.position.base_principal.to_le_bytes());
         out[144..152].copy_from_slice(&self.position.quote_principal.to_le_bytes());
+        out[152..160].copy_from_slice(&self.base_fees.to_le_bytes());
+        out[160..168].copy_from_slice(&self.quote_fees.to_le_bytes());
+        out[168..176].copy_from_slice(&self.revision.to_le_bytes());
         Ok(())
     }
 
@@ -297,7 +389,6 @@ impl PositionAccount {
             || data[..8] != PASSIVE_POSITION_MAGIC
             || data[8] != 1
             || data[10..16].iter().any(|byte| *byte != 0)
-            || data[152..].iter().any(|byte| *byte != 0)
         {
             return Err(PassiveAccountingError::InvalidPosition);
         }
@@ -320,6 +411,9 @@ impl PositionAccount {
             bump: data[9],
             market: bytes32(16..48)?,
             nonce: u64::from_le_bytes(bytes8(80..88)?),
+            base_fees: u64::from_le_bytes(bytes8(152..160)?),
+            quote_fees: u64::from_le_bytes(bytes8(160..168)?),
+            revision: u64::from_le_bytes(bytes8(168..176)?),
             position: PassivePosition {
                 owner: bytes32(48..80)?,
                 lower_sqrt_price_x64: u128::from_le_bytes(bytes16(88..104)?),
@@ -332,7 +426,7 @@ impl PositionAccount {
         if state.market == [0; 32] {
             return Err(PassiveAccountingError::InvalidPosition);
         }
-        state.position.validate()?;
+        state.validate()?;
         Ok(state)
     }
 }
@@ -394,6 +488,9 @@ mod tests {
         assert!(PoolAccount::decode_from(&pool_bytes).is_err());
 
         let position = PositionAccount {
+            base_fees: 0,
+            quote_fees: 0,
+            revision: 1,
             bump: 4,
             market: [1; 32],
             nonce: 42,
@@ -402,9 +499,9 @@ mod tests {
         let mut position_bytes = [0; PASSIVE_POSITION_BYTES];
         position.encode_into(&mut position_bytes).unwrap();
         assert_eq!(PositionAccount::decode_from(&position_bytes), Ok(position));
-        position_bytes[152] = 1;
+        position_bytes[10] = 1;
         assert!(PositionAccount::decode_from(&position_bytes).is_err());
-        position_bytes[152] = 0;
+        position_bytes[10] = 0;
         position_bytes[88..104].copy_from_slice(&30u128.to_le_bytes());
         assert!(PositionAccount::decode_from(&position_bytes).is_err());
     }

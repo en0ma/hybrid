@@ -75,6 +75,7 @@ test("passive position encodes all 73 bytes and authenticated close", () => {
   const a = accounts(["market","custody","pool","position","owner","baseSource",
     "quoteSource","baseVault","quoteVault","baseMint","quoteMint","tokenProgram",
     "systemProgram","payer","baseDestination","quoteDestination","vaultAuthority"]);
+  a.aggregateGuard = {pool:a.pool,reserve:"lazy-reserve",baseVault:a.baseVault,quoteVault:a.quoteVault};
   const open = openPassivePosition(id,a, {
     nonce: 9n, lowerSqrtPriceX64: 1n << 63n, upperSqrtPriceX64: 1n << 65n,
     liquidity: 100n, baseDeposit: 12n, quoteDeposit: 13n,
@@ -93,6 +94,17 @@ test("passive position encodes all 73 bytes and authenticated close", () => {
   assert.equal(close.keys[4].isWritable,true);
   assert.equal(close.keys[12].pubkey,"test-tokenProgram");
   assert.equal(initPassivePool(id,a).data[0],19);
+  assert.equal(initPassivePool(id,a).keys[0].isWritable,true);
+  const tail=Object.values(a.aggregateGuard);
+  assert.deepEqual(open.keys.slice(-4).map(k=>k.pubkey),tail);
+  assert.deepEqual(close.keys.slice(-4).map(k=>k.pubkey),tail);
+  assert.ok(close.keys.slice(-4).every(k=>!k.isWritable&&!k.isSigner));
+  const partial=closePassivePosition(id,a,{nonce:9n,expectedRevision:2n,burnLiquidity:3n});
+  assert.equal(partial.data.length,33);
+  assert.equal(partial.data.readBigUInt64LE(9),2n);
+  assert.equal(partial.data.readBigUInt64LE(17),3n);
+  assert.throws(()=>closePassivePosition(id,{...a,aggregateGuard:undefined},{nonce:9n}),/guard required/);
+  assert.throws(()=>closePassivePosition(id,a,{nonce:9n,expectedRevision:2n}),/requires revision/);
   assert.equal(initMakerBalance(id,{...a, maker:"maker", makerBalance:"balance",payer:"payer"}).data[0],12);
 });
 
@@ -148,4 +160,23 @@ test("opcode 43 refuses incomplete, aliased or out-of-order BID page accounts",(
   assert.throws(()=>preflightMultilevelBid(id,{market:"market",pages:valid},{
     requestedBase:1n,minQuoteOut:(1n<<64n),
   }),/outside u64/);
+});
+
+test("aggregate guard preserves inner account order and fails closed on missing or mismatched guard",()=>{
+  const guard={pool:"pool",reserve:"reserve",baseVault:trade.baseVault,quoteVault:trade.quoteVault};
+  const request={side:"buy",mode:"exact-in",amount:5n,limit:7n};
+  const legacy=swap(id,trade,request);
+  const ix=swap(id,{...trade,marketFlags:3,aggregateGuard:guard},request);
+  assert.deepEqual(ix.keys.slice(0,-4),legacy.keys);
+  assert.deepEqual(ix.keys.slice(-4).map(k=>k.pubkey),Object.values(guard));
+  assert.throws(()=>swap(id,{...trade,marketFlags:3},request),/guard required/);
+  assert.throws(()=>swap(id,{...trade,marketFlags:1,aggregateGuard:guard},request),/unguarded/);
+  assert.throws(()=>swap(id,{...trade,aggregateGuard:{...guard,baseVault:"forged"}},request),/mismatch/);
+  const a={...accounts(["market","custody","makerBalance","maker","source","destination","mint","vaultAuthority","tokenProgram"]),
+    vault:guard.quoteVault,marketFlags:3,aggregateGuard:guard};
+  for(const direction of ["deposit","withdraw"]){
+    const transfer=transferMakerCollateral(id,a,{direction,asset:"quote",amount:9n});
+    assert.deepEqual(transfer.keys.slice(-4).map(k=>k.pubkey),Object.values(guard));
+  }
+  assert.throws(()=>transferMakerCollateral(id,{...a,vault:"wrong"},{direction:"deposit",asset:"quote",amount:9n}),/vault mismatch/);
 });

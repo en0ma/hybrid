@@ -2,6 +2,16 @@ use super::*;
 
 const MULTIPAGE_BUY_FIXED: usize = 9;
 
+#[derive(Default)]
+pub(super) struct BuyScratch {
+    pages: Vec<hybrid_state::AskPage>,
+    sidecars: Vec<hybrid_state::AskOwnerPage>,
+    flat: Vec<hybrid_engine::LimitAsk>,
+    owners_flat: Vec<[u8; 32]>,
+    entries: Vec<(hybrid_state::AskEntry, [u8; 32])>,
+    makers: Vec<hybrid_state::MakerBalance>,
+}
+
 /// Opcodes 23 and 24: bounded linked-book exact-in and exact-out buys.
 /// ABI: [opcode, page_count, amount:u64 LE, limit:u64 LE].
 /// Accounts: market, custody, taker, taker-quote, taker-base,
@@ -13,6 +23,18 @@ pub(super) fn process_multipage_buy(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
+    process_multipage_buy_bounded(program_id, accounts, data, None, &mut BuyScratch::default())
+        .map(|_| ())
+}
+
+#[inline(never)]
+pub(super) fn process_multipage_buy_bounded(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+    tick: Option<u128>,
+    scratch: &mut BuyScratch,
+) -> Result<usize, ProgramError> {
     if data.len() != 18 || (data[0] != 23 && data[0] != 24) {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -72,10 +94,27 @@ pub(super) fn process_multipage_buy(
     if !market.collateralized_active() {
         return Err(ProgramError::InvalidAccountData);
     }
-    let mut pages = Vec::with_capacity(count);
-    let mut sidecars = Vec::with_capacity(count);
-    let mut flat = Vec::new();
-    let mut owners_flat = Vec::new();
+    let BuyScratch {
+        pages,
+        sidecars,
+        flat,
+        owners_flat,
+        entries,
+        makers,
+    } = scratch;
+    pages.clear();
+    sidecars.clear();
+    flat.clear();
+    owners_flat.clear();
+    makers.clear();
+    resize_scratch_pages(pages, sidecars, count);
+    let order_count = market.ask_count as usize;
+    if order_count > count * hybrid_state::ASKS_PER_PAGE {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    flat.reserve_exact(order_count);
+    owners_flat.reserve_exact(order_count);
+    makers.reserve_exact(maker_accounts.len());
     for index in 0..count {
         let page_account = &accounts[MULTIPAGE_BUY_FIXED + 2 * index];
         let owner_account = &accounts[MULTIPAGE_BUY_FIXED + 2 * index + 1];
@@ -102,10 +141,14 @@ pub(super) fn process_multipage_buy(
         if *page_account.key != expected_page || !valid_owner {
             return Err(ProgramError::InvalidSeeds);
         }
-        let page = load_active_ask_page(page_account)?;
-        let owner = load_owner_page_box(owner_account)?;
+        let page = &mut pages[index];
+        let owner = &mut sidecars[index];
+        hybrid_state::AskPage::decode_into(&page_account.try_borrow_data()?, page)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        hybrid_state::AskOwnerPage::decode_into(&owner_account.try_borrow_data()?, owner)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
         owner
-            .validate_parallel(&page)
+            .validate_parallel(page)
             .map_err(|_| ProgramError::InvalidAccountData)?;
         flat.extend(
             page.as_slice()
@@ -114,10 +157,8 @@ pub(super) fn process_multipage_buy(
                 .map(hybrid_state::AskEntry::as_limit_ask),
         );
         owners_flat.extend(owner.as_slice().iter().copied());
-        pages.push(*page);
-        sidecars.push(*owner);
     }
-    hybrid_state::validate_ask_chain(&pages).map_err(|_| ProgramError::InvalidAccountData)?;
+    hybrid_state::validate_ask_chain(pages).map_err(|_| ProgramError::InvalidAccountData)?;
     if flat.len() != market.ask_count as usize {
         return Err(ProgramError::InvalidAccountData);
     }
@@ -147,38 +188,55 @@ pub(super) fn process_multipage_buy(
     {
         return Err(ProgramError::InvalidAccountData);
     }
+    // The cached ask tick is the canonical floor root. Use the upper
+    // edge only for eligibility, restrict fills to this tick, and settle
+    // at the original exact order price (never the synthetic spot price).
+    let (plan_tick, eligible) = if let Some(tick) = tick {
+        if flat
+            .first()
+            .is_none_or(|entry| entry.sqrt_price_x64 != tick)
+        {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        let end = flat.partition_point(|entry| entry.sqrt_price_x64 == tick);
+        (
+            tick.checked_add(1)
+                .ok_or(ProgramError::InvalidInstructionData)?,
+            &flat[..end],
+        )
+    } else {
+        (market.sqrt_price_x64, flat.as_slice())
+    };
     let plan = plan_active_buy(
         if data[0] == 23 { 15 } else { 16 },
-        market.sqrt_price_x64,
-        &flat,
+        plan_tick,
+        eligible,
         amount,
         limit,
     )?;
     let fills = &plan.fills[..usize::from(plan.fill_count)];
-    let mut maker_states = Vec::with_capacity(maker_accounts.len());
     for account in maker_accounts {
         let state = hybrid_state::MakerBalance::decode_from(&account.try_borrow_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        maker_states.push(load_maker_balance_for_owner(
+        makers.push(load_maker_balance_for_owner(
             program_id,
             market_account,
             account,
             state.owner,
         )?);
     }
-    let mut settled = maker_states.clone();
     for fill in fills {
         let owner = owners_flat[usize::from(fill.ask_index)];
-        let maker_index = maker_states
+        let maker_index = makers
             .iter()
             .position(|state| state.owner == owner)
             .ok_or(ProgramError::NotEnoughAccountKeys)?;
-        settled[maker_index]
+        makers[maker_index]
             .settle_ask(fill.base_qty, fill.quote_qty)
             .map_err(|_| ProgramError::InsufficientFunds)?;
     }
-    let (next_pages, next_sidecars, removed) =
-        hybrid_state::multipage_ask::apply_linked_ask_fills(&pages, &sidecars, fills)
+    let removed =
+        hybrid_state::multipage_ask::compact_linked_ask_fills(pages, sidecars, fills, entries)
             .map_err(|_| ProgramError::InvalidAccountData)?;
     market.ask_count = market
         .ask_count
@@ -213,11 +271,23 @@ pub(super) fn process_multipage_buy(
     market
         .encode_into(&mut market_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    store_ask_page_updates(accounts, count, &next_pages, &next_sidecars)?;
-    for (account, state) in maker_accounts.iter().zip(settled.iter()) {
+    store_ask_page_updates(accounts, count, pages, sidecars)?;
+    for (account, state) in maker_accounts.iter().zip(makers.iter()) {
         store_maker_balance(account, state)?;
     }
-    store_custody(custody_account, &custody)
+    store_custody(custody_account, &custody)?;
+    Ok(pages.len())
+}
+
+// Keep large initialization temporaries in a separate SBF stack frame.
+#[inline(never)]
+fn resize_scratch_pages(
+    pages: &mut Vec<hybrid_state::AskPage>,
+    sidecars: &mut Vec<hybrid_state::AskOwnerPage>,
+    count: usize,
+) {
+    pages.resize_with(count, hybrid_state::AskPage::default);
+    sidecars.resize_with(count, hybrid_state::AskOwnerPage::default);
 }
 
 /// Isolate large page/owner-page encode temporaries from the settlement

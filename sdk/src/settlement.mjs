@@ -1,5 +1,5 @@
 // Bounded settlement ABI descriptors. No signing or submission.
-import {unsigned} from "./instructions.mjs";
+import {unsigned,appendAggregateGuard} from "./instructions.mjs";
 import {encodeAtomicFrozenMakerClaim,hashPubkeyMakerClaim,hashPubkeyClaimNode,
   hashPubkeyFrozenEpochV1,hashPubkeyFrozenBidEpochV1} from "./frozen-pubkey-claim.mjs";
 
@@ -49,8 +49,8 @@ export function buildSettlementExecution(programId,a,{side,baseFill,quoteLimit})
     // Single-page ABI permits payer and taker to coincide.
     distinct(keys.filter((_,i)=>i!==keys.length-balances.length-2||!eq(a.payer,a.taker)));
   }
-  return {programId,keys,data:Buffer.concat([Buffer.from([multi?(bid?44:45):(bid?42:41)]),
-    le64(positive(baseFill,"baseFill")),le64(positive(quoteLimit,"quoteLimit"))])};
+  return appendAggregateGuard({programId,keys,data:Buffer.concat([Buffer.from([multi?(bid?44:45):(bid?42:41)]),
+    le64(positive(baseFill,"baseFill")),le64(positive(quoteLimit,"quoteLimit"))])},a);
 }
 
 function fixed(data,size,magic){
@@ -141,7 +141,9 @@ export function buildSettlementClaim(programId,a,epoch,proof){
     meta(a.custody),meta(a.reserve,true),meta(a.vault,true),meta(a.destination,true),
     meta(a.mint),meta(a.vaultAuthority),meta(a.tokenProgram)];
   distinct(keys);
-  return {programId,keys,data:encodeAtomicFrozenMakerClaim(proof)};
+  if(a.aggregateGuard&&(id(a.aggregateGuard.baseVault)!==epoch.baseVaultHex||
+    id(a.aggregateGuard.quoteVault)!==epoch.quoteVaultHex))throw new Error("Claim guard vault mismatch");
+  return appendAggregateGuard({programId,keys,data:encodeAtomicFrozenMakerClaim(proof)},a);
 }
 export function reserveVaultFloor(reserve,base,quote){
   const b=unsigned(base,64,"base")+reserve.makerBaseCredit+reserve.baseFees;

@@ -9,6 +9,7 @@ import {marketBytes,detachedBookPage,classicMintBytes,classicTokenBytes,surfpool
 import {createSolanaSettlementAdapter} from "../../sdk/src/settlement-solana.mjs";
 import {authenticateSettlementCollateral,loadSettlementEpochs,decodeSettlementCustody} from "../../sdk/src/settlement-rpc.mjs";
 import {prepareSettlement} from "../../sdk/src/settlement-plan.mjs";
+import {initPassivePool,openPassivePosition,closePassivePosition,transferMakerCollateral} from "../../sdk/src/instructions.mjs";
 import {canonicalSqrtPriceX64} from "../../sdk/src/quote-orders.mjs";
 import {buildSettlementClaim,recoverEpochProofs,decodeLazyReserve,reserveVaultFloor} from "../../sdk/src/settlement.mjs";
 import {decodeMakerBalance} from "../../sdk/src/maker-balance.mjs";
@@ -240,11 +241,38 @@ async function runShared(rpc,url,genesis,dir,report){
  const init={programId:program,keys:[meta(f.market.publicKey,false,true),meta(f.custody),meta(f.reserve,true),
   meta(f.payer.publicKey,true,true),meta(SystemProgram.programId)],data:Buffer.concat([Buffer.from([39]),bytes(genesis)])};
  await signed(rpc,init,f.payer,[f.market],result);
+ const market=f.market.publicKey,owner=f.taker.publicKey;
+ const [pool]=PublicKey.findProgramAddressSync([Buffer.from("passive-pool"),bytes(market)],program);
+ const nonce=77n;
+ const [position]=PublicKey.findProgramAddressSync([Buffer.from("passive-position"),bytes(market),bytes(owner),u64(nonce)],program);
+ const aggregateGuard={pool,reserve:f.reserve,baseVault:f.baseVault,quoteVault:f.quoteVault};
+ const guarded={market,marketFlags:3,aggregateGuard,custody:f.custody,pool,position,owner,
+  baseVault:f.baseVault,quoteVault:f.quoteVault,baseMint:f.baseMint,quoteMint:f.quoteMint,
+  baseSource:f.takerBase,quoteSource:f.takerQuote,baseDestination:f.takerBase,quoteDestination:f.takerQuote,
+  vaultAuthority:f.authority,tokenProgram:token,systemProgram:SystemProgram.programId};
+ await signed(rpc,initPassivePool(program,{market,custody:f.custody,pool,
+  payer:f.payer.publicKey,systemProgram:SystemProgram.programId}),f.payer,[],result);
+ await signed(rpc,openPassivePosition(program,guarded,{nonce,lowerSqrtPriceX64:Q/2n,
+  upperSqrtPriceX64:Q*2n,liquidity:100n,baseDeposit:100n,quoteDeposit:100n}),f.payer,[f.taker],result);
+ const lpBefore=await rpc.getAccountInfo(position,"confirmed");
+ fail(lpBefore?.data.length===176,"LP position layout mismatch");
+ // Exercise the maker collateral descriptors on the now-guarded market.
+ const maker=f.makers[0],source=key().publicKey;
+ await seed(rpc,url,source,token,classicTokenBytes(f.baseMint,maker.publicKey,25n));
+ const collateral={market,marketFlags:3,aggregateGuard,custody:f.custody,makerBalance:f.balances[0],
+  maker:maker.publicKey,source,destination:source,vault:f.baseVault,mint:f.baseMint,
+  vaultAuthority:f.authority,tokenProgram:token};
+ for(const direction of ["deposit","withdraw"])
+  await signed(rpc,transferMakerCollateral(program,collateral,{direction,asset:"base",amount:25n}),
+   f.payer,[maker],result);
+ fail((await rpc.getAccountInfo(source,"confirmed")).data.readBigUInt64LE(64)===25n,
+  "Guarded maker collateral round-trip failed");
  const plans=[];
  for(const [i,side] of ["ask","bid","ask"].entries()){
   const snapshot=await authenticateSettlementCollateral(rpc,{adapter,programId:program,market:f.market.publicKey,
    side,headOwnerPage:side==="ask"?f.head:f.bidHead,genesisHex:hex(genesis),taker:f.taker.publicKey,takerBase:f.takerBase,takerQuote:f.takerQuote});
-  fail(snapshot.reserveState.nextEpochId===BigInt(i),"Unexpected shared epoch ID");
+  fail(snapshot.reserveState.nextEpochId===BigInt(i)&&snapshot.header.aggregateGuardEnabled&&
+   snapshot.aggregateGuard.pool.equals(pool),"Unexpected shared epoch or missing aggregate guard");
   const prepared=prepareSettlement(program,snapshot,{payer:f.payer.publicKey,systemProgram:SystemProgram.programId},
    {baseFill:150n,quoteLimit:side==="ask"?151n:150n});
   await writeFile(join(dir,"shared-"+i+"-roster.json"),json(prepared.plan),{mode:0o600,flag:"wx"});
@@ -268,18 +296,26 @@ async function runShared(rpc,url,genesis,dir,report){
    fail(j>=0,"Shared maker missing");
    const accounts={market:f.market.publicKey,epoch:epoch.address,makerBalance:balances[j],maker:makers[j].publicKey,
     custody:f.custody,reserve:f.reserve,vault:bid?f.baseVault:f.quoteVault,destination:destinations[j],
-    mint:bid?f.baseMint:f.quoteMint,vaultAuthority:f.authority,tokenProgram:token};
+    mint:bid?f.baseMint:f.quoteMint,vaultAuthority:f.authority,tokenProgram:token,
+    marketFlags:3,aggregateGuard};
    await signed(rpc,buildSettlementClaim(program,accounts,epoch,proof),f.payer,[makers[j]],result);
   }
  }
  const final=await load(),r=final.reserve;
  fail(final.epochs.every(e=>e.claimedCount===e.makerCount&&e.remaining.every(n=>n===0n)),"Shared claims incomplete");
  fail([r.makerBaseCredit,r.makerQuoteCredit,r.makerBaseDebit,r.makerQuoteDebit].every(n=>n===0n),"Shared liabilities remain");
+ // Redeem in two guarded, revision-bound burns after all active epochs settle.
+ await signed(rpc,closePassivePosition(program,guarded,{nonce,expectedRevision:1n,burnLiquidity:40n}),
+  f.payer,[f.taker],result);
+ await signed(rpc,closePassivePosition(program,guarded,{nonce,expectedRevision:2n,burnLiquidity:60n}),
+  f.payer,[f.taker],result);
+ const poolAfter=await rpc.getAccountInfo(pool,"confirmed");
+ fail(poolAfter?.data.subarray(48,96).every(x=>x===0),"LP inventory not fully redeemed");
  const [c,b,q]=await rpc.getMultipleAccountsInfo([f.custody,f.baseVault,f.quoteVault],"confirmed");
  const custody=decodeSettlementCustody(c.data),floor=reserveVaultFloor(r,custody.totalBase,custody.totalQuote);
  fail(custody.totalBase===0n&&custody.totalQuote===150n&&r.baseFees===1n&&r.quoteFees===2n&&
   b.data.readBigUInt64LE(64)===floor.base&&q.data.readBigUInt64LE(64)===floor.quote,"Shared final reconciliation failed");
- Object.assign(result,{complete:true,finalReserve:r,finalFloor:floor});
+ Object.assign(result,{complete:true,aggregateGuardVerified:true,finalReserve:r,finalFloor:floor});
 }
 
 async function main(){
