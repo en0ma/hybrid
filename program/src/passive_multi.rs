@@ -512,8 +512,9 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
     };
     let input_before = crate::checked_token_amount(input_account)?;
     let output_before = crate::checked_token_amount(output_account)?;
-    let mut passive = accounts[..fixed].to_vec();
-    passive.extend(book.iter().step_by(2).cloned());
+    // The signed roster remains fixed, but successful active fills may
+    // compact the book and detach a trailing suffix during this instruction.
+    let mut live_pages = pages;
     let snapshot = &data[end..];
     let header = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
@@ -538,9 +539,11 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
         [0, 1, 3, 4, 5, 6, 7, 10, 11]
     };
     active.extend(indices.iter().map(|&i| accounts[i].clone()));
-    active.extend(book.iter().cloned());
-    active.extend(makers.iter().cloned());
+    let active_prefix = active;
     for leg in data[4..end].as_chunks::<21>().0 {
+        let live_book = &book[..2 * live_pages];
+        let mut passive = accounts[..fixed].to_vec();
+        passive.extend(live_book.iter().step_by(2).cloned());
         if leg[1] != side {
             return Err(ProgramError::InvalidInstructionData);
         }
@@ -562,8 +565,11 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
             }
             let mut instruction = [0u8; 18];
             instruction[0] = leg[0];
-            instruction[1] = data[3];
+            instruction[1] = live_pages as u8;
             instruction[2..].copy_from_slice(&leg[2..18]);
+            let mut active = active_prefix.clone();
+            active.extend(live_book.iter().cloned());
+            active.extend(makers.iter().cloned());
             // The existing active handler authenticates owners and all makers.
             if buy {
                 crate::multipage_buy::process_multipage_buy_bounded(
@@ -580,6 +586,10 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
                     Some(edge),
                 )?;
             }
+            // The bounded active handler authenticated every live pair
+            // before mutating it. Only accept a canonical empty detached
+            // suffix produced by its compaction; never skip a live page.
+            live_pages = surviving_hybrid_pages(&book[..2 * live_pages], buy)?;
         } else {
             return Err(ProgramError::InvalidInstructionData);
         }
@@ -595,6 +605,48 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
         return Err(ProgramError::InvalidInstructionData);
     }
     Ok(())
+}
+
+/// Determine the surviving prefix after a successful, authenticated active
+/// settlement. All pairs were authenticated by the bounded handler; both
+/// data and owner accounts must agree on links and detached emptiness.
+#[inline(never)]
+fn surviving_hybrid_pages(book: &[AccountInfo], buy: bool) -> Result<usize, ProgramError> {
+    let mut live = 0usize;
+    let mut detached = false;
+    let count = book.len() / 2;
+    for (index, pair) in book.chunks_exact(2).enumerate() {
+        let (len, links) = if buy {
+            let page = crate::load_active_ask_page(&pair[0])?;
+            (page.len(), page.links())
+        } else {
+            let page = crate::load_active_bid_page(&pair[0])?;
+            (page.len(), page.links())
+        };
+        let owners = crate::load_owner_page_box(&pair[1])?;
+        if links != owners.links() || len != owners.len() || links.page_index != index as u32 {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if detached {
+            if len != 0 || links.prev_page.is_some() || links.next_page.is_some() {
+                return Err(ProgramError::InvalidAccountData);
+            }
+        } else {
+            if links.prev_page != index.checked_sub(1).map(|i| i as u32) {
+                return Err(ProgramError::InvalidAccountData);
+            }
+            live += 1;
+            match links.next_page {
+                None => detached = true,
+                Some(next) if next as usize == index + 1 && index + 1 < count => {}
+                _ => return Err(ProgramError::InvalidAccountData),
+            }
+        }
+    }
+    if live == 0 || !detached {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    Ok(live)
 }
 
 /// Verify the sum of all three liability classes against canonical vaults.
