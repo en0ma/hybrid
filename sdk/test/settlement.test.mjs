@@ -66,3 +66,14 @@ test("epoch proof recovery, claim construction and replay rejection",()=>{
   assert.throws(()=>buildSettlementClaim(k(99),{...accounts,vault:k(14)},e,proofs[0]));
   b[400]=4;assert.throws(()=>decodeFrozenEpoch(b));
 });
+
+test("guarded settlement execution appends canonical ledger and vault tail after roster",()=>{
+  const guard={pool:k(22),reserve:a.reserve,baseVault:a.baseVault,quoteVault:a.quoteVault};
+  const params={side:"bid",baseFill:350n,quoteLimit:505n};
+  const unguarded=buildSettlementExecution(k(99),a,params);
+  const guarded=buildSettlementExecution(k(99),{...a,marketFlags:3,aggregateGuard:guard},params);
+  assert.deepEqual(guarded.keys.slice(0,-4),unguarded.keys);
+  assert.deepEqual(guarded.keys.slice(-4).map(x=>x.pubkey),Object.values(guard));
+  assert.throws(()=>buildSettlementExecution(k(99),{...a,marketFlags:3},params),/guard required/);
+  assert.throws(()=>buildSettlementExecution(k(99),{...a,marketFlags:3,aggregateGuard:{...guard,reserve:k(23)}},params),/mismatch/);
+});

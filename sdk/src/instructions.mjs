@@ -46,6 +46,41 @@ function instruction(programId, accounts, roles, data) {
   };
 }
 
+// Guard tail is intentionally appended AFTER the inner ABI and alias checks.
+// The same vaults/ledger accounts may already occur in the inner instruction.
+export const MARKET_FLAG_AGGREGATE_GUARD = 2;
+const accountId = key => typeof key?.toBytes === "function"
+  ? Buffer.from(key.toBytes()).toString("hex")
+  : key instanceof Uint8Array ? Buffer.from(key).toString("hex") : String(key);
+export function appendAggregateGuard(ix, accounts, mandatory = false) {
+  const flags = accounts.marketFlags;
+  if (flags !== undefined && (!Number.isInteger(flags) || flags < 0 || flags > 65535)) {
+    throw new RangeError("Invalid authenticated market flags");
+  }
+  const guard = accounts.aggregateGuard;
+  if (!guard) {
+    if (mandatory || (flags & MARKET_FLAG_AGGREGATE_GUARD)) {
+      throw new Error("Aggregate solvency guard required");
+    }
+    return ix;
+  }
+  if (flags !== undefined && !(flags & MARKET_FLAG_AGGREGATE_GUARD)) {
+    throw new Error("Aggregate guard supplied for unguarded market");
+  }
+  const roles = ["pool", "reserve", "baseVault", "quoteVault"];
+  const keys = roles.map(role => required(guard[role], "aggregateGuard." + role));
+  if (new Set(keys.map(accountId)).size !== keys.length) {
+    throw new Error("Aliased aggregate guard account");
+  }
+  for (const [i, role] of roles.entries()) {
+    if (accounts[role] != null && accountId(accounts[role]) !== accountId(keys[i])) {
+      throw new Error("Aggregate guard " + role + " mismatch");
+    }
+  }
+  ix.keys.push(...keys.map(pubkey => ({ pubkey, isWritable: false, isSigner: false })));
+  return ix;
+}
+
 const activeOrderRoles = [
   ["market", "w"], ["page", "w"], ["ownerPage", "w"],
   ["makerBalance", "w"], ["maker", "s"],
@@ -102,7 +137,7 @@ export function swap(programId, accounts, { side, mode, amount, limit }) {
   for (const pubkey of accounts.makerBalances) {
     ix.keys.push({ pubkey: required(pubkey, "makerBalance"), isWritable: true, isSigner: false });
   }
-  return ix;
+  return appendAggregateGuard(ix, accounts);
 }
 
 const balanceRoles = {
@@ -120,10 +155,14 @@ const balanceRoles = {
 export function transferMakerCollateral(programId, accounts, { direction, asset, amount }) {
   if (!(direction in balanceRoles)) throw new RangeError("direction must be deposit or withdraw");
   if (asset !== "base" && asset !== "quote") throw new RangeError("asset must be base or quote");
-  return instruction(programId, accounts, balanceRoles[direction], [
+  const guard = accounts.aggregateGuard;
+  if (guard && accountId(accounts.vault) !== accountId(guard[asset === "base" ? "baseVault" : "quoteVault"])) {
+    throw new Error("Aggregate guard collateral vault mismatch");
+  }
+  return appendAggregateGuard(instruction(programId, accounts, balanceRoles[direction], [
     Buffer.from([direction === "deposit" ? 13 : 14, asset === "base" ? 0 : 1]),
     le(amount, 8, "amount"),
-  ]);
+  ]), accounts);
 }
 
 export function initMakerBalance(programId, accounts) {
@@ -135,7 +174,7 @@ export function initMakerBalance(programId, accounts) {
 
 export function initPassivePool(programId, accounts) {
   return instruction(programId, accounts, [
-    ["market", ""], ["custody", ""], ["pool", "w"],
+    ["market", "w"], ["custody", ""], ["pool", "w"],
     ["payer", "ws"], ["systemProgram", ""],
   ], [Buffer.from([19])]);
 }
@@ -143,7 +182,7 @@ export function initPassivePool(programId, accounts) {
 export function openPassivePosition(programId, accounts, {
   nonce, lowerSqrtPriceX64, upperSqrtPriceX64, liquidity, baseDeposit, quoteDeposit,
 }) {
-  return instruction(programId, accounts, [
+  return appendAggregateGuard(instruction(programId, accounts, [
     ["market", ""], ["custody", ""], ["pool", "w"], ["position", "w"],
     ["owner", "ws"], ["baseSource", "w"], ["quoteSource", "w"],
     ["baseVault", "w"], ["quoteVault", "w"], ["baseMint", ""],
@@ -152,16 +191,24 @@ export function openPassivePosition(programId, accounts, {
     Buffer.from([20]), le(nonce, 8, "nonce"), le(lowerSqrtPriceX64, 16, "lowerSqrtPriceX64"),
     le(upperSqrtPriceX64, 16, "upperSqrtPriceX64"), le(liquidity, 16, "liquidity"),
     le(baseDeposit, 8, "baseDeposit"), le(quoteDeposit, 8, "quoteDeposit"),
-  ]);
+  ]), accounts, true);
 }
 
-export function closePassivePosition(programId, accounts, { nonce }) {
-  return instruction(programId, accounts, [
+export function closePassivePosition(programId, accounts, { nonce, expectedRevision, burnLiquidity }) {
+  if ((expectedRevision === undefined) !== (burnLiquidity === undefined)) {
+    throw new Error("Partial redemption requires revision and liquidity burn");
+  }
+  const data = [Buffer.from([21]), le(nonce, 8, "nonce")];
+  if (expectedRevision !== undefined) {
+    if (unsigned(burnLiquidity, 128, "burnLiquidity") === 0n) throw new RangeError("Zero liquidity burn");
+    data.push(le(expectedRevision, 8, "expectedRevision"), le(burnLiquidity, 16, "burnLiquidity"));
+  }
+  return appendAggregateGuard(instruction(programId, accounts, [
     ["market", ""], ["custody", ""], ["pool", "w"], ["position", "w"],
     ["owner", "ws"], ["baseVault", "w"], ["quoteVault", "w"],
     ["baseDestination", "w"], ["quoteDestination", "w"], ["baseMint", ""],
     ["quoteMint", ""], ["vaultAuthority", ""], ["tokenProgram", ""],
-  ], [Buffer.from([21]), le(nonce, 8, "nonce")]);
+  ], data), accounts, true);
 }
 
 /**

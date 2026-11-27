@@ -130,13 +130,17 @@ export async function authenticateSettlementCollateral(connection,{adapter,progr
   const initial=decodeSettlementCustody(owned(first.values[0],programId));
   const addresses=[initial.baseVault,initial.quoteVault,initial.baseMint,initial.quoteMint].map(k=>adapter.fromBytes(k));
   const bookKeys=[market,snapshot.reserve,...snapshot.pages.flatMap(p=>[p.page,p.ownerPage])];
-  const keys=[...bookKeys,custody.key,...addresses,takerBase,takerQuote,...snapshot.makerBalances];
+  const pool=derive(adapter,programId,[seed("passive-pool"),keyBytes(market)]);
+  const guarded=snapshot.header.aggregateGuardEnabled;
+  const keys=[...bookKeys,custody.key,...addresses,takerBase,takerQuote,...snapshot.makerBalances,
+    ...(guarded?[pool.key]:[])];
   if(new Set(keys.map(hex)).size!==keys.length)throw new Error("Aliased collateral accounts");
   const read=await fetchBatch(connection,keys,first.slot,commitment);
   const v=read.values,offset=bookKeys.length;
   const header=decodeMarketHeader(owned(v[0],programId));
   const reserve=decodeLazyReserve(owned(v[1],programId));
-  if(!header.collateralizedActive||!eq(header.askOwnerKeyBytes,snapshot.header.askOwnerKeyBytes)||
+  if(!header.collateralizedActive||header.flags!==snapshot.header.flags||
+    !eq(header.askOwnerKeyBytes,snapshot.header.askOwnerKeyBytes)||
     !header.bidOwnerTagBytes.equals(snapshot.header.bidOwnerTagBytes)||
     header.askCount!==snapshot.header.askCount||header.bidCount!==snapshot.header.bidCount||
     header.nextSequence!==snapshot.header.nextSequence||
@@ -164,6 +168,20 @@ export async function authenticateSettlementCollateral(connection,{adapter,progr
   const takerBaseAmount=token(v[offset+5],tokenProgram,baseMint,taker);
   const takerQuoteAmount=token(v[offset+6],tokenProgram,quoteMint,taker);
   const floor=reserveVaultFloor(reserve,state.totalBase,state.totalQuote);
+  let aggregateGuard;
+  if(guarded){
+    const info=v.at(-1);
+    // A passive-enabled market has a canonical pool; reject missing/foreign
+    // state rather than silently dropping LP liabilities from the floor.
+    const b=Buffer.from(owned(info,programId));
+    if(b.length!==112||b.subarray(0,8).toString("ascii")!=="HYBPOOL1"||
+      b[8]!==1||b[9]!==pool.bump||b.subarray(10,16).some(Boolean)||
+      !eq(b.subarray(16,48),market)||b.subarray(96).some(Boolean))
+      throw new Error("Invalid passive pool domain");
+    floor.base+=b.readBigUInt64LE(48)+b.readBigUInt64LE(80);
+    floor.quote+=b.readBigUInt64LE(56)+b.readBigUInt64LE(88);
+    aggregateGuard={pool:pool.key,reserve:snapshot.reserve,baseVault,quoteVault};
+  }
   if(base<floor.base||quote<floor.quote)throw new Error("Vault deficit");
   const balances=rows.map((r,i)=>{
     const expected=derive(adapter,programId,[seed("maker-balance"),keyBytes(market),r.owner]);
@@ -173,7 +191,7 @@ export async function authenticateSettlementCollateral(connection,{adapter,progr
       (side==="ask"?b.lockedBase:b.lockedQuote)<required)throw new Error("Maker collateral deficit");
     return b;
   });
-  return {...snapshot,slot:read.slot,reserveState:reserve,custody:custody.key,custodyState:state,
+  return {...snapshot,header,aggregateGuard,slot:read.slot,reserveState:reserve,custody:custody.key,custodyState:state,
     baseVault,quoteVault,baseMint,quoteMint,vaultAuthority:authority.key,tokenProgram,taker,takerBase,takerQuote,
     balances,vaultAmounts:{base,quote},takerAmounts:{base:takerBaseAmount,quote:takerQuoteAmount},floor};
 }

@@ -32,3 +32,20 @@ initialization, passive pool initialization, LP deposit and principal redemption
 built-in test runner. This SDK alone is **not** sufficient for production trading:
 quote correctness, account discovery, market data, execution simulation,
 transactions and signing must be provided by integrating clients.
+
+## Passive-enabled markets (M82)
+
+Read authenticated market flags before building token-moving instructions.
+For flag bit `2`, supply `marketFlags` and `aggregateGuard: {pool, reserve,
+baseVault, quoteVault}` in the account descriptor. Derive the canonical
+`passive-pool` and `lazy-reserve` PDAs; use both canonical SPL vaults from
+custody. The guard tail is appended after the original inner account list,
+including intentional repeated keys. A legacy market without the flag uses
+the original ABI. Omitting a required guard fails closed when flags are
+supplied. LP open/close always require a guard, since initialization sets
+the flag. The pool initialization builder marks the market writable.
+Settlement discovery authenticates the pool and adds LP inventory and fees
+to the vault floor when the flag is present. Claim callers must pass the
+same verified guard and flags (including the non-payout vault) when enabled.
+For partial LP redemption use `expectedRevision` and `burnLiquidity`
+together with `nonce`; amounts are integer atoms and liquidity is u128.

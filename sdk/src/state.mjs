@@ -29,7 +29,8 @@ export function decodeMarketHeader(data) {
   };
   if (!header.nextSequence || !header.sqrtPriceX64 || !header.baseLotSize ||
       !header.quoteLotSize) throw new Error("Invalid market header");
-  return { ...header, collateralizedActive: Boolean(header.flags & 1) };
+  return { ...header, collateralizedActive: Boolean(header.flags & 1),
+    aggregateGuardEnabled: Boolean(header.flags & 2) };
 }
 
 function links(b) {
