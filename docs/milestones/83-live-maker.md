@@ -1,0 +1,30 @@
+# Milestone 83: Live market-making operations
+
+Status: implementation started on the merged M82 baseline. Not ready for live execution.
+
+## Scope and acceptance
+
+Issue #69: authenticated fresh RPC snapshots, exact price/quantity conversion, durable idempotent reconciliation, kill switch, limits, funded sandbox/devnet evidence and independent operational review.
+
+## Required exit gates
+
+- [ ] Implementation and positive/negative tests committed.
+- [ ] Exact-head CI green including SBF, CU, ELF, provenance and funded lifecycle gates (do not weaken existing limits).
+- [ ] Document evidence and limitations; independent review of security-sensitive code.
+- [ ] Review and merge sequentially with expected head SHA. No production activation without explicit approval.
+
+## Integration gap analysis and implementation sequence
+
+M82 merged as `11e0e8f86cbd90e1093403febed76d45ed02c32a`. M83 is rebased onto that exact merge. M82 passed its exact-head CI and independent code review; the separate security-review receipt remained outstanding at operator-directed merge. Carry that limitation into M83 security review. Keep the default maker CLI read-only.
+
+1. **Authenticated complete snapshot.** `sdk/src/market-maker.mjs` currently plans from individual page-zero reads; it requires equal ASK/BID slots but does not authenticate free/locked collateral in that plan. Combine `multipage.mjs`, `maker-balance.mjs`, and the coherent batch approach in `maker-post-finality-audit.mjs` / `settlement-rpc.mjs`. Discover canonical chain accounts, validate complete linked depth, ownership and maker identity, authenticate custody/vaults and genesis, and re-read in a common context. Reject missing, detached, aliased or stale accounts. M82 aggregate-guard markets require authenticated market flags and guard accounts when applicable.
+2. **Exact quoting and admission.** Reuse `quote-orders.mjs` for integer decimal/Q64 and canonical sqrt, conservative collateral and lot conversion. Extend `execution-policy.mjs` from explicit enable/kill switch, freshness, pending mutation and change count to enforce configured inventory, notional, loss, order/transaction rate and retry limits. Missing or invalid risk configuration fails closed. Recheck the operator switch and policy immediately before signing/submission; no live default.
+3. **Durable reconciliation state machine.** Compose existing `maker-atomic-journal.mjs`, `maker-journal-guard.mjs`, `maker-finality-reconcile.mjs`, `maker-post-finality-audit.mjs` and `maker-inventory-reconcile.mjs`. One durable intent at a time: cancel -> confirm/finalize -> refresh -> replan -> simulate exact signed bytes -> persist intent/signature -> submit -> confirm/finalize -> verify post-state. An ambiguous submit or expiry does not authorize a replacement order; reconcile the original signature and authenticated book/balance first. Restart with a pending journal must block new mutations.
+4. **Bounded CLI and funded evidence.** Extend the read-only `tools/maker-cli` manifest/readiness interface with an explicit plan mode, then opt-in loopback funded execution under isolated signer custody and strict policy. Prove partial fills, cancels, replacement, crash/restart, ambiguous submission, stale snapshots, rate/position/loss limits and kill switch with deterministic hostile fixtures and actual signed receipts. Public devnet evidence must be explicitly scoped and use funded test wallets only; no unattended live or mainnet activation.
+5. **Evidence and gates.** Record exact head, genesis/endpoint class, transaction signatures, simulated/confirmed CU, before/after maker orders and free/locked inventory, custody/vault conservation, limits and failure evidence. Independent security/operations review and all exact-head CI lanes must pass before merge.
+
+Initial deliverable after rebase: read-only coherent authenticated maker snapshot with hostile RPC fixtures, then policy integration. Do not duplicate established SDK conversion/journal primitives or change the on-chain ABI without demonstrated need.
+
+## First implementation increment
+
+The new `sdk/src/maker-live-snapshot.mjs` observes both complete linked books and canonical maker balance from a single batched context, derives page and later sidecar PDAs, verifies market-bound configured head sidecars, validates freshness and pinned genesis, checks cross-side sequences and minimum locked collateral, and returns observation-only state. The head BID sidecar uses the protocol's existing 16-byte binding; require a configured full key rather than pretending the tag is a full PDA. Unused detached canonical suffix accounts are not treated as live depth. No signing or sending code is added. Custody/vault/mint and aggregate-floor authentication, executable admission, and journal integration remain subsequent work. The new tests require fresh CI.
