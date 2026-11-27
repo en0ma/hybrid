@@ -12,6 +12,7 @@
     "./market-maker": "./src/market-maker.mjs",
     "./maker-live-snapshot": "./src/maker-live-snapshot.mjs",
     "./maker-live-plan": "./src/maker-live-plan.mjs",
+    "./maker-live-session": "./src/maker-live-session.mjs",
     "./multipage": "./src/multipage.mjs",
     "./maker-balance": "./src/maker-balance.mjs",
     "./quote-orders": "./src/quote-orders.mjs",

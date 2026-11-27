@@ -3,6 +3,7 @@
 import {loadLiveMakerSnapshot} from "./maker-live-snapshot.mjs";
 import {convertQuoteTargets} from "./quote-orders.mjs";
 import {reconcileMakerOrders} from "./maker.mjs";
+import {placeOrder,cancelOrder} from "./instructions.mjs";
 
 const Q=1n<<64n,MAX64=Q-1n;
 const quoteNotional=o=>(o.baseQty*o.priceX64+Q-1n)/Q;
@@ -84,7 +85,20 @@ export async function planLiveMakerQuotes(connection,{snapshotOptions,orders,pol
   if(actions.length&&(limits.ordersInWindow+actions.length>limits.maxOrdersPerWindow||
     limits.transactionsInWindow+actions.length>limits.maxTransactionsPerWindow||
     limits.retries>limits.maxRetries))throw new Error("Order, transaction or retry rate limit exceeded");
-  return {mode:"advisory-only",canSubmit:false,phase,actions,snapshotSlot:snapshot.slot,
+  // Only the first action is eligible for a single-intent reservation.
+  // A fresh snapshot and policy evaluation is required for every later action.
+  const first=actions[0];
+  let firstInstruction=null;
+  if(first){
+    const pages=first.side==="ask"?snapshot.askPages:snapshot.bidPages;
+    if(pages.length!==1)throw new Error("Unsupported linked book mutation");
+    const roles={market:snapshot.market,maker:snapshot.maker,makerBalance:snapshot.makerBalance,
+      page:pages[0].page,ownerPage:pages[0].ownerPage};
+    firstInstruction=(phase==="cancel"?cancelOrder:placeOrder)(
+      snapshotOptions.programId,roles,first);
+  }
+  return {mode:"advisory-only",canSubmit:false,phase,actions,firstInstruction,
+    snapshotSlot:snapshot.slot,observedSlot:snapshot.observedSlot,
     markedEquityQuote:equity,markedLossQuote:loss,
     requiresFreshSnapshot:phase==="cancel",requiresDurableJournalAndFreshSimulation:true,
     desired:converted.desired};

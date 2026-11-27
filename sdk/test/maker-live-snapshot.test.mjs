@@ -1,13 +1,22 @@
 import {planLiveMakerQuotes} from "../src/maker-live-plan.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import {PublicKey} from "@solana/web3.js";
+import * as web3 from "@solana/web3.js";
+import {PublicKey,Keypair,VersionedTransaction} from "@solana/web3.js";
+import {mkdtemp,rm,writeFile,stat} from "node:fs/promises";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
+import {createSolanaSettlementAdapter} from "../src/settlement-solana.mjs";
+import {initializeLiveMakerSession,inspectLiveMakerSession,reserveLiveMakerIntent,
+  prepareLiveMakerIntent,observeLiveMakerIntent} from "../src/maker-live-session.mjs";
 import {loadLiveMakerSnapshot} from "../src/maker-live-snapshot.mjs";
 const Q=1n<<64n;
 const key=n=>new PublicKey(Buffer.alloc(32,n));
-const [programId,market,maker,askHeadOwner,bidHeadOwner]=[1,2,3,4,5].map(key);
+const [programId,market,askHeadOwner,bidHeadOwner]=[1,2,4,5].map(key);
+const makerSigner=Keypair.fromSeed(Buffer.alloc(32,3));
+const maker=makerSigner.publicKey;
 const expectedGenesisHash="4".repeat(44);
-const adapter={findProgramAddressSync:(seeds,program)=>PublicKey.findProgramAddressSync(seeds,program),fromBytes:b=>new PublicKey(b)};
+const adapter=createSolanaSettlementAdapter(web3);
 const TOKEN=new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const derive=(...seeds)=>PublicKey.findProgramAddressSync(seeds,programId);
 const put128=(b,i,v)=>{b.writeBigUInt64LE(v&(Q-1n),i);b.writeBigUInt64LE(v>>64n,i+8);};
@@ -192,4 +201,64 @@ test("advisory risk fails closed on loss, exposure, rate and unresolved claims",
   }
   const f=fixture();f.addLedgers();
   await assert.rejects(planLiveMakerQuotes(f.connection,{snapshotOptions:f.args,orders:targets,policy}),/Pending lazy claims/);
+});
+
+const control={enabled:true,killSwitch:false};
+async function sessionFixture(callback){
+  const root=await mkdtemp(join(tmpdir(),"hybrid-live-session-"));
+  try{
+    const f=fixture(),sessionPath=join(root,"maker.session");
+    f.connection.getLatestBlockhashAndContext=async opts=>{
+      assert.deepEqual(opts,{commitment:"confirmed",minContextSlot:102});
+      return {context:{slot:102},value:{blockhash:key(99).toBase58(),lastValidBlockHeight:500}};
+    };
+    f.connection.getBlockHeight=async()=>499;
+    f.connection.simulateTransaction=async(tx,opts)=>{
+      assert.equal(opts.sigVerify,true);assert.equal(opts.replaceRecentBlockhash,false);
+      assert.ok(tx.signatures[0].some(Boolean));return {context:{slot:102},value:{err:null,unitsConsumed:12345}};
+    };
+    f.connection.getSignatureStatuses=async()=>({context:{slot:103},value:[null]});
+    await initializeLiveMakerSession({sessionPath,snapshotOptions:f.args,policy,acknowledgeEmptySession:true});
+    const reserve=()=>reserveLiveMakerIntent(f.connection,{sessionPath,snapshotOptions:f.args,
+      orders:targets.slice(0,2),control});
+    await callback({f,sessionPath,reserve});
+  }finally{await rm(root,{recursive:true,force:true});}
+}
+test("durable single-intent reservation, exact signed preparation and unknown recovery",async()=>{
+  await sessionFixture(async({f,sessionPath,reserve})=>{
+    const r=await reserve();
+    assert.equal(r.phase,"reserved");assert.equal(r.canSubmit,false);
+    const saved=await inspectLiveMakerSession(sessionPath);
+    assert.equal(saved.ordersReserved,1);assert.equal(saved.transactionsReserved,1);
+    assert.equal(saved.intent.phase,"cancel");assert.equal(saved.intent.action.sequence,"3");
+    assert.equal((await stat(sessionPath)).mode&0o777,0o600);
+    const tx=VersionedTransaction.deserialize(Buffer.from(r.unsignedWireBase64,"base64"));
+    tx.sign([makerSigner]);
+    const prepared=await prepareLiveMakerIntent(f.connection,{sessionPath,snapshotOptions:f.args,
+      transaction:tx,control});
+    assert.equal(prepared.phase,"prepared");assert.equal(prepared.canSubmit,false);
+    assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"prepared");
+    const status=await observeLiveMakerIntent(f.connection,{sessionPath,snapshotOptions:f.args});
+    assert.equal(status.state,"unknown");assert.equal(status.canRetry,false);
+    await assert.rejects(reserve(),/Pending maker intent/);
+  });
+});
+test("reserved intent cannot be replaced by a different signed message",async()=>{
+  await sessionFixture(async({f,sessionPath,reserve})=>{
+    const r=await reserve();
+    const tx=VersionedTransaction.deserialize(Buffer.from(r.unsignedWireBase64,"base64"));
+    tx.message.recentBlockhash=key(98).toBase58();tx.sign([makerSigner]);
+    await assert.rejects(prepareLiveMakerIntent(f.connection,{sessionPath,snapshotOptions:f.args,
+      transaction:tx,control}),/differs from durable reservation/);
+    assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"reserved");
+    assert.ok((await stat(sessionPath+".lock")).size>0);
+  });
+});
+test("kill switch and interrupted durable state block reservation",async()=>{
+  await sessionFixture(async({f,sessionPath,reserve})=>{
+    await assert.rejects(reserveLiveMakerIntent(f.connection,{sessionPath,snapshotOptions:f.args,
+      orders:targets.slice(0,2),control:{enabled:true,killSwitch:true}}),/disabled/);
+    await writeFile(sessionPath+".pending","torn update");
+    await assert.rejects(reserve(),/Interrupted session/);
+  });
 });
