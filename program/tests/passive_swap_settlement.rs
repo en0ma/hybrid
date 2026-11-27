@@ -1275,9 +1275,7 @@ async fn exact_out_rounding_transfers_only_requested_atom_in_both_directions() {
 
 #[tokio::test]
 async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures() {
-    use hybrid_engine::{
-        quote_base_in_for_quote_out, quote_quote_in_for_base_out, PassiveState,
-    };
+    use hybrid_engine::{quote_base_in_for_quote_out, quote_quote_in_for_base_out, PassiveState};
     use hybrid_state::{
         lazy_reserve::{LazyReserve, LAZY_RESERVE_BYTES},
         AskEntry, AskOwnerPage, AskPage, BidEntry, BidPage, MakerBalance, PageLinks,
@@ -1314,17 +1312,17 @@ async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures()
 
         let mut pairs = Vec::new();
         let page_seed: &[u8] = if buy { b"ask-page" } else { b"bid-page" };
-        let owner_seed: &[u8] = if buy { b"ask-owner-page" } else { b"bid-owner-page" };
+        let owner_seed: &[u8] = if buy {
+            b"ask-owner-page"
+        } else {
+            b"bid-owner-page"
+        };
         for index in 0..u32::from(page_count) {
             let index_bytes = index.to_le_bytes();
-            let (page, _) = Pubkey::find_program_address(
-                &[page_seed, f.market.as_ref(), &index_bytes],
-                &ID,
-            );
-            let (owner, _) = Pubkey::find_program_address(
-                &[owner_seed, f.market.as_ref(), &index_bytes],
-                &ID,
-            );
+            let (page, _) =
+                Pubkey::find_program_address(&[page_seed, f.market.as_ref(), &index_bytes], &ID);
+            let (owner, _) =
+                Pubkey::find_program_address(&[owner_seed, f.market.as_ref(), &index_bytes], &ID);
             let links = PageLinks::new(
                 index,
                 index.checked_sub(1),
@@ -1415,7 +1413,8 @@ async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures()
         let route = |gross: u64, max_input: u64| {
             let mut ix = multi_instruction(&f, 35, side, gross, 1, &[f.position]);
             ix.accounts[1].is_writable = true;
-            ix.accounts.push(AccountMeta::new_readonly(reserve_key, false));
+            ix.accounts
+                .push(AccountMeta::new_readonly(reserve_key, false));
             for (page, owner) in &pairs {
                 ix.accounts.push(AccountMeta::new(*page, false));
                 ix.accounts.push(AccountMeta::new(*owner, false));
@@ -1526,7 +1525,10 @@ async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures()
             assert_eq!(pool.quote_reserve, 10_099);
             assert_eq!(pool.accrued_quote_fees, 1);
         } else {
-            assert_eq!(amount(&quote_token), 1_000 + active_amount + quote.amount_out);
+            assert_eq!(
+                amount(&quote_token),
+                1_000 + active_amount + quote.amount_out
+            );
             assert_eq!(amount(&base), 900 - active_amount);
             assert_eq!(maker.free_base, active_amount);
             assert_eq!(pool.quote_reserve, 10_000 - quote.amount_out);
