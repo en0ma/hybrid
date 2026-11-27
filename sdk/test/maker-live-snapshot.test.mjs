@@ -432,3 +432,57 @@ test("unexplained post-finality inventory remains blocked",async()=>{
     assert.ok((await stat(sessionPath+".transaction")).size>0);
   });
 });
+
+test("full 64-order page-zero books can cancel and durably archive both order sets",async()=>{
+  const root=await mkdtemp(join(tmpdir(),"hybrid-full-book-"));
+  try{
+    const f=fixture(),sessionPath=join(root,"maker.session");
+    const desired=[];
+    for(const [side,offset] of [["ask",0],["bid",32]]){
+      const {p,o}=f.pairs[side][0];
+      for(const b of [p,o]){b.fill(0);b.writeUInt16LE(32);b.writeUInt32LE(0xffffffff,6);b.writeUInt32LE(0xffffffff,10);}
+      for(let j=0;j<32;j++){
+        const i=16+j*48;put128(p,i,Q);put128(p,i+16,Q);p.writeBigUInt64LE(10n,i+32);
+        p.writeBigUInt64LE(BigInt(offset+j+1),i+40);maker.toBuffer().copy(o,16+j*32);
+        if(side==="ask"||j!==31)desired.push({side,priceAtoms:"1",sizeAtoms:"10"});
+      }
+    }
+    f.header.writeUInt32LE(32,12);f.header.writeUInt32LE(32,20);f.header.writeBigUInt64LE(65n,32);
+    f.inventory.writeBigUInt64LE(320n,88);f.inventory.writeBigUInt64LE(320n,104);
+    f.custodyData.writeBigUInt64LE(420n,176);f.custodyData.writeBigUInt64LE(420n,184);
+    f.baseToken.writeBigUInt64LE(500n,64);f.quoteToken.writeBigUInt64LE(500n,64);
+    let slot=101;
+    f.connection.getMultipleAccountsInfoAndContext=async(keys,opts)=>{
+      assert.ok(opts.minContextSlot<=slot);
+      return {context:{slot},value:keys.map(k=>f.accounts.get(k.toBase58())??null)};
+    };
+    f.connection.getSlot=async()=>slot;
+    f.connection.getBlockHeight=async()=>499;
+    f.connection.getLatestBlockhashAndContext=async()=>({context:{slot},value:{
+      blockhash:key(99).toBase58(),lastValidBlockHeight:500}});
+    f.connection.simulateTransaction=async()=>({context:{slot},value:{err:null,unitsConsumed:12000}});
+    await initializeLiveMakerSession({sessionPath,snapshotOptions:f.args,
+      policy:{...policy,maxOrders:64,maxQuoteNotional:"640",maxBaseExposure:"740",baselineEquityQuote:"840"},
+      acknowledgeEmptySession:true});
+    const reserved=await reserveLiveMakerIntent(f.connection,{sessionPath,snapshotOptions:f.args,orders:desired,control});
+    const transaction=VersionedTransaction.deserialize(Buffer.from(reserved.unsignedWireBase64,"base64"));
+    transaction.sign([makerSigner]);
+    const opts={sessionPath,snapshotOptions:f.args,transaction,control:sandboxControl};
+    const prepared=await prepareLiveMakerIntent(f.connection,opts);
+    await withSubmitServer(f.connection,async(value,res)=>replySignature(value,res,prepared.signature),
+      async()=>{assert.equal((await submitSandboxMakerIntent(f.connection,opts)).state,"submitted");});
+    slot=103;
+    f.connection.getSignatureStatuses=async()=>({context:{slot},value:[{slot,confirmationStatus:"finalized",err:null}]});
+    f.connection.getTransaction=async()=>({version:0,slot,meta:{err:null},
+      transaction:{signatures:[prepared.signature],message:transaction.message}});
+    await finalizeSandboxMakerIntent(f.connection,opts);
+    f.header.writeUInt32LE(31,20);
+    f.pairs.bid[0].p.writeUInt16LE(31);f.pairs.bid[0].p.fill(0,16+31*48);
+    f.pairs.bid[0].o.writeUInt16LE(31);f.pairs.bid[0].o.fill(0,16+31*32);
+    f.inventory.writeBigUInt64LE(110n,96);f.inventory.writeBigUInt64LE(310n,104);
+    assert.equal((await reconcileSandboxMakerIntent(f.connection,opts)).state,"reconciled");
+    const archive=await stat(sessionPath+".settled."+prepared.signature);
+    assert.ok(archive.size>16384,"regression must exceed old shared limit");
+    assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"idle");
+  }finally{await rm(root,{recursive:true,force:true});}
+});

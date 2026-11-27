@@ -21,6 +21,14 @@ const LIMITS=["maxLagSlots","maxOrders","maxChanges","maxBaseExposure","maxQuote
   "maxLossQuote","baselineEquityQuote","maxOrdersPerWindow","maxTransactionsPerWindow","maxRetries"];
 const ATOMS=new Set(["maxBaseExposure","maxQuoteNotional","maxLossQuote","baselineEquityQuote"]);
 const MAX64=(1n<<64n)-1n;
+// A complete snapshot can contain up to 512 linked-book orders. Archives
+// include both the before and after order sets plus the finalized journal.
+const SESSION_BYTES=256*1024,ARCHIVE_BYTES=512*1024;
+function recordBody(state,maxBytes=SESSION_BYTES){
+  const body=JSON.stringify({state,digest:sha(JSON.stringify(state))})+"\n";
+  if(Buffer.byteLength(body)>maxBytes)throw new Error("Oversized maker record");
+  return body;
+}
 const ALPHABET="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 function encode58(bytes){
   let n=0n;for(const b of bytes)n=n*256n+BigInt(b);
@@ -61,7 +69,7 @@ async function checkPending(path){
 async function read(path){
   await checkPending(path);
   const raw=await readFile(path,"utf8");
-  if(Buffer.byteLength(raw)>16384)throw new Error("Oversized maker session");
+  if(Buffer.byteLength(raw)>SESSION_BYTES)throw new Error("Oversized maker session");
   let parsed;try{parsed=JSON.parse(raw);}catch{throw new Error("Corrupt maker session");}
   const state=parsed?.state;
   if(!state||parsed.digest!==sha(JSON.stringify(state))||state.version!==1||
@@ -77,9 +85,8 @@ async function read(path){
     !["cancel","place"].includes(state.intent.phase)))throw new Error("Corrupt reserved intent");
   return state;
 }
-async function persist(path,state,initialize=false){
-  const body=JSON.stringify({state,digest:sha(JSON.stringify(state))})+"\n";
-  if(Buffer.byteLength(body)>16384)throw new Error("Oversized maker session record");
+async function persist(path,state,initialize=false,maxBytes=SESSION_BYTES){
+  const body=recordBody(state,maxBytes);
   const pending=path+".pending";
   const handle=await open(pending,"wx",0o600);
   try{
@@ -305,13 +312,23 @@ export async function submitSandboxMakerIntent(connection,{sessionPath,snapshotO
       throw new Error("Signed wire changed or simulation outside reserved freshness");
     // Preserve the original preparation evidence for the v2 journal's
     // original snapshot binding. The second simulation is separately stored.
+    const submitted={...state,phase:"submitted",lastSlot:evidence.simulationSlot,
+      intent:{...intent,submissionSimulation:evidence,before:plan.before}};
+    // Bound every prospective persisted record BEFORE mutating the journal
+    // or sending. Use the largest possible slot encoding for later finality.
+    const maxSlot=Number.MAX_SAFE_INTEGER;
+    const projected={...submitted,phase:"finalized",lastSlot:maxSlot,
+      intent:{...submitted.intent,finalizedSlot:maxSlot}};
+    recordBody(projected);
+    recordBody({session:projected,journal:{...record,phase:"finalized",lastConfirmedSlot:maxSlot},
+      audit:{slot:maxSlot,actual:expectedAfter(projected.intent),
+        custody:plan.before.custody,vaults:plan.before.vaults}},ARCHIVE_BYTES);
     sandbox(connection,control);
     await advanceAtomicMakerJournal(journal(sessionPath),{
       from:"prepared",to:"submitted",signature:record.signature,genesisHash:record.genesisHash,
       transaction:{serialize:()=>wire},simulationEvidence:intent.simulationEvidence,
     });
-    await persist(sessionPath,{...state,phase:"submitted",lastSlot:evidence.simulationSlot,
-      intent:{...intent,submissionSimulation:evidence,before:plan.before}});
+    await persist(sessionPath,submitted);
     // A kill switch changed during disk persistence must prevent broadcast.
     // The conservative submitted state still requires reconciliation.
     sandbox(connection,control);
@@ -446,7 +463,7 @@ export async function reconcileSandboxMakerIntent(connection,{sessionPath,snapsh
     // fails after archival, the lock and/or non-idle state prevent reuse.
     const path=archivePath(sessionPath,record.signature);
     if(await exists(path))throw new Error("Existing reconciliation archive; manual recovery required");
-    await persist(path,{session:state,journal:record,audit},true);
+    await persist(path,{session:state,journal:record,audit},true,ARCHIVE_BYTES);
     await unlink(journal(sessionPath));
     const directory=await open(dirname(sessionPath),"r");
     try{await directory.sync();}finally{await directory.close();}
