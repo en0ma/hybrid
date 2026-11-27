@@ -373,8 +373,7 @@ fn process_segment(
             .ok_or(ProgramError::InvalidInstructionData)?;
         price = quote.next_sqrt_price_x64;
     }
-    if (exact_out && total_out != output)
-        || (!exact_out && (total_out < output || gross != input))
+    if (exact_out && total_out != output) || (!exact_out && (total_out < output || gross != input))
     {
         return Err(ProgramError::InvalidInstructionData);
     }

@@ -65,7 +65,10 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    if matches!(data.first(), Some(13..=18 | 20 | 21 | 23..=26 | 33..=37 | 40..=42 | 44 | 45)) {
+    if matches!(
+        data.first(),
+        Some(13..=18 | 20 | 21 | 23..=26 | 33..=37 | 40..=42 | 44 | 45)
+    ) {
         let market = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
         if market.owner != program_id {
             return Err(ProgramError::IncorrectProgramId);
@@ -73,10 +76,15 @@ pub fn process_instruction(
         let header = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
         if header.flags & MARKET_FLAG_AGGREGATE_GUARD != 0 {
-            let split = accounts.len().checked_sub(4).ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let split = accounts
+                .len()
+                .checked_sub(4)
+                .ok_or(ProgramError::NotEnoughAccountKeys)?;
             let (inner, guard) = accounts.split_at(split);
             let custody_index = if data[0] == 40 { 4 } else { 1 };
-            let custody = inner.get(custody_index).ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let custody = inner
+                .get(custody_index)
+                .ok_or(ProgramError::NotEnoughAccountKeys)?;
             verify_aggregate_coverage(program_id, market, custody, guard)?;
             dispatch_instruction(program_id, inner, data)?;
             return verify_aggregate_coverage(program_id, market, custody, guard);
@@ -99,7 +107,8 @@ fn verify_aggregate_coverage(
         Pubkey::find_program_address(&[b"passive-pool", market.key.as_ref()], program_id);
     let (reserve_key, _) =
         Pubkey::find_program_address(&[b"lazy-reserve", market.key.as_ref()], program_id);
-    if *guard[0].key != pool_key || *guard[1].key != reserve_key
+    if *guard[0].key != pool_key
+        || *guard[1].key != reserve_key
         || guard[2].key.to_bytes() != custody.base_vault
         || guard[3].key.to_bytes() != custody.quote_vault
     {
@@ -133,8 +142,13 @@ fn verify_aggregate_coverage(
     {
         return Err(ProgramError::InvalidAccountData);
     }
-    pool.verify_vault_coverage(base, quote, checked_token_amount(&guard[2])?, checked_token_amount(&guard[3])?)
-        .map_err(|_| ProgramError::InsufficientFunds)
+    pool.verify_vault_coverage(
+        base,
+        quote,
+        checked_token_amount(&guard[2])?,
+        checked_token_amount(&guard[3])?,
+    )
+    .map_err(|_| ProgramError::InsufficientFunds)
 }
 
 fn dispatch_instruction(
