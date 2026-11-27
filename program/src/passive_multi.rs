@@ -303,7 +303,9 @@ fn process_segment(
                 passive_sell_to_target(state, edge).ok()
             }
         });
-        let mut quote = if let Some(target) = boundary_quote.filter(|q| q.amount_in <= net) {
+        let affordable_boundary = boundary_quote.filter(|q| q.amount_in <= net);
+        let at_boundary = affordable_boundary.is_some();
+        let mut quote = if let Some(target) = affordable_boundary {
             leg_gross = gross_for(target.amount_in)?;
             target
         } else {
@@ -323,6 +325,7 @@ fn process_segment(
             } else {
                 sell_exact_out(state, target)
             };
+            let mut solved = false;
             if let Ok(exact) = exact {
                 let cost = gross_for(exact.amount_in)?;
                 if cost <= leg_gross
@@ -336,8 +339,18 @@ fn process_segment(
                 {
                     quote = exact;
                     leg_gross = cost;
+                    solved = true;
                 }
             }
+            // A proven boundary payment is a conservative fallback. Never
+            // charge the entire remaining maximum on an unsolved exact-out.
+            if !solved && !at_boundary {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            // Integer input may buy more than the requested output. Keep
+            // the conservative input and price movement; the surplus stays
+            // in LP inventory rather than being transferred to the taker.
+            quote.amount_out = target;
         }
         if let Some(edge) = boundary {
             if buy && quote.next_sqrt_price_x64 > edge || !buy && quote.next_sqrt_price_x64 < edge {

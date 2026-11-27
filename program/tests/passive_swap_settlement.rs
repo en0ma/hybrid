@@ -1194,3 +1194,81 @@ async fn automatic_range_crossing_buy_and_sell_conserves_lp_claims() {
     }
     assert_eq!(sums, pool);
 }
+
+#[tokio::test]
+async fn exact_out_rounding_transfers_only_requested_atom_in_both_directions() {
+    for (side, price) in [(0, Q64 / 2), (1, Q64 * 2)] {
+        let mut f = fixture();
+        let mut ctx = f.program.take().unwrap().start_with_context().await;
+        let mut market = ctx
+            .banks_client
+            .get_account(f.market)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut header = MarketHeader::decode_from(&market.data).unwrap();
+        header.sqrt_price_x64 = price;
+        header.encode_into(&mut market.data).unwrap();
+        ctx.set_account(&f.market, &market.into());
+
+        let mut ix = swap(&f, side, 2, 1, f.base_vault);
+        ix.data[0] = 34;
+        assert!(send(&mut ctx, ix, &f.taker).await);
+
+        let base = ctx
+            .banks_client
+            .get_account(f.taker_base)
+            .await
+            .unwrap()
+            .unwrap();
+        let quote = ctx
+            .banks_client
+            .get_account(f.taker_quote)
+            .await
+            .unwrap()
+            .unwrap();
+        let base_vault = ctx
+            .banks_client
+            .get_account(f.base_vault)
+            .await
+            .unwrap()
+            .unwrap();
+        let quote_vault = ctx
+            .banks_client
+            .get_account(f.quote_vault)
+            .await
+            .unwrap()
+            .unwrap();
+        let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+        let pool = PoolAccount::decode_from(&pool.data).unwrap().pool;
+        let position = ctx
+            .banks_client
+            .get_account(f.position)
+            .await
+            .unwrap()
+            .unwrap();
+        let position = PositionAccount::decode_from(&position.data).unwrap();
+
+        if side == 0 {
+            assert_eq!((amount(&base), amount(&quote)), (1_001, 998));
+            assert_eq!((pool.base_reserve, pool.quote_reserve), (9_999, 10_001));
+            assert_eq!((pool.accrued_base_fees, pool.accrued_quote_fees), (0, 1));
+        } else {
+            assert_eq!((amount(&base), amount(&quote)), (998, 1_001));
+            assert_eq!((pool.base_reserve, pool.quote_reserve), (10_001, 9_999));
+            assert_eq!((pool.accrued_base_fees, pool.accrued_quote_fees), (1, 0));
+        }
+        assert_eq!(position.position.base_principal, pool.base_reserve);
+        assert_eq!(position.position.quote_principal, pool.quote_reserve);
+        assert_eq!(position.base_fees, pool.accrued_base_fees);
+        assert_eq!(position.quote_fees, pool.accrued_quote_fees);
+        assert_eq!(
+            amount(&base_vault),
+            pool.base_reserve + pool.accrued_base_fees
+        );
+        assert_eq!(
+            amount(&quote_vault),
+            pool.quote_reserve + pool.accrued_quote_fees
+        );
+    }
+}
