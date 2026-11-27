@@ -6,7 +6,8 @@ const Q=1n<<64n;
 const key=n=>new PublicKey(Buffer.alloc(32,n));
 const [programId,market,maker,askHeadOwner,bidHeadOwner]=[1,2,3,4,5].map(key);
 const expectedGenesisHash="4".repeat(44);
-const adapter=PublicKey;
+const adapter={findProgramAddressSync:PublicKey.findProgramAddressSync,fromBytes:b=>new PublicKey(b)};
+const TOKEN=new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const derive=(...seeds)=>PublicKey.findProgramAddressSync(seeds,programId);
 const put128=(b,i,v)=>{b.writeBigUInt64LE(v&(Q-1n),i);b.writeBigUInt64LE(v>>64n,i+8);};
 function fixture(){
@@ -24,6 +25,35 @@ function fixture(){
   market.toBuffer().copy(inventory,16);maker.toBuffer().copy(inventory,48);
   inventory.writeBigUInt64LE(100n,80);inventory.writeBigUInt64LE(20n,88);
   inventory.writeBigUInt64LE(100n,96);inventory.writeBigUInt64LE(10n,104);set(balance,inventory);
+  const [custody,custodyBump]=derive(Buffer.from("custody"),market.toBuffer());
+  const [authority]=derive(Buffer.from("vault-authority"),market.toBuffer());
+  const [pool,poolBump]=derive(Buffer.from("passive-pool"),market.toBuffer());
+  const [reserve,reserveBump]=derive(Buffer.from("lazy-reserve"),market.toBuffer());
+  const [baseVault,quoteVault,baseMint,quoteMint]=[11,12,13,14].map(key);
+  const custodyData=Buffer.alloc(192);custodyData.write("HYBCUST1");custodyData[8]=1;
+  custodyData[9]=custodyBump;custodyData[10]=6;custodyData[11]=6;
+  [market,baseMint,quoteMint,baseVault,quoteVault].forEach((k,i)=>k.toBuffer().copy(custodyData,16+32*i));
+  custodyData.writeBigUInt64LE(120n,176);custodyData.writeBigUInt64LE(110n,184);set(custody,custodyData);
+  const token=(k,mint,amount)=>{
+    const b=Buffer.alloc(165);mint.toBuffer().copy(b,0);authority.toBuffer().copy(b,32);
+    b.writeBigUInt64LE(amount,64);b[108]=1;accounts.set(k.toBase58(),{owner:TOKEN,data:b});
+    return b;
+  };
+  const baseToken=token(baseVault,baseMint,150n),quoteToken=token(quoteVault,quoteMint,150n);
+  for(const k of [baseMint,quoteMint]){
+    const b=Buffer.alloc(82);b[44]=6;b[45]=1;accounts.set(k.toBase58(),{owner:TOKEN,data:b});
+  }
+  const addLedgers=()=>{
+    header.writeUInt16LE(3,10);
+    const p=Buffer.alloc(112);p.write("HYBPOOL1");p[8]=1;p[9]=poolBump;
+    market.toBuffer().copy(p,16);p.writeBigUInt64LE(10n,48);p.writeBigUInt64LE(12n,56);
+    p.writeBigUInt64LE(2n,80);p.writeBigUInt64LE(3n,88);set(pool,p);
+    const r=Buffer.alloc(144);r.write("HYBLAZY1");r[8]=1;r[9]=reserveBump;
+    market.toBuffer().copy(r,16);new PublicKey(expectedGenesisHash).toBuffer().copy(r,48);
+    r.writeBigUInt64LE(2n,88);r.writeBigUInt64LE(3n,96);
+    r.writeBigUInt64LE(1n,120);r.writeBigUInt64LE(2n,128);set(reserve,r);
+    return {p,r};
+  };
   const pairs={ask:[],bid:[]};
   for(const side of ["ask","bid"]){
     const count=side==="ask"?2:1;
@@ -49,16 +79,21 @@ function fixture(){
     async getGenesisHash(){return expectedGenesisHash;},
     async getSlot(){return 102;},
     async getMultipleAccountsInfoAndContext(keys,opts){
-      reads++;assert.equal(keys.length,34);assert.deepEqual(opts,{commitment:"confirmed",minContextSlot:100});
+      reads++;
+      assert.equal(keys.length,reads===1?1:41);
+      assert.deepEqual(opts,{commitment:"confirmed",minContextSlot:reads===1?100:101});
       return {context:{slot:101},value:keys.map(k=>accounts.get(k.toBase58())??null)};
     },
   };
   const args={adapter,programId,market,maker,askHeadOwner,bidHeadOwner,expectedGenesisHash,minContextSlot:100};
-  return {connection,args,pairs,accounts,inventory,header,reads:()=>reads};
+  return {connection,args,pairs,accounts,inventory,header,custodyData,baseToken,quoteToken,
+    baseVault,quoteVault,baseMint,quoteMint,addLedgers,reads:()=>reads};
 }
 test("one coherent batch observes complete linked depth and maker inventory without submission",async()=>{
   const f=fixture();const s=await loadLiveMakerSnapshot(f.connection,f.args);
-  assert.equal(f.reads(),1);assert.equal(s.slot,101);assert.equal(s.canSubmit,false);
+  assert.equal(f.reads(),2);assert.equal(s.slot,101);assert.equal(s.canSubmit,false);
+  assert.deepEqual(s.floor,{base:120n,quote:110n});
+  assert.deepEqual(s.vaultAmounts,{base:150n,quote:150n});
   assert.equal(s.asks.length,2);assert.equal(s.bids.length,1);assert.equal(s.ownedOrders.length,3);
   assert.deepEqual(s.requiredLocked,{base:20n,quote:10n});assert.equal(s.inventory.freeBase,100n);
 });
@@ -79,4 +114,37 @@ test("reject missing live suffix, foreign owner, duplicate global sequence and u
   await assert.rejects(loadLiveMakerSnapshot(c.connection,c.args),/duplicate global/);
   const d=fixture();d.inventory.writeBigUInt64LE(19n,88);
   await assert.rejects(loadLiveMakerSnapshot(d.connection,d.args),/collateral deficit/);
+});
+
+test("guarded snapshot includes frozen reserve and passive principal plus fees",async()=>{
+  const f=fixture();f.addLedgers();
+  const s=await loadLiveMakerSnapshot(f.connection,f.args);
+  assert.deepEqual(s.floor,{base:135n,quote:130n});
+  assert.equal(s.marketFlags,3);assert.ok(s.aggregateGuard);assert.equal(s.canSubmit,false);
+});
+test("reject vault deficits, missing pool, wrong reserve domain, frozen vault and wrong mint",async()=>{
+  const a=fixture();a.addLedgers();a.baseToken.writeBigUInt64LE(134n,64);
+  await assert.rejects(loadLiveMakerSnapshot(a.connection,a.args),/vault deficit/);
+  const b=fixture();b.header.writeUInt16LE(3,10);
+  await assert.rejects(loadLiveMakerSnapshot(b.connection,b.args),/missing passive pool/);
+  const c=fixture();c.addLedgers().r[48]^=1;
+  await assert.rejects(loadLiveMakerSnapshot(c.connection,c.args),/reserve domain mismatch/);
+  const d=fixture();d.baseToken[108]=2;
+  await assert.rejects(loadLiveMakerSnapshot(d.connection,d.args),/frozen SPL vault/);
+  const e=fixture();e.accounts.get(e.baseMint.toBase58()).data[44]=7;
+  await assert.rejects(loadLiveMakerSnapshot(e.connection,e.args),/Invalid SPL mint/);
+});
+test("reject discovery identity changes and inventory in excess of custody",async()=>{
+  const a=fixture();const fetch=a.connection.getMultipleAccountsInfoAndContext;
+  a.connection.getMultipleAccountsInfoAndContext=async(keys,opts)=>{
+    const result=await fetch(keys,opts);
+    if(a.reads()===1){
+      result.value[0]={...result.value[0],data:Buffer.from(result.value[0].data)};
+      a.custodyData[112]^=1;
+    }
+    return result;
+  };
+  await assert.rejects(loadLiveMakerSnapshot(a.connection,a.args),/Custody identity changed/);
+  const b=fixture();b.inventory.writeBigUInt64LE(101n,80);
+  await assert.rejects(loadLiveMakerSnapshot(b.connection,b.args),/exceeds custody/);
 });
