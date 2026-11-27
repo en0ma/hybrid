@@ -449,7 +449,9 @@ fn process_segment(
 /// The initial snapshot follows the legs; each leg observes live state.
 #[inline(never)]
 pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
-    if data.len() < 4 || !(1..=8).contains(&data[1]) || !(1..=8).contains(&data[2])
+    if data.len() < 4
+        || !(1..=8).contains(&data[1])
+        || !(1..=8).contains(&data[2])
         || !(1..=8).contains(&data[3])
     {
         return Err(ProgramError::InvalidInstructionData);
@@ -483,13 +485,20 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
     for (i, account) in accounts[12..fixed].iter().enumerate() {
         let state = PositionAccount::decode_from(&account.try_borrow_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        if state.revision != u64::from_le_bytes(snapshot[24 + i * 8..32 + i * 8].try_into().unwrap()) {
+        if state.revision
+            != u64::from_le_bytes(snapshot[24 + i * 8..32 + i * 8].try_into().unwrap())
+        {
             return Err(ProgramError::InvalidInstructionData);
         }
     }
-    let (pool_key, bump) = Pubkey::find_program_address(&[b"passive-pool", market.key.as_ref()], program_id);
+    let (pool_key, bump) =
+        Pubkey::find_program_address(&[b"passive-pool", market.key.as_ref()], program_id);
     let mut active = Vec::new();
-    let indices = if buy { [0, 1, 3, 5, 4, 7, 6, 10, 11] } else { [0, 1, 3, 4, 5, 6, 7, 10, 11] };
+    let indices = if buy {
+        [0, 1, 3, 5, 4, 7, 6, 10, 11]
+    } else {
+        [0, 1, 3, 4, 5, 6, 7, 10, 11]
+    };
     active.extend(indices.iter().map(|&i| accounts[i].clone()));
     active.extend(book.iter().cloned());
     active.extend(makers.iter().cloned());
@@ -500,19 +509,29 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
         let custody = load_custody(program_id, market, &accounts[1])?;
         let pool = PoolAccount::decode_from(&accounts[2].try_borrow_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        if accounts[2].owner != program_id || *accounts[2].key != pool_key
-            || pool.bump != bump || pool.market != market.key.to_bytes()
+        if accounts[2].owner != program_id
+            || *accounts[2].key != pool_key
+            || pool.bump != bump
+            || pool.market != market.key.to_bytes()
         {
             return Err(ProgramError::InvalidSeeds);
         }
-        let (base, quote) = reserve.vault_floor(custody.total_base, custody.total_quote)
+        let (base, quote) = reserve
+            .vault_floor(custody.total_base, custody.total_quote)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        pool.pool.verify_vault_coverage(base, quote, crate::checked_token_amount(&accounts[6])?,
-            crate::checked_token_amount(&accounts[7])?).map_err(|_| ProgramError::InsufficientFunds)?;
+        pool.pool
+            .verify_vault_coverage(
+                base,
+                quote,
+                crate::checked_token_amount(&accounts[6])?,
+                crate::checked_token_amount(&accounts[7])?,
+            )
+            .map_err(|_| ProgramError::InsufficientFunds)?;
         if matches!(leg[0], 35 | 36) && usize::from(leg[20]) == n {
             process_segment(program_id, &passive, leg, None)?;
         } else if matches!((buy, leg[0]), (true, 23 | 24) | (false, 25 | 26))
-            && leg[18..20] == [0, 0] && usize::from(leg[20]) == pages
+            && leg[18..20] == [0, 0]
+            && usize::from(leg[20]) == pages
         {
             let h = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
                 .map_err(|_| ProgramError::InvalidAccountData)?;
@@ -529,9 +548,19 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
             instruction[2..].copy_from_slice(&leg[2..18]);
             // The existing active handler authenticates owners and all makers.
             if buy {
-                crate::multipage_buy::process_multipage_buy_bounded(program_id, &active, &instruction, Some(edge))?;
+                crate::multipage_buy::process_multipage_buy_bounded(
+                    program_id,
+                    &active,
+                    &instruction,
+                    Some(edge),
+                )?;
             } else {
-                crate::multipage_sell::process_multipage_sell_bounded(program_id, &active, &instruction, Some(edge))?;
+                crate::multipage_sell::process_multipage_sell_bounded(
+                    program_id,
+                    &active,
+                    &instruction,
+                    Some(edge),
+                )?;
             }
         } else {
             return Err(ProgramError::InvalidInstructionData);
@@ -540,10 +569,17 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
     let custody = load_custody(program_id, market, &accounts[1])?;
     let pool = PoolAccount::decode_from(&accounts[2].try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    let (base, quote) = reserve.vault_floor(custody.total_base, custody.total_quote)
+    let (base, quote) = reserve
+        .vault_floor(custody.total_base, custody.total_quote)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    pool.pool.verify_vault_coverage(base, quote, crate::checked_token_amount(&accounts[6])?,
-        crate::checked_token_amount(&accounts[7])?).map_err(|_| ProgramError::InsufficientFunds)
+    pool.pool
+        .verify_vault_coverage(
+            base,
+            quote,
+            crate::checked_token_amount(&accounts[6])?,
+            crate::checked_token_amount(&accounts[7])?,
+        )
+        .map_err(|_| ProgramError::InsufficientFunds)
 }
 
 /// Authenticate all pages of the relevant side, including cross-page priority.

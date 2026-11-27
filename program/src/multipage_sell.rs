@@ -169,7 +169,10 @@ pub(super) fn process_multipage_sell_bounded(
     )?;
     let fills = &plan.fills[..usize::from(plan.fill_count)];
     if let Some(tick) = tick {
-        if fills.iter().any(|fill| flat[usize::from(fill.bid_index)].sqrt_price_x64 != tick) {
+        if fills
+            .iter()
+            .any(|fill| flat[usize::from(fill.bid_index)].sqrt_price_x64 != tick)
+        {
             return Err(ProgramError::InvalidInstructionData);
         }
     }
