@@ -2183,15 +2183,9 @@ fn process_close_passive_position(
             .encode_into(&mut position_account.try_borrow_mut_data()?)
             .map_err(|_| ProgramError::InvalidAccountData);
     }
-    // A zeroed position cannot decode again. A second withdrawal fails.
+    // Retain the rent-exempt, program-owned PDA as a permanent tombstone.
+    // The zeroed data cannot decode and create_program_pda cannot recreate
+    // an existing program-owned account, even with the same owner and nonce.
     position_account.try_borrow_mut_data()?.fill(0);
-    // Return the position account's rent to the LP.
-    let rent = position_account.lamports();
-    let new_lp_lamports = lp
-        .lamports()
-        .checked_add(rent)
-        .ok_or(ProgramError::InvalidAccountData)?;
-    **position_account.try_borrow_mut_lamports()? = 0;
-    **lp.try_borrow_mut_lamports()? = new_lp_lamports;
     Ok(())
 }
