@@ -441,8 +441,7 @@ fn process_segment(
     Ok(())
 }
 
-/// Authenticate the complete relevant single-page book. Linked books are
-/// deliberately rejected here until the hybrid router supports their roster.
+/// Authenticate all pages of the relevant side, including cross-page priority.
 fn active_price_limit(
     program_id: &Pubkey,
     market: &Pubkey,
@@ -455,43 +454,73 @@ fn active_price_limit(
     } else {
         header.bid_count() as usize
     };
-    if count == 0 {
-        if !book.is_empty() {
-            return Err(ProgramError::InvalidAccountData);
-        }
-        return Ok(None);
+    if book.is_empty() {
+        return if count == 0 {
+            Ok(None)
+        } else {
+            Err(ProgramError::InvalidAccountData)
+        };
     }
-    if book.len() != 1 || book[0].owner != program_id {
+    if book.len() > 8 {
         return Err(ProgramError::InvalidAccountData);
     }
     let seed: &[u8] = if buy { b"ask-page" } else { b"bid-page" };
-    let (expected, _) =
-        Pubkey::find_program_address(&[seed, market.as_ref(), &0u32.to_le_bytes()], program_id);
-    if *book[0].key != expected {
-        return Err(ProgramError::InvalidSeeds);
+    let mut total = 0usize;
+    let mut best = None;
+    let mut previous: Option<(u128, u64)> = None;
+    for (index, account) in book.iter().enumerate() {
+        let (expected, _) = Pubkey::find_program_address(
+            &[seed, market.as_ref(), &(index as u32).to_le_bytes()],
+            program_id,
+        );
+        if account.owner != program_id || *account.key != expected {
+            return Err(ProgramError::InvalidSeeds);
+        }
+        let (len, links, first, last) = if buy {
+            let page = crate::load_active_ask_page(account)?;
+            (
+                page.len(),
+                page.links(),
+                page.as_slice()
+                    .first()
+                    .map(|e| (e.price_x64, e.sequence, e.sqrt_price_x64)),
+                page.as_slice().last().map(|e| (e.price_x64, e.sequence)),
+            )
+        } else {
+            let page = crate::load_active_bid_page(account)?;
+            (
+                page.len(),
+                page.links(),
+                page.as_slice()
+                    .first()
+                    .map(|e| (e.price_x64, e.sequence, e.sqrt_price_x64)),
+                page.as_slice().last().map(|e| (e.price_x64, e.sequence)),
+            )
+        };
+        if links.page_index != index as u32
+            || links.prev_page != index.checked_sub(1).map(|i| i as u32)
+            || links.next_page != (index + 1 < book.len()).then_some((index + 1) as u32)
+        {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        if let Some((price, sequence, sqrt)) = first {
+            if let Some((prior, seq)) = previous {
+                if (buy && prior > price)
+                    || (!buy && prior < price)
+                    || (prior == price && seq >= sequence)
+                {
+                    return Err(ProgramError::InvalidAccountData);
+                }
+            }
+            if best.is_none() {
+                best = Some(sqrt);
+            }
+            previous = last;
+        }
+        total += len;
     }
-    let (len, links, limit) = if buy {
-        let page = crate::load_active_ask_page(&book[0])?;
-        (
-            page.len(),
-            page.links(),
-            page.as_slice().first().map(|e| e.sqrt_price_x64),
-        )
-    } else {
-        let page = crate::load_active_bid_page(&book[0])?;
-        (
-            page.len(),
-            page.links(),
-            page.as_slice().first().map(|e| e.sqrt_price_x64),
-        )
-    };
-    if len != count
-        || links.page_index != 0
-        || links.prev_page.is_some()
-        || links.next_page.is_some()
-        || limit.is_none()
-    {
+    if total != count {
         return Err(ProgramError::InvalidAccountData);
     }
-    Ok(limit)
+    Ok(best)
 }
