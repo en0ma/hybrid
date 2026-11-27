@@ -491,7 +491,11 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
         return Err(ProgramError::InvalidInstructionData);
     }
     let market = &accounts[0];
-    let reserve = crate::lazy_reserve::load_lazy_reserve(program_id, market, &accounts[fixed])?;
+    // Unlike the generic guard, hybrid execution requires both ledgers.
+    if accounts[2].owner != program_id || accounts[fixed].owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    let guard = [&accounts[2], &accounts[fixed], &accounts[6], &accounts[7]];
     let book = &accounts[fixed + 1..fixed + 1 + 2 * pages];
     let makers = &accounts[fixed + 1 + 2 * pages..];
     let side = data[5];
@@ -547,7 +551,7 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
         if leg[1] != side {
             return Err(ProgramError::InvalidInstructionData);
         }
-        check_hybrid_coverage(program_id, accounts, &reserve)?;
+        crate::verify_aggregate_coverage(program_id, market, &accounts[1], guard)?;
         if matches!(leg[0], 35 | 36) && usize::from(leg[20]) == n {
             process_segment(program_id, &passive, leg, None)?;
         } else if matches!((buy, leg[0]), (true, 23 | 24) | (false, 25 | 26))
@@ -593,7 +597,7 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
             return Err(ProgramError::InvalidInstructionData);
         }
     }
-    check_hybrid_coverage(program_id, accounts, &reserve)?;
+    crate::verify_aggregate_coverage(program_id, market, &accounts[1], guard)?;
     let spent = input_before
         .checked_sub(crate::checked_token_amount(input_account)?)
         .ok_or(ProgramError::InvalidAccountData)?;
@@ -604,42 +608,6 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
         return Err(ProgramError::InvalidInstructionData);
     }
     Ok(())
-}
-
-/// Verify the sum of all three liability classes against canonical vaults.
-#[inline(never)]
-fn check_hybrid_coverage(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-    reserve: &hybrid_state::lazy_reserve::LazyReserve,
-) -> ProgramResult {
-    let market = &accounts[0];
-    let custody = load_custody(program_id, market, &accounts[1])?;
-    let pool_account = &accounts[2];
-    let (key, bump) =
-        Pubkey::find_program_address(&[b"passive-pool", market.key.as_ref()], program_id);
-    let pool = PoolAccount::decode_from(&pool_account.try_borrow_data()?)
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    if pool_account.owner != program_id
-        || *pool_account.key != key
-        || pool.bump != bump
-        || pool.market != market.key.to_bytes()
-        || accounts[6].key.to_bytes() != custody.base_vault
-        || accounts[7].key.to_bytes() != custody.quote_vault
-    {
-        return Err(ProgramError::InvalidSeeds);
-    }
-    let (base, quote) = reserve
-        .vault_floor(custody.total_base, custody.total_quote)
-        .map_err(|_| ProgramError::InvalidAccountData)?;
-    pool.pool
-        .verify_vault_coverage(
-            base,
-            quote,
-            crate::checked_token_amount(&accounts[6])?,
-            crate::checked_token_amount(&accounts[7])?,
-        )
-        .map_err(|_| ProgramError::InsufficientFunds)
 }
 
 /// Authenticate all pages of the relevant side, including cross-page priority.

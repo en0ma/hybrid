@@ -80,7 +80,8 @@ pub fn process_instruction(
                 .len()
                 .checked_sub(4)
                 .ok_or(ProgramError::NotEnoughAccountKeys)?;
-            let (inner, guard) = accounts.split_at(split);
+            let (inner, tail) = accounts.split_at(split);
+            let guard = [&tail[0], &tail[1], &tail[2], &tail[3]];
             let custody_index = if data[0] == 40 { 4 } else { 1 };
             let custody = inner
                 .get(custody_index)
@@ -100,7 +101,7 @@ fn verify_aggregate_coverage(
     program_id: &Pubkey,
     market: &AccountInfo,
     custody_account: &AccountInfo,
-    guard: &[AccountInfo],
+    guard: [&AccountInfo; 4],
 ) -> ProgramResult {
     let custody = load_custody(program_id, market, custody_account)?;
     let (pool_key, bump) =
@@ -127,7 +128,7 @@ fn verify_aggregate_coverage(
         return Err(ProgramError::InvalidAccountData);
     };
     let (base, quote) = if guard[1].owner == program_id {
-        lazy_reserve::load_lazy_reserve(program_id, market, &guard[1])?
+        lazy_reserve::load_lazy_reserve(program_id, market, guard[1])?
             .vault_floor(custody.total_base, custody.total_quote)
             .map_err(|_| ProgramError::InvalidAccountData)?
     } else if *guard[1].owner == Pubkey::default() && guard[1].data_is_empty() {
@@ -137,16 +138,16 @@ fn verify_aggregate_coverage(
     };
     let (authority, _) =
         Pubkey::find_program_address(&[b"vault-authority", market.key.as_ref()], program_id);
-    if token_account_fields(&guard[2])? != (custody.base_mint, authority.to_bytes())
-        || token_account_fields(&guard[3])? != (custody.quote_mint, authority.to_bytes())
+    if token_account_fields(guard[2])? != (custody.base_mint, authority.to_bytes())
+        || token_account_fields(guard[3])? != (custody.quote_mint, authority.to_bytes())
     {
         return Err(ProgramError::InvalidAccountData);
     }
     pool.verify_vault_coverage(
         base,
         quote,
-        checked_token_amount(&guard[2])?,
-        checked_token_amount(&guard[3])?,
+        checked_token_amount(guard[2])?,
+        checked_token_amount(guard[3])?,
     )
     .map_err(|_| ProgramError::InsufficientFunds)
 }
