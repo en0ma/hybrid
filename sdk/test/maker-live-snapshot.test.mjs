@@ -11,7 +11,7 @@ import {join} from "node:path";
 import {createSolanaSettlementAdapter} from "../src/settlement-solana.mjs";
 import {initializeLiveMakerSession,inspectLiveMakerSession,reserveLiveMakerIntent,
   prepareLiveMakerIntent,observeLiveMakerIntent,submitSandboxMakerIntent,
-  finalizeSandboxMakerIntent} from "../src/maker-live-session.mjs";
+  finalizeSandboxMakerIntent,reconcileSandboxMakerIntent} from "../src/maker-live-session.mjs";
 import {loadLiveMakerSnapshot} from "../src/maker-live-snapshot.mjs";
 const Q=1n<<64n;
 const key=n=>new PublicKey(Buffer.alloc(32,n));
@@ -383,5 +383,52 @@ test("HTTP 429 sends exactly one POST even with Retry-After and blocks duplicate
       await assert.rejects(submitSandboxMakerIntent(f.connection,opts),/duplicate submission/);
       assert.equal(posts,1);assert.equal(web3Calls,0);
     });
+  });
+});
+
+async function finalizedCancelFixture(callback){
+  await preparedFixture(async({f,sessionPath,transaction,prepared,opts})=>{
+    await withSubmitServer(f.connection,async(value,res)=>replySignature(value,res,prepared.signature),
+      async()=>{await submitSandboxMakerIntent(f.connection,opts);});
+    f.connection.getSignatureStatuses=async()=>({context:{slot:104},
+      value:[{slot:103,confirmationStatus:"finalized",err:null}]});
+    f.connection.getTransaction=async()=>({version:0,slot:103,meta:{err:null},
+      transaction:{signatures:[prepared.signature],message:transaction.message}});
+    await finalizeSandboxMakerIntent(f.connection,opts);
+    const after=fixture();
+    after.header.writeUInt32LE(0,20);
+    after.pairs.bid[0].p.writeUInt16LE(0);
+    after.pairs.bid[0].p.fill(0,16);
+    after.pairs.bid[0].o.writeUInt16LE(0);
+    after.pairs.bid[0].o.fill(0,16);
+    after.inventory.writeBigUInt64LE(110n,96);
+    after.inventory.writeBigUInt64LE(0n,104);
+    let reads=0;
+    f.connection.getMultipleAccountsInfoAndContext=async(keys,options)=>{
+      reads++;assert.equal(options.commitment,"finalized");
+      assert.equal(options.minContextSlot,reads===1?103:104);
+      return {context:{slot:104},value:keys.map(k=>after.accounts.get(k.toBase58())??null)};
+    };
+    f.connection.getSlot=async()=>104;
+    await callback({f,sessionPath,prepared,opts,after});
+  });
+}
+test("exact finalized cancellation reconciles free/locked quote, archives proof and permits only a fresh plan",async()=>{
+  await finalizedCancelFixture(async({f,sessionPath,prepared,opts})=>{
+    const result=await reconcileSandboxMakerIntent(f.connection,opts);
+    assert.equal(result.state,"reconciled");assert.equal(result.requiresFreshPlan,true);
+    const saved=await inspectLiveMakerSession(sessionPath);
+    assert.equal(saved.phase,"idle");assert.equal(saved.ordersReserved,1);
+    assert.equal(saved.transactionsReserved,1);assert.equal(saved.lastSlot,104);
+    assert.ok((await stat(sessionPath+".settled."+prepared.signature)).size>0);
+    await assert.rejects(stat(sessionPath+".transaction"),/ENOENT/);
+  });
+});
+test("unexplained post-finality inventory remains blocked",async()=>{
+  await finalizedCancelFixture(async({f,sessionPath,opts,after})=>{
+    after.inventory.writeBigUInt64LE(109n,96);
+    await assert.rejects(reconcileSandboxMakerIntent(f.connection,opts),/Unexplained post-finality/);
+    assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"finalized");
+    assert.ok((await stat(sessionPath+".transaction")).size>0);
   });
 });

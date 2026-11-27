@@ -1,7 +1,8 @@
 // Durable single-intent session, explicitly enabled loopback sandbox only.
 // No unattended signing, public-cluster sending, retry or automatic retirement.
 // Paths and RPC adapter must belong to a trusted private test environment.
-import {open,readFile,rename,lstat} from "node:fs/promises";
+import {open,readFile,rename,lstat,unlink} from "node:fs/promises";
+import {loadLiveMakerSnapshot} from "./maker-live-snapshot.mjs";
 import {dirname} from "node:path";
 import {createHash} from "node:crypto";
 import {request as httpRequest} from "node:http";
@@ -77,10 +78,12 @@ async function read(path){
   return state;
 }
 async function persist(path,state,initialize=false){
+  const body=JSON.stringify({state,digest:sha(JSON.stringify(state))})+"\n";
+  if(Buffer.byteLength(body)>16384)throw new Error("Oversized maker session record");
   const pending=path+".pending";
   const handle=await open(pending,"wx",0o600);
   try{
-    await handle.writeFile(JSON.stringify({state,digest:sha(JSON.stringify(state))})+"\n");
+    await handle.writeFile(body);
     await handle.sync();
   }finally{await handle.close();}
   if(initialize){const final=await open(path,"wx",0o600);await final.close();}
@@ -178,6 +181,9 @@ export async function prepareLiveMakerIntent(connection,{sessionPath,snapshotOpt
     if(sha(unsigned)!==intent.unsignedSha256)throw new Error("Reserved transaction fingerprint mismatch");
     const signature=encode58(wire.subarray(1,65));
     assertFirstWireSignature(transaction,signature);
+    if(await exists(archivePath(sessionPath,signature))||
+      await exists(archivePath(sessionPath,signature)+".pending"))
+      throw new Error("Previously reconciled transaction signature cannot be reused");
     if(await connection.getGenesisHash()!==state.domain.genesisHash)throw new Error("RPC genesis mismatch");
     const currentSlot=await connection.getSlot("confirmed");
     const height=await connection.getBlockHeight("confirmed");
@@ -369,5 +375,83 @@ export async function finalizeSandboxMakerIntent(connection,{sessionPath,snapsho
       intent:{...state.intent,finalizedSlot:receipt.slot}});
     return {state:"finalized-success",signature:record.signature,finalizedSlot:receipt.slot,
       canRetry:false,canRelease:false,requiresPostStateReconciliation:true};
+  });
+}
+
+function archivePath(path,signature){
+  if(typeof signature!=="string"||!/[1-9A-HJ-NP-Za-km-z]/.test(signature)||
+    !/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(signature))throw new Error("Invalid archive signature");
+  return path+".settled."+signature;
+}
+const inventoryFields=["freeBase","lockedBase","freeQuote","lockedQuote"];
+const orderView=o=>({side:o.side,sequence:String(o.sequence),priceX64:String(o.priceX64),
+  sqrtPriceX64:String(o.sqrtPriceX64),baseQty:String(o.baseQty),pageIndex:o.pageIndex});
+const sortedOrders=list=>list.map(orderView).sort((a,b)=>
+  BigInt(a.sequence)<BigInt(b.sequence)?-1:BigInt(a.sequence)>BigInt(b.sequence)?1:0);
+const equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+function expectedAfter(intent){
+  const before=intent.before,action=intent.action;
+  if(!before||!Array.isArray(before.ownedOrders)||!["ask","bid"].includes(action?.side))
+    throw new Error("Missing pre-submit inventory proof");
+  const inventory=Object.fromEntries(inventoryFields.map(k=>[k,BigInt(before.inventory[k])]));
+  let orders=before.ownedOrders.map(orderView),nextSequence=BigInt(before.nextSequence),order;
+  const cancel=intent.phase==="cancel";
+  if(cancel){
+    order=orders.find(o=>o.side===action.side&&o.sequence===action.sequence&&o.pageIndex===0);
+    if(!order)throw new Error("Missing canceled order in pre-submit proof");
+    orders=orders.filter(o=>o.sequence!==order.sequence);
+  }else{
+    order=orderView({...action,sequence:nextSequence,pageIndex:0});
+    orders.push(order);nextSequence++;
+  }
+  const q=1n<<64n;
+  const amount=order.side==="ask"?BigInt(order.baseQty):
+    (BigInt(order.baseQty)*BigInt(order.priceX64)+q-1n)/q;
+  const [free,locked]=order.side==="ask"?["freeBase","lockedBase"]:["freeQuote","lockedQuote"];
+  inventory[free]+=cancel?amount:-amount;
+  inventory[locked]+=cancel?-amount:amount;
+  if(Object.values(inventory).some(v=>v<0n||v>MAX64)||nextSequence>MAX64)
+    throw new Error("Expected collateral change out of range");
+  return {inventory:Object.fromEntries(inventoryFields.map(k=>[k,String(inventory[k])])),
+    orders:sortedOrders(orders),nextSequence:String(nextSequence)};
+}
+/** Strict single-action, no-intervening-change reconciliation.
+ * A concurrent fill, deposit, withdrawal, sequence advance or unexplained
+ * vault change is NOT inferred to be harmless. Leave the session blocked.
+ * The complete receipt-bound intent and audit are archived before retirement.
+ */
+export async function reconcileSandboxMakerIntent(connection,{sessionPath,snapshotOptions}){
+  return withMakerJournalLock(sessionPath+".lock",async()=>{
+    const state=await read(sessionPath);sameDomain(state,snapshotOptions);
+    if(state.phase!=="finalized")throw new Error("No finalized intent to reconcile");
+    const {record}=await verifiedJournal(sessionPath,state);
+    const intent=state.intent;
+    if(record.lastConfirmedSlot!==intent.finalizedSlot||record.lastConfirmedSlot!==state.lastSlot||
+      !positive(intent.before?.slot)||intent.before.slot>record.lastConfirmedSlot)
+      throw new Error("Finalized journal and pre-submit context mismatch");
+    const snapshot=await loadLiveMakerSnapshot(connection,{
+      ...snapshotOptions,commitment:"finalized",maxLagSlots:state.limits.maxLagSlots,
+      minContextSlot:Math.max(snapshotOptions.minContextSlot??0,state.lastSlot),
+    });
+    const expected=expectedAfter(intent);
+    const actual={inventory:Object.fromEntries(inventoryFields.map(k=>[k,String(snapshot.inventory[k])])),
+      orders:sortedOrders(snapshot.ownedOrders),nextSequence:String(snapshot.header.nextSequence)};
+    const custody={base:String(snapshot.custodyState.totalBase),quote:String(snapshot.custodyState.totalQuote)};
+    const vaults={base:String(snapshot.vaultAmounts.base),quote:String(snapshot.vaultAmounts.quote)};
+    if(snapshot.pendingLazySettlement||!equal(actual,expected)||
+      !equal(custody,intent.before.custody)||!equal(vaults,intent.before.vaults))
+      throw new Error("Unexplained post-finality maker, custody or vault state; manual reconciliation required");
+    const audit={slot:snapshot.slot,actual,custody,vaults};
+    // Exclusive archive creation retains both complete records. If anything
+    // fails after archival, the lock and/or non-idle state prevent reuse.
+    const path=archivePath(sessionPath,record.signature);
+    if(await exists(path))throw new Error("Existing reconciliation archive; manual recovery required");
+    await persist(path,{session:state,journal:record,audit},true);
+    await unlink(journal(sessionPath));
+    const directory=await open(dirname(sessionPath),"r");
+    try{await directory.sync();}finally{await directory.close();}
+    await persist(sessionPath,{...state,phase:"idle",lastSlot:snapshot.slot,intent:null});
+    return {state:"reconciled",signature:record.signature,slot:snapshot.slot,
+      canSubmit:false,canRetry:false,requiresFreshPlan:true};
   });
 }
