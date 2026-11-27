@@ -523,24 +523,15 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
             if edge != h.sqrt_price_x64 {
                 return Err(ProgramError::InvalidInstructionData);
             }
-            for page in passive[fixed..].iter() {
-                if buy {
-                    if crate::load_active_ask_page(page)?.as_slice().iter().any(|e| e.sqrt_price_x64 != edge) {
-                        return Err(ProgramError::InvalidInstructionData);
-                    }
-                } else if crate::load_active_bid_page(page)?.as_slice().iter().any(|e| e.sqrt_price_x64 != edge) {
-                    return Err(ProgramError::InvalidInstructionData);
-                }
-            }
             let mut instruction = [0u8; 18];
             instruction[0] = leg[0];
             instruction[1] = data[3];
             instruction[2..].copy_from_slice(&leg[2..18]);
             // The existing active handler authenticates owners and all makers.
             if buy {
-                crate::multipage_buy::process_multipage_buy(program_id, &active, &instruction)?;
+                crate::multipage_buy::process_multipage_buy_bounded(program_id, &active, &instruction, Some(edge))?;
             } else {
-                crate::multipage_sell::process_multipage_sell(program_id, &active, &instruction)?;
+                crate::multipage_sell::process_multipage_sell_bounded(program_id, &active, &instruction, Some(edge))?;
             }
         } else {
             return Err(ProgramError::InvalidInstructionData);

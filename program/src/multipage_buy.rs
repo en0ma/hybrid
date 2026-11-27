@@ -13,6 +13,16 @@ pub(super) fn process_multipage_buy(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
+    process_multipage_buy_bounded(program_id, accounts, data, None)
+}
+
+#[inline(never)]
+pub(super) fn process_multipage_buy_bounded(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+    tick: Option<u128>,
+) -> ProgramResult {
     if data.len() != 18 || (data[0] != 23 && data[0] != 24) {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -155,6 +165,11 @@ pub(super) fn process_multipage_buy(
         limit,
     )?;
     let fills = &plan.fills[..usize::from(plan.fill_count)];
+    if let Some(tick) = tick {
+        if fills.iter().any(|fill| flat[usize::from(fill.ask_index)].sqrt_price_x64 != tick) {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+    }
     let mut maker_states = Vec::with_capacity(maker_accounts.len());
     for account in maker_accounts {
         let state = hybrid_state::MakerBalance::decode_from(&account.try_borrow_data()?)
