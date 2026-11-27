@@ -1272,3 +1272,322 @@ async fn exact_out_rounding_transfers_only_requested_atom_in_both_directions() {
         );
     }
 }
+
+#[tokio::test]
+async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures() {
+    use hybrid_engine::{
+        quote_base_in_for_quote_out, quote_quote_in_for_base_out, PassiveState,
+    };
+    use hybrid_state::{
+        lazy_reserve::{LazyReserve, LAZY_RESERVE_BYTES},
+        AskEntry, AskOwnerPage, AskPage, BidEntry, BidPage, MakerBalance, PageLinks,
+        ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES, BID_PAGE_BYTES, MAKER_BALANCE_BYTES,
+    };
+
+    for buy in [true, false] {
+        let mut f = fixture();
+        let page_count = if buy { 3u8 } else { 2u8 };
+        let active_amount = u64::from(page_count) * 10;
+        let maker = f.lp.pubkey();
+        let (maker_balance, maker_bump) = Pubkey::find_program_address(
+            &[b"maker-balance", f.market.as_ref(), maker.as_ref()],
+            &ID,
+        );
+        let (reserve_key, reserve_bump) =
+            Pubkey::find_program_address(&[b"lazy-reserve", f.market.as_ref()], &ID);
+        let mut reserve = LazyReserve::new(reserve_bump, f.market.to_bytes(), [7; 32]).unwrap();
+        reserve.base_fees = 5;
+        reserve.quote_fees = 7;
+        let mut reserve_data = vec![0; LAZY_RESERVE_BYTES];
+        reserve.encode(&mut reserve_data).unwrap();
+        let program = f.program.as_mut().unwrap();
+        program.add_account(reserve_key, account(reserve_data, ID));
+        let mut balance = MakerBalance::new(maker_bump, f.market.to_bytes(), maker.to_bytes());
+        if buy {
+            balance.locked_base = active_amount;
+        } else {
+            balance.locked_quote = active_amount;
+        }
+        let mut balance_data = vec![0; MAKER_BALANCE_BYTES];
+        balance.encode_into(&mut balance_data).unwrap();
+        program.add_account(maker_balance, account(balance_data, ID));
+
+        let mut pairs = Vec::new();
+        let page_seed: &[u8] = if buy { b"ask-page" } else { b"bid-page" };
+        let owner_seed: &[u8] = if buy { b"ask-owner-page" } else { b"bid-owner-page" };
+        for index in 0..u32::from(page_count) {
+            let index_bytes = index.to_le_bytes();
+            let (page, _) = Pubkey::find_program_address(
+                &[page_seed, f.market.as_ref(), &index_bytes],
+                &ID,
+            );
+            let (owner, _) = Pubkey::find_program_address(
+                &[owner_seed, f.market.as_ref(), &index_bytes],
+                &ID,
+            );
+            let links = PageLinks::new(
+                index,
+                index.checked_sub(1),
+                (index + 1 < u32::from(page_count)).then_some(index + 1),
+            );
+            let mut owners = AskOwnerPage::default();
+            owners.set_links(links);
+            owners.len = 1;
+            owners.owners[0] = maker.to_bytes();
+            let mut owner_data = vec![0; ASK_OWNER_PAGE_BYTES];
+            owners.encode_into(&mut owner_data).unwrap();
+            let page_data = if buy {
+                let mut p = AskPage::default();
+                p.set_links(links);
+                p.insert(AskEntry {
+                    price_x64: Q64,
+                    sqrt_price_x64: Q64,
+                    base_qty: 10,
+                    sequence: u64::from(index) + 1,
+                })
+                .unwrap();
+                let mut data = vec![0; ASK_PAGE_BYTES];
+                p.encode_into(&mut data).unwrap();
+                data
+            } else {
+                let mut p = BidPage::default();
+                p.set_links(links);
+                p.insert(BidEntry {
+                    price_x64: Q64,
+                    sqrt_price_x64: Q64,
+                    base_qty: 10,
+                    sequence: u64::from(index) + 1,
+                })
+                .unwrap();
+                let mut data = vec![0; BID_PAGE_BYTES];
+                p.encode_into(&mut data).unwrap();
+                data
+            };
+            program.add_account(page, account(page_data, ID));
+            program.add_account(owner, account(owner_data, ID));
+            pairs.push((page, owner));
+        }
+
+        let mut ctx = f.program.take().unwrap().start_with_context().await;
+        let mut market = ctx
+            .banks_client
+            .get_account(f.market)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut header = MarketHeader::decode_from(&market.data).unwrap();
+        header.flags |= 2;
+        header.next_sequence = u64::from(page_count) + 1;
+        if buy {
+            header.ask_count = u32::from(page_count);
+            header.reserved2 = pairs[0].1.to_bytes();
+        } else {
+            header.set_bid_count(u32::from(page_count));
+            header.set_bid_owner_tag(pairs[0].1.to_bytes()[..16].try_into().unwrap());
+        }
+        header.encode_into(&mut market.data).unwrap();
+        ctx.set_account(&f.market, &market.into());
+
+        let mut custody = ctx
+            .banks_client
+            .get_account(f.custody)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut state = CustodyState::decode_from(&custody.data).unwrap();
+        if buy {
+            state.total_base = active_amount;
+        } else {
+            state.total_quote = active_amount;
+        }
+        state.encode_into(&mut custody.data).unwrap();
+        ctx.set_account(&f.custody, &custody.into());
+        ctx.set_account(
+            &f.base_vault,
+            &token_account(f.base_mint, f.authority, 10_005 + state.total_base).into(),
+        );
+        ctx.set_account(
+            &f.quote_vault,
+            &token_account(f.quote_mint, f.authority, 10_007 + state.total_quote).into(),
+        );
+
+        let side = u8::from(!buy);
+        let route = |gross: u64, max_input: u64| {
+            let mut ix = multi_instruction(&f, 35, side, gross, 1, &[f.position]);
+            ix.accounts[1].is_writable = true;
+            ix.accounts.push(AccountMeta::new_readonly(reserve_key, false));
+            for (page, owner) in &pairs {
+                ix.accounts.push(AccountMeta::new(*page, false));
+                ix.accounts.push(AccountMeta::new(*owner, false));
+            }
+            ix.accounts.push(AccountMeta::new(maker_balance, false));
+            let mut data = vec![46, 2, 1, page_count];
+            data.extend_from_slice(&[if buy { 24 } else { 25 }, side]);
+            data.extend_from_slice(&active_amount.to_le_bytes());
+            data.extend_from_slice(&active_amount.to_le_bytes());
+            data.extend_from_slice(&0u16.to_le_bytes());
+            data.push(page_count);
+            data.extend_from_slice(&ix.data);
+            data.extend_from_slice(&Q64.to_le_bytes());
+            data.extend_from_slice(&header.next_sequence.to_le_bytes());
+            data.extend_from_slice(&1u64.to_le_bytes());
+            data.extend_from_slice(&max_input.to_le_bytes());
+            data.extend_from_slice(&1u64.to_le_bytes());
+            ix.data = data;
+            ix
+        };
+
+        let mut keys = vec![
+            f.market,
+            f.custody,
+            f.pool,
+            f.position,
+            f.base_vault,
+            f.quote_vault,
+            f.taker_base,
+            f.taker_quote,
+            reserve_key,
+            maker_balance,
+        ];
+        for (page, owner) in &pairs {
+            keys.extend([*page, *owner]);
+        }
+        let mut before = Vec::new();
+        for key in &keys {
+            before.push(ctx.banks_client.get_account(*key).await.unwrap().unwrap());
+        }
+        // The first leg is affordable, but the subsequent SPL transfer is
+        // not. The whole route must roll back, including retired pages.
+        assert!(!send(&mut ctx, route(1_000, 2_000), &f.taker).await);
+        for (key, expected) in keys.iter().zip(&before) {
+            let actual = ctx.banks_client.get_account(*key).await.unwrap().unwrap();
+            assert_eq!(&actual, expected);
+        }
+        // Both legs are affordable, but the final aggregate max is exceeded.
+        assert!(!send(&mut ctx, route(100, active_amount + 99), &f.taker).await);
+        for (key, expected) in keys.iter().zip(&before) {
+            let actual = ctx.banks_client.get_account(*key).await.unwrap().unwrap();
+            assert_eq!(&actual, expected);
+        }
+        assert!(send(&mut ctx, route(100, active_amount + 100), &f.taker).await);
+        let passive_state = PassiveState {
+            sqrt_price_x64: Q64,
+            liquidity: 1_000,
+        };
+        let quote = if buy {
+            quote_quote_in_for_base_out(passive_state, 99)
+        } else {
+            quote_base_in_for_quote_out(passive_state, 99)
+        }
+        .unwrap();
+        let base = ctx
+            .banks_client
+            .get_account(f.taker_base)
+            .await
+            .unwrap()
+            .unwrap();
+        let quote_token = ctx
+            .banks_client
+            .get_account(f.taker_quote)
+            .await
+            .unwrap()
+            .unwrap();
+        let maker = ctx
+            .banks_client
+            .get_account(maker_balance)
+            .await
+            .unwrap()
+            .unwrap();
+        let maker = MakerBalance::decode_from(&maker.data).unwrap();
+        let pool = ctx.banks_client.get_account(f.pool).await.unwrap().unwrap();
+        let pool = PoolAccount::decode_from(&pool.data).unwrap().pool;
+        let position = ctx
+            .banks_client
+            .get_account(f.position)
+            .await
+            .unwrap()
+            .unwrap();
+        let position = PositionAccount::decode_from(&position.data).unwrap();
+        let market = ctx
+            .banks_client
+            .get_account(f.market)
+            .await
+            .unwrap()
+            .unwrap();
+        let market = MarketHeader::decode_from(&market.data).unwrap();
+        assert_eq!(market.sqrt_price_x64, quote.next_sqrt_price_x64);
+        assert_eq!(market.ask_count, 0);
+        assert_eq!(market.bid_count(), 0);
+        if buy {
+            assert_eq!(amount(&base), 1_000 + active_amount + quote.amount_out);
+            assert_eq!(amount(&quote_token), 900 - active_amount);
+            assert_eq!(maker.free_quote, active_amount);
+            assert_eq!(pool.base_reserve, 10_000 - quote.amount_out);
+            assert_eq!(pool.quote_reserve, 10_099);
+            assert_eq!(pool.accrued_quote_fees, 1);
+        } else {
+            assert_eq!(amount(&quote_token), 1_000 + active_amount + quote.amount_out);
+            assert_eq!(amount(&base), 900 - active_amount);
+            assert_eq!(maker.free_base, active_amount);
+            assert_eq!(pool.quote_reserve, 10_000 - quote.amount_out);
+            assert_eq!(pool.base_reserve, 10_099);
+            assert_eq!(pool.accrued_base_fees, 1);
+        }
+        assert_eq!(maker.locked_base, 0);
+        assert_eq!(maker.locked_quote, 0);
+        assert_eq!(position.position.base_principal, pool.base_reserve);
+        assert_eq!(position.position.quote_principal, pool.quote_reserve);
+        assert_eq!(position.base_fees, pool.accrued_base_fees);
+        assert_eq!(position.quote_fees, pool.accrued_quote_fees);
+        let custody = ctx
+            .banks_client
+            .get_account(f.custody)
+            .await
+            .unwrap()
+            .unwrap();
+        let custody = CustodyState::decode_from(&custody.data).unwrap();
+        let base_vault = ctx
+            .banks_client
+            .get_account(f.base_vault)
+            .await
+            .unwrap()
+            .unwrap();
+        let quote_vault = ctx
+            .banks_client
+            .get_account(f.quote_vault)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            amount(&base_vault),
+            custody.total_base + pool.base_reserve + pool.accrued_base_fees + 5
+        );
+        assert_eq!(
+            amount(&quote_vault),
+            custody.total_quote + pool.quote_reserve + pool.accrued_quote_fees + 7
+        );
+        let reserve_after = ctx
+            .banks_client
+            .get_account(reserve_key)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(LazyReserve::decode(&reserve_after.data).unwrap(), reserve);
+        for (index, (page, owner)) in pairs.iter().enumerate() {
+            let p = ctx.banks_client.get_account(*page).await.unwrap().unwrap();
+            let (len, links) = if buy {
+                let p = AskPage::decode_from(&p.data).unwrap();
+                (p.len(), p.links())
+            } else {
+                let p = BidPage::decode_from(&p.data).unwrap();
+                (p.len(), p.links())
+            };
+            let o = ctx.banks_client.get_account(*owner).await.unwrap().unwrap();
+            let o = AskOwnerPage::decode_from(&o.data).unwrap();
+            assert_eq!(len, 0);
+            assert_eq!(o.len(), 0);
+            assert_eq!(links, PageLinks::new(index as u32, None, None));
+            assert_eq!(o.links(), links);
+        }
+    }
+}
