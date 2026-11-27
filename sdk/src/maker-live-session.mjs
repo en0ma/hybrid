@@ -76,6 +76,7 @@ async function read(path){
     !["idle","reserved","prepared","submitted","finalized"].includes(state.phase)||
     !integer(state.ordersReserved)||!integer(state.transactionsReserved)||
     !integer(state.retries)||!integer(state.lastSlot)||!state.domain||
+    !(state.rateWindowSlots===null||positive(state.rateWindowSlots))||
     (state.phase==="idle"?state.intent!==null:!state.intent))
     throw new Error("Corrupt maker session integrity");
   limits(state.limits);
@@ -114,8 +115,11 @@ async function checkNoJournal(path){
 export async function initializeLiveMakerSession({sessionPath,snapshotOptions,policy,
   acknowledgeEmptySession=false}){
   if(acknowledgeEmptySession!==true)throw new Error("Explicit empty-session acknowledgement required");
+  const rateWindowSlots=policy?.rateWindowSlots??null;
+  if(rateWindowSlots!==null&&!positive(rateWindowSlots))
+    throw new Error("Invalid rateWindowSlots");
   const state={version:1,phase:"idle",domain:domain(snapshotOptions),limits:limits(policy),
-    ordersReserved:0,transactionsReserved:0,retries:0,lastSlot:0,intent:null};
+    rateWindowSlots,ordersReserved:0,transactionsReserved:0,retries:0,lastSlot:0,intent:null};
   return withMakerJournalLock(sessionPath+".lock",async()=>{
     await checkPending(sessionPath);await checkNoJournal(sessionPath);
     if(await exists(sessionPath))throw new Error("Existing maker session");
@@ -470,5 +474,38 @@ export async function reconcileSandboxMakerIntent(connection,{sessionPath,snapsh
     await persist(sessionPath,{...state,phase:"idle",lastSlot:snapshot.slot,intent:null});
     return {state:"reconciled",signature:record.signature,slot:snapshot.slot,
       canSubmit:false,canRetry:false,requiresFreshPlan:true};
+  });
+}
+
+/** Explicit idle-only renewal, never an automatic retry or reset of loss
+ * baseline/limits. Require a FULL configured quiet interval after the last
+ * reconciled slot, not a wall-clock boundary that permits adjacent bursts.
+ * A missing window configuration keeps lifetime reservation caps.
+ */
+export async function renewSandboxMakerRateWindow(connection,{sessionPath,snapshotOptions,control}){
+  sandbox(connection,control);
+  if(control.renewRateWindow!==true)throw new Error("Explicit rate-window renewal required");
+  return withMakerJournalLock(sessionPath+".lock",async()=>{
+    const state=await read(sessionPath);sameDomain(state,snapshotOptions);
+    if(state.phase!=="idle")return {state:"pending-intent",canSubmit:false};
+    await checkNoJournal(sessionPath);
+    if(state.rateWindowSlots===null)throw new Error("Rate-window renewal not configured");
+    if(state.ordersReserved===0&&state.transactionsReserved===0)
+      return {state:"unused-window",canSubmit:false};
+    if(!positive(state.lastSlot)||typeof connection.getSlot!=="function"||
+      await connection.getGenesisHash()!==state.domain.genesisHash)
+      throw new Error("Invalid rate-window context");
+    const slot=await connection.getSlot("finalized");
+    if(!positive(slot)||slot<state.lastSlot)throw new Error("Stale finalized renewal slot");
+    const elapsed=slot-state.lastSlot;
+    if(elapsed<state.rateWindowSlots)
+      return {state:"cooldown",remainingSlots:state.rateWindowSlots-elapsed,canSubmit:false};
+    sandbox(connection,control);
+    if(control.renewRateWindow!==true)throw new Error("Rate-window renewal no longer approved");
+    const path=sessionPath+".rate-window."+state.lastSlot;
+    // Durable audit before reset; a partial transition remains locked.
+    await persist(path,{session:state,renewalSlot:slot},true,ARCHIVE_BYTES);
+    await persist(sessionPath,{...state,ordersReserved:0,transactionsReserved:0,lastSlot:slot});
+    return {state:"renewed",slot,canSubmit:false,requiresFreshPlan:true};
   });
 }

@@ -11,7 +11,7 @@ import {join} from "node:path";
 import {createSolanaSettlementAdapter} from "../src/settlement-solana.mjs";
 import {initializeLiveMakerSession,inspectLiveMakerSession,reserveLiveMakerIntent,
   prepareLiveMakerIntent,observeLiveMakerIntent,submitSandboxMakerIntent,
-  finalizeSandboxMakerIntent,reconcileSandboxMakerIntent} from "../src/maker-live-session.mjs";
+  finalizeSandboxMakerIntent,reconcileSandboxMakerIntent,renewSandboxMakerRateWindow} from "../src/maker-live-session.mjs";
 import {loadLiveMakerSnapshot} from "../src/maker-live-snapshot.mjs";
 const Q=1n<<64n;
 const key=n=>new PublicKey(Buffer.alloc(32,n));
@@ -222,7 +222,8 @@ async function sessionFixture(callback){
       assert.ok(tx.signatures[0].some(Boolean));return {context:{slot:102},value:{err:null,unitsConsumed:12345}};
     };
     f.connection.getSignatureStatuses=async()=>({context:{slot:103},value:[null]});
-    await initializeLiveMakerSession({sessionPath,snapshotOptions:f.args,policy,acknowledgeEmptySession:true});
+    await initializeLiveMakerSession({sessionPath,snapshotOptions:f.args,
+      policy:{...policy,rateWindowSlots:10},acknowledgeEmptySession:true});
     const reserve=()=>reserveLiveMakerIntent(f.connection,{sessionPath,snapshotOptions:f.args,
       orders:targets.slice(0,2),control});
     await callback({f,sessionPath,reserve});
@@ -485,4 +486,35 @@ test("full 64-order page-zero books can cancel and durably archive both order se
     assert.ok(archive.size>16384,"regression must exceed old shared limit");
     assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"idle");
   }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("rate-window renewal requires a full finalized quiet interval and retains limits and baseline",async()=>{
+  await finalizedCancelFixture(async({f,sessionPath,opts})=>{
+    await reconcileSandboxMakerIntent(f.connection,opts);
+    const renewal={...opts,control:{...sandboxControl,renewRateWindow:true}};
+    await assert.rejects(renewSandboxMakerRateWindow(f.connection,opts),/Explicit rate-window/);
+    f.connection.getSlot=async commitment=>{assert.equal(commitment,"finalized");return 113;};
+    const early=await renewSandboxMakerRateWindow(f.connection,renewal);
+    assert.deepEqual(early,{state:"cooldown",remainingSlots:1,canSubmit:false});
+    assert.equal((await inspectLiveMakerSession(sessionPath)).ordersReserved,1);
+    f.connection.getSlot=async()=>114;
+    const done=await renewSandboxMakerRateWindow(f.connection,renewal);
+    assert.equal(done.state,"renewed");assert.equal(done.requiresFreshPlan,true);
+    const saved=await inspectLiveMakerSession(sessionPath);
+    assert.equal(saved.ordersReserved,0);assert.equal(saved.transactionsReserved,0);
+    assert.equal(saved.lastSlot,114);assert.equal(saved.limits.baselineEquityQuote,"230");
+    assert.equal(saved.limits.maxOrdersPerWindow,8);
+    assert.ok((await stat(sessionPath+".rate-window.104")).size>0);
+    assert.equal((await renewSandboxMakerRateWindow(f.connection,renewal)).state,"unused-window");
+  });
+});
+test("a pending signed or unsigned reservation cannot renew its quota",async()=>{
+  await sessionFixture(async({f,sessionPath,reserve})=>{
+    await reserve();
+    f.connection.getSlot=async()=>10000;
+    const renewal=await renewSandboxMakerRateWindow(f.connection,{sessionPath,snapshotOptions:f.args,
+      control:{...sandboxControl,renewRateWindow:true}});
+    assert.equal(renewal.state,"pending-intent");
+    assert.equal((await inspectLiveMakerSession(sessionPath)).ordersReserved,1);
+  });
 });
