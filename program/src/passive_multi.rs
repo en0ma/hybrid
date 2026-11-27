@@ -615,7 +615,7 @@ fn surviving_hybrid_pages(book: &[AccountInfo], buy: bool) -> Result<usize, Prog
     let mut live = 0usize;
     let mut detached = false;
     let count = book.len() / 2;
-    for (index, pair) in book.chunks_exact(2).enumerate() {
+    for (index, pair) in book.as_chunks::<2>().0.iter().enumerate() {
         let (len, links) = if buy {
             let page = crate::load_active_ask_page(&pair[0])?;
             (page.len(), page.links())
