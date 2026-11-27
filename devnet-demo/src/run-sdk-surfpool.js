@@ -1,7 +1,7 @@
 // Actual SBF-backed SDK settlement on isolated loopback Surfpool.
 import * as web3 from "@solana/web3.js";
 import bs58 from "bs58";
-import {writeFile,mkdir} from "node:fs/promises";
+import {writeFile,mkdir,readFile} from "node:fs/promises";
 import {resolve,join} from "node:path";
 import {clusterConfig,assertCluster} from "./cluster.js";
 import {PROGRAM_ID,TOKEN_PROGRAM_ID} from "./abi.js";
@@ -9,8 +9,12 @@ import {marketBytes,detachedBookPage,classicMintBytes,classicTokenBytes,surfpool
 import {createSolanaSettlementAdapter} from "../../sdk/src/settlement-solana.mjs";
 import {authenticateSettlementCollateral,loadSettlementEpochs,decodeSettlementCustody} from "../../sdk/src/settlement-rpc.mjs";
 import {prepareSettlement} from "../../sdk/src/settlement-plan.mjs";
-import {initPassivePool,openPassivePosition,closePassivePosition,transferMakerCollateral} from "../../sdk/src/instructions.mjs";
+import {initPassivePool,openPassivePosition,closePassivePosition,transferMakerCollateral,swap} from "../../sdk/src/instructions.mjs";
 import {canonicalSqrtPriceX64} from "../../sdk/src/quote-orders.mjs";
+import {loadLiveMakerSnapshot} from "../../sdk/src/maker-live-snapshot.mjs";
+import {initializeLiveMakerSession,inspectLiveMakerSession,reserveLiveMakerIntent,
+ prepareLiveMakerIntent,submitSandboxMakerIntent,finalizeSandboxMakerIntent,
+ reconcileSandboxMakerIntent} from "../../sdk/src/maker-live-session.mjs";
 import {buildSettlementClaim,recoverEpochProofs,decodeLazyReserve,reserveVaultFloor} from "../../sdk/src/settlement.mjs";
 import {decodeMakerBalance} from "../../sdk/src/maker-balance.mjs";
 import {simulateSettlement,journalSettlementClaim,loadSettlementLookupTable,recoverSettlementClaim} from "../../sdk/src/settlement-lifecycle.mjs";
@@ -318,6 +322,112 @@ async function runShared(rpc,url,genesis,dir,report){
  Object.assign(result,{complete:true,aggregateGuardVerified:true,finalReserve:r,finalFloor:floor});
 }
 
+// M83: isolated fixture, actual SDK messages and SBF receipts. Each phase
+// is reloaded from the durable session; no manual account mutation after
+// provisioning and funding. External fills occur only between retired intents.
+async function runMakerSession(rpc,url,genesis,dir,report){
+ const f=await setup(rpc,url,"ask",false,genesis,true);
+ const maker=f.makers[0],market=f.market.publicKey;
+ const result={market:market.toBase58(),maker:maker.publicKey.toBase58(),
+  receipts:[],mutations:[],complete:false};
+ report.makerSession=result;
+ const snapshotOptions={adapter,programId:program,market,maker:maker.publicKey,
+  askHeadOwner:f.head,bidHeadOwner:f.bidHead,expectedGenesisHash:genesis.toBase58()};
+ const observe=(commitment="confirmed")=>loadLiveMakerSnapshot(rpc,{...snapshotOptions,
+  commitment,maxLagSlots:32});
+ for(const [asset,amount,mint,vault] of [["base",100n,f.baseMint,f.baseVault],
+  ["quote",200n,f.quoteMint,f.quoteVault]]){
+  const source=key().publicKey;
+  await seed(rpc,url,source,token,classicTokenBytes(mint,maker.publicKey,amount));
+  await signed(rpc,transferMakerCollateral(program,{market,custody:f.custody,
+   makerBalance:f.balances[0],maker:maker.publicKey,source,vault,mint,tokenProgram:token},
+   {direction:"deposit",asset,amount}),f.payer,[maker],result);
+ }
+ const initial=await observe();
+ fail(initial.inventory.freeBase===100n&&initial.inventory.lockedBase===100n&&
+  initial.inventory.freeQuote===200n&&initial.inventory.lockedQuote===0n,
+  "M83 funding mismatch");
+ const sessionPath=join(dir,"m83-maker.session"),policy={maxLagSlots:32,maxOrders:8,maxChanges:8,
+  maxBaseExposure:"500",maxQuoteNotional:"500",maxLossQuote:"0",baselineEquityQuote:"400",
+  maxOrdersPerWindow:8,maxTransactionsPerWindow:8,maxRetries:0};
+ const control={enabled:true,killSwitch:false,sandboxSubmit:true};
+ await initializeLiveMakerSession({sessionPath,snapshotOptions,policy,acknowledgeEmptySession:true});
+ const opts={sessionPath,snapshotOptions,control};
+ const ask=(qty,price="1")=>({side:"ask",priceAtoms:price,sizeAtoms:String(qty)});
+ const bid=(qty,price="0.5")=>({side:"bid",priceAtoms:price,sizeAtoms:String(qty)});
+ async function waitFinalized(signature){
+  for(let i=0;i<120;i++){
+   const statuses=await rpc.getSignatureStatuses([signature],{searchTransactionHistory:true});
+   const status=statuses.value[0];
+   if(status?.confirmationStatus==="finalized"){
+    fail(status.err===null,"M83 finalized transaction failed");
+    const receipt=await rpc.getTransaction(signature,{commitment:"finalized",maxSupportedTransactionVersion:0});
+    if(receipt&&await rpc.getSlot("finalized")>=receipt.slot)return receipt;
+   }
+   await new Promise(r=>setTimeout(r,500));
+  }
+  throw Error("M83 finalized receipt unavailable");
+ }
+ async function mutate(orders,phase){
+  const reserved=await reserveLiveMakerIntent(rpc,{...opts,orders});
+  fail(reserved.phase==="reserved"&&reserved.action,"M83 reservation missing");
+  const tx=web3.VersionedTransaction.deserialize(Buffer.from(reserved.unsignedWireBase64,"base64"));
+  tx.sign([maker]);
+  const prepared=await prepareLiveMakerIntent(rpc,{...opts,transaction:tx});
+  fail((await inspectLiveMakerSession(sessionPath)).phase==="prepared","M83 restart preparation mismatch");
+  const sent=await submitSandboxMakerIntent(rpc,{...opts,transaction:tx});
+  fail(sent.state==="submitted"||sent.state==="unknown","M83 unexpected send result");
+  const receipt=await waitFinalized(prepared.signature);
+  const final=await finalizeSandboxMakerIntent(rpc,opts);
+  fail(final.state==="finalized-success"&&final.finalizedSlot===receipt.slot,"M83 finality mismatch");
+  const reconciled=await reconcileSandboxMakerIntent(rpc,opts);
+  const saved=await inspectLiveMakerSession(sessionPath);
+  fail(reconciled.state==="reconciled"&&saved.phase==="idle"&&
+   saved.ordersReserved===result.mutations.length+1,"M83 retirement/counter mismatch");
+  const archive=JSON.parse(await readFile(sessionPath+".settled."+prepared.signature,"utf8"));
+  fail(archive.state.session.intent.phase===phase&&archive.state.journal.signature===prepared.signature,
+   "M83 archived phase mismatch");
+  result.mutations.push({phase,signature:prepared.signature,slot:receipt.slot,
+   units:receipt.meta.computeUnitsConsumed,action:reserved.action,post:archive.state.audit,
+   restartVerified:true,reconciled:true});
+ }
+ await mutate([ask(100),bid(20)],"place");
+ // Real active taker partial fill between retired intents, not inferred
+ // from an RPC status. The existing SBF exact-out path transfers 25 atoms.
+ const pre=await observe();
+ const [page]=PublicKey.findProgramAddressSync([Buffer.from("ask-page"),bytes(market),u32(0)],program);
+ const fill=await signed(rpc,swap(program,{market,custody:f.custody,page,ownerPage:f.head,
+  taker:f.taker.publicKey,takerBase:f.takerBase,takerQuote:f.takerQuote,baseVault:f.baseVault,
+  quoteVault:f.quoteVault,vaultAuthority:f.authority,tokenProgram:token,makerBalances:[f.balances[0]]},
+  {side:"buy",mode:"exact-out",amount:25n,limit:25n}),f.payer,[f.taker],result);
+ await waitFinalized(fill.signature);
+ const post=await observe();
+ fail(post.ownedOrders.some(o=>o.side==="ask"&&o.sequence===1n&&o.baseQty===75n)&&
+  post.inventory.lockedBase===pre.inventory.lockedBase-25n&&
+  post.inventory.freeQuote===pre.inventory.freeQuote+25n&&
+  post.custodyState.totalBase===pre.custodyState.totalBase-25n&&
+  post.custodyState.totalQuote===pre.custodyState.totalQuote+25n&&
+  post.vaultAmounts.base===pre.vaultAmounts.base-25n&&
+  post.vaultAmounts.quote===pre.vaultAmounts.quote+25n,"M83 partial fill reconciliation mismatch");
+ result.partialFill={signature:fill.signature,baseAtoms:"25",quoteAtoms:"25",verified:true};
+ await mutate([ask(90,"1.25"),bid(20)],"cancel");
+ await mutate([ask(90,"1.25"),bid(20)],"place");
+ await mutate([],"cancel");
+ await mutate([],"cancel");
+ const end=await observe();
+ fail(end.ownedOrders.length===0&&end.inventory.lockedBase===0n&&end.inventory.lockedQuote===0n&&
+  end.inventory.freeBase===175n&&end.inventory.freeQuote===225n&&
+  end.vaultAmounts.base===end.floor.base&&end.vaultAmounts.quote===end.floor.quote,
+  "M83 final inventory/vault mismatch");
+ const noOp=await reserveLiveMakerIntent(rpc,{...opts,orders:[]});
+ fail(noOp.phase==="noop","M83 empty desired plan not idempotent");
+ const saved=await inspectLiveMakerSession(sessionPath);
+ fail(saved.phase==="idle"&&saved.transactionsReserved===5,"M83 final durable session mismatch");
+ Object.assign(result,{complete:true,finalInventory:end.inventory,finalFloor:end.floor,
+  durableCounters:{orders:saved.ordersReserved,transactions:saved.transactionsReserved},
+  idempotentNoop:true});
+}
+
 async function main(){
  const url=clusterConfig("surfpool",process.env.SOLANA_RPC_URL||"http://127.0.0.1:8899").url;
  const rpc=new Connection(url,"confirmed");await assertCluster(rpc,"surfpool");
@@ -330,6 +440,7 @@ async function main(){
  const report={network:"surfpool",program:PROGRAM_ID,fixtureSeeded:true,cases:[],complete:false};
  try{for(const side of ["ask","bid"])for(const multi of [false,true])await runCase(rpc,url,side,multi,genesis,dir,report);
   await runShared(rpc,url,genesis,dir,report);
+  await runMakerSession(rpc,url,genesis,dir,report);
   report.complete=true;
  }catch(error){report.error=error.message;throw error;}
  finally{await writeFile(join(dir,"sdk-settlement-evidence.json"),json(report),{mode:0o600});}

@@ -98,7 +98,17 @@ jobs:
             c.receipts.some(x=>x.status!=="confirmed")||
             c.receipts.filter(x=>x.opcode===40).some(x=>!x.recovered||!x.replayRejected)||
             (c.multi&&!c.lookup?.createSignature)))throw Error("Incomplete SDK settlement evidence");
-          console.log(JSON.stringify(r.cases.map(c=>({side:c.side,multi:c.multi,receipts:c.receipts})),null,2));
+          const m=r.makerSession;
+          if(!m?.complete||!m.partialFill?.verified||!m.idempotentNoop||
+            m.mutations?.length!==5||new Set(m.mutations.map(x=>x.signature)).size!==5||
+            m.mutations.some(x=>!x.reconciled||!x.restartVerified)||
+            m.mutations.map(x=>x.phase).join(",")!=="place,cancel,place,cancel,cancel"||
+            m.durableCounters?.transactions!==5||
+            m.finalInventory?.freeBase!=="175"||m.finalInventory?.freeQuote!=="225"||
+            m.finalInventory?.lockedBase!=="0"||m.finalInventory?.lockedQuote!=="0")
+            throw Error("Incomplete funded M83 maker session evidence");
+          console.log(JSON.stringify({settlement:r.cases.map(c=>({side:c.side,multi:c.multi,receipts:c.receipts})),
+            makerSession:m},null,2));
           '
       - name: Upload non-secret evidence on success or failure
         if: always()
