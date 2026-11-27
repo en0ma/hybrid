@@ -271,6 +271,44 @@ pub fn quote_base_in_for_quote_out(state: PassiveState, base_in: u64) -> Result<
             next_sqrt_price_x64: state.sqrt_price_x64,
         });
     }
+    // The old search selects the smallest integer P' satisfying
+    // L * (P - P') * Q64 / (P * P') < base_in.
+    // Rearranging gives P' > P * L * Q64 / (L * Q64 + base_in * P).
+    // Split P into quotient and remainder so the Q64 scaling is exact.
+    let lo = match sell_price_fast(state, base_in) {
+        Some(price) => price,
+        None => sell_price_search(state, base_in)?,
+    };
+    let quote_out = mul_q64_floor(state.liquidity, state.sqrt_price_x64 - lo)?;
+    let quote_out = u64::try_from(quote_out).map_err(|_| QuoteError::Overflow)?;
+    Ok(Quote {
+        amount_in: base_in,
+        amount_out: quote_out,
+        next_sqrt_price_x64: lo,
+    })
+}
+
+// For ordinary liquidity and prices, the denominator fits in u128 and
+// the existing wide division helper computes the exact strict quotient.
+fn sell_price_fast(state: PassiveState, base_in: u64) -> Option<u128> {
+    let price = state.sqrt_price_x64;
+    let liquidity = state.liquidity;
+    let scaled = liquidity.checked_mul(Q64)?;
+    let denominator = scaled.checked_add(u128::from(base_in).checked_mul(price)?)?;
+    let numerator = range_product_q64(liquidity, price);
+    let (quotient, _) = div_range_limbs(numerator, denominator).ok()?;
+    if quotient[4..].iter().any(|&digit| digit != 0) {
+        return None;
+    }
+    let floor = u128::from(quotient[0])
+        | (u128::from(quotient[1]) << 32)
+        | (u128::from(quotient[2]) << 64)
+        | (u128::from(quotient[3]) << 96);
+    Some(floor.checked_add(1)?.min(price))
+}
+
+#[inline(never)]
+fn sell_price_search(state: PassiveState, base_in: u64) -> Result<u128, QuoteError> {
     // For sqrt P' <= sqrt P, base movement is
     // L * (P - P') * Q64 / (P * P').
     // Find the largest representable price movement covered by base_in.
@@ -288,13 +326,7 @@ pub fn quote_base_in_for_quote_out(state: PassiveState, base_in: u64) -> Result<
             hi = mid;
         }
     }
-    let quote_out = mul_q64_floor(state.liquidity, state.sqrt_price_x64 - lo)?;
-    let quote_out = u64::try_from(quote_out).map_err(|_| QuoteError::Overflow)?;
-    Ok(Quote {
-        amount_in: base_in,
-        amount_out: quote_out,
-        next_sqrt_price_x64: lo,
-    })
+    Ok(lo)
 }
 
 /// Find the minimum whole base amount whose passive quote covers the requested
@@ -1089,6 +1121,28 @@ pub fn plan_buy_exact_in_levels(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fast_sell_price_matches_reference_search() {
+        for price in [1, Q64 / 100, Q64 / 2, Q64, Q64 * 2, Q64 * 100] {
+            for liquidity in [1, 10, 1_000, 1_000_000, 1_000_000_000] {
+                for input in [1, 2, 10, 99, 100, 10_000, 1_000_000] {
+                    let state = PassiveState {
+                        sqrt_price_x64: price,
+                        liquidity,
+                    };
+                    let reference = sell_price_search(state, input).unwrap();
+                    assert_eq!(sell_price_fast(state, input), Some(reference));
+                    assert_eq!(
+                        quote_base_in_for_quote_out(state, input)
+                            .unwrap()
+                            .next_sqrt_price_x64,
+                        reference
+                    );
+                }
+            }
+        }
+    }
 
     fn one_dollar_ask(base_qty: u64) -> LimitAsk {
         LimitAsk {
