@@ -1302,10 +1302,28 @@ async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures()
         ASK_OWNER_PAGE_BYTES, ASK_PAGE_BYTES, BID_PAGE_BYTES, MAKER_BALANCE_BYTES,
     };
 
-    for buy in [true, false] {
+    for (buy, non_square, repeated) in [
+        (true, false, false),
+        (false, false, false),
+        (true, true, false),
+        (true, false, true),
+        (false, false, true),
+    ] {
         let mut f = fixture();
-        let page_count = if buy { 3u8 } else { 2u8 };
+        let page_count = if repeated {
+            1u8
+        } else if buy {
+            3u8
+        } else {
+            2u8
+        };
         let active_amount = u64::from(page_count) * 10;
+        let active_input = active_amount
+            + if non_square {
+                u64::from(page_count)
+            } else {
+                0
+            };
         let maker = f.lp.pubkey();
         let (maker_balance, maker_bump) = Pubkey::find_program_address(
             &[b"maker-balance", f.market.as_ref(), maker.as_ref()],
@@ -1319,6 +1337,12 @@ async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures()
         let mut reserve_data = vec![0; LAZY_RESERVE_BYTES];
         reserve.encode(&mut reserve_data).unwrap();
         let program = f.program.as_mut().unwrap();
+        // The five-active-leg stress case isolates the default heap from
+        // the per-instruction CU meter. Existing two-leg cases retain
+        // their original 200k limit; no production CU budget is changed.
+        if repeated {
+            program.set_compute_max_units(1_000_000);
+        }
         program.add_account(reserve_key, account(reserve_data, ID));
         let mut balance = MakerBalance::new(maker_bump, f.market.to_bytes(), maker.to_bytes());
         if buy {
@@ -1358,7 +1382,7 @@ async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures()
                 let mut p = AskPage::default();
                 p.set_links(links);
                 p.insert(AskEntry {
-                    price_x64: Q64,
+                    price_x64: Q64 + u128::from(non_square),
                     sqrt_price_x64: Q64,
                     base_qty: 10,
                     sequence: u64::from(index) + 1,
@@ -1440,12 +1464,15 @@ async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures()
                 ix.accounts.push(AccountMeta::new(*owner, false));
             }
             ix.accounts.push(AccountMeta::new(maker_balance, false));
-            let mut data = vec![46, 2, 1, page_count];
-            data.extend_from_slice(&[if buy { 24 } else { 25 }, side]);
-            data.extend_from_slice(&active_amount.to_le_bytes());
-            data.extend_from_slice(&active_amount.to_le_bytes());
-            data.extend_from_slice(&0u16.to_le_bytes());
-            data.push(page_count);
+            let legs = if repeated { 5u8 } else { 1u8 };
+            let mut data = vec![46, legs + 1, 1, page_count];
+            for _ in 0..legs {
+                data.extend_from_slice(&[if buy { 24 } else { 25 }, side]);
+                data.extend_from_slice(&(active_amount / u64::from(legs)).to_le_bytes());
+                data.extend_from_slice(&(active_input / u64::from(legs)).to_le_bytes());
+                data.extend_from_slice(&0u16.to_le_bytes());
+                data.push(page_count);
+            }
             data.extend_from_slice(&ix.data);
             data.extend_from_slice(&Q64.to_le_bytes());
             data.extend_from_slice(&header.next_sequence.to_le_bytes());
@@ -1484,7 +1511,7 @@ async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures()
             assert_eq!(&actual, expected);
         }
         // Both legs are affordable, but the final aggregate max is exceeded.
-        let error = hybrid_failure(&mut ctx, route(100, active_amount + 99), &f.taker).await;
+        let error = hybrid_failure(&mut ctx, route(100, active_input + 99), &f.taker).await;
         assert!(
             error.contains("InstructionError(0, InvalidInstructionData)"),
             "{error}"
@@ -1493,7 +1520,7 @@ async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures()
             let actual = ctx.banks_client.get_account(*key).await.unwrap().unwrap();
             assert_eq!(&actual, expected);
         }
-        assert!(send(&mut ctx, route(100, active_amount + 100), &f.taker).await);
+        assert!(send(&mut ctx, route(100, active_input + 100), &f.taker).await);
         let passive_state = PassiveState {
             sqrt_price_x64: Q64,
             liquidity: 1_000,
@@ -1544,8 +1571,8 @@ async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures()
         assert_eq!(market.bid_count(), 0);
         if buy {
             assert_eq!(amount(&base), 1_000 + active_amount + quote.amount_out);
-            assert_eq!(amount(&quote_token), 900 - active_amount);
-            assert_eq!(maker.free_quote, active_amount);
+            assert_eq!(amount(&quote_token), 900 - active_input);
+            assert_eq!(maker.free_quote, active_input);
             assert_eq!(pool.base_reserve, 10_000 - quote.amount_out);
             assert_eq!(pool.quote_reserve, 10_099);
             assert_eq!(pool.accrued_quote_fees, 1);

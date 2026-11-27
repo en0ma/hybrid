@@ -23,14 +23,8 @@ pub(super) fn process_multipage_sell(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    process_multipage_sell_bounded(
-        program_id,
-        accounts,
-        data,
-        None,
-        &mut SellScratch::default(),
-    )
-    .map(|_| ())
+    process_multipage_sell_bounded(program_id, accounts, data, None, &mut SellScratch::default())
+        .map(|_| ())
 }
 
 #[inline(never)]
@@ -113,8 +107,7 @@ pub(super) fn process_multipage_sell_bounded(
     flat.clear();
     owners_flat.clear();
     makers.clear();
-    pages.resize_with(count, hybrid_state::BidPage::default);
-    sidecars.resize_with(count, hybrid_state::AskOwnerPage::default);
+    resize_scratch_pages(pages, sidecars, count);
     let order_count = market.bid_count() as usize;
     if order_count > count * hybrid_state::BIDS_PER_PAGE {
         return Err(ProgramError::InvalidAccountData);
@@ -297,6 +290,17 @@ pub(super) fn process_multipage_sell_bounded(
     }
     store_custody(custody_account, &custody)?;
     Ok(pages.len())
+}
+
+// Keep large initialization temporaries in a separate SBF stack frame.
+#[inline(never)]
+fn resize_scratch_pages(
+    pages: &mut Vec<hybrid_state::BidPage>,
+    sidecars: &mut Vec<hybrid_state::AskOwnerPage>,
+    count: usize,
+) {
+    pages.resize_with(count, hybrid_state::BidPage::default);
+    sidecars.resize_with(count, hybrid_state::AskOwnerPage::default);
 }
 
 /// Isolate large page/owner-page encode temporaries from the settlement

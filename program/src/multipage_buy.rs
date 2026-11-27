@@ -23,14 +23,8 @@ pub(super) fn process_multipage_buy(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    process_multipage_buy_bounded(
-        program_id,
-        accounts,
-        data,
-        None,
-        &mut BuyScratch::default(),
-    )
-    .map(|_| ())
+    process_multipage_buy_bounded(program_id, accounts, data, None, &mut BuyScratch::default())
+        .map(|_| ())
 }
 
 #[inline(never)]
@@ -113,8 +107,7 @@ pub(super) fn process_multipage_buy_bounded(
     flat.clear();
     owners_flat.clear();
     makers.clear();
-    pages.resize_with(count, hybrid_state::AskPage::default);
-    sidecars.resize_with(count, hybrid_state::AskOwnerPage::default);
+    resize_scratch_pages(pages, sidecars, count);
     let order_count = market.ask_count as usize;
     if order_count > count * hybrid_state::ASKS_PER_PAGE {
         return Err(ProgramError::InvalidAccountData);
@@ -206,7 +199,11 @@ pub(super) fn process_multipage_buy_bounded(
             return Err(ProgramError::InvalidInstructionData);
         }
         let end = flat.partition_point(|entry| entry.sqrt_price_x64 == tick);
-        (tick.checked_add(1).ok_or(ProgramError::InvalidInstructionData)?, &flat[..end])
+        (
+            tick.checked_add(1)
+                .ok_or(ProgramError::InvalidInstructionData)?,
+            &flat[..end],
+        )
     } else {
         (market.sqrt_price_x64, flat.as_slice())
     };
@@ -280,6 +277,17 @@ pub(super) fn process_multipage_buy_bounded(
     }
     store_custody(custody_account, &custody)?;
     Ok(pages.len())
+}
+
+// Keep large initialization temporaries in a separate SBF stack frame.
+#[inline(never)]
+fn resize_scratch_pages(
+    pages: &mut Vec<hybrid_state::AskPage>,
+    sidecars: &mut Vec<hybrid_state::AskOwnerPage>,
+    count: usize,
+) {
+    pages.resize_with(count, hybrid_state::AskPage::default);
+    sidecars.resize_with(count, hybrid_state::AskOwnerPage::default);
 }
 
 /// Isolate large page/owner-page encode temporaries from the settlement
