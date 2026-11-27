@@ -1318,12 +1318,7 @@ async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures()
             2u8
         };
         let active_amount = u64::from(page_count) * 10;
-        let active_input = active_amount
-            + if non_square {
-                u64::from(page_count)
-            } else {
-                0
-            };
+        let active_input = active_amount + if non_square { u64::from(page_count) } else { 0 };
         let maker = f.lp.pubkey();
         let (maker_balance, maker_bump) = Pubkey::find_program_address(
             &[b"maker-balance", f.market.as_ref(), maker.as_ref()],

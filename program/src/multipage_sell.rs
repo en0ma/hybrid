@@ -23,8 +23,14 @@ pub(super) fn process_multipage_sell(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    process_multipage_sell_bounded(program_id, accounts, data, None, &mut SellScratch::default())
-        .map(|_| ())
+    process_multipage_sell_bounded(
+        program_id,
+        accounts,
+        data,
+        None,
+        &mut SellScratch::default(),
+    )
+    .map(|_| ())
 }
 
 #[inline(never)]
