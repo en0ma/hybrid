@@ -61,6 +61,11 @@ test("epoch proof recovery, claim construction and replay rejection",()=>{
   const accounts={market:k(1),epoch:k(4),makerBalance:k(23),maker:k(20),custody:k(2),reserve:k(3),
     vault:k(13),destination:k(25),mint:k(15),vaultAuthority:k(17),tokenProgram:k(18)};
   assert.equal(buildSettlementClaim(k(99),accounts,e,proofs[0]).data[0],40);
+  const guard={pool:k(22),reserve:accounts.reserve,baseVault:k(14),quoteVault:k(13)};
+  const guarded=buildSettlementClaim(k(99),{...accounts,marketFlags:3,aggregateGuard:guard},e,proofs[0]);
+  assert.deepEqual(guarded.keys.slice(-4).map(x=>x.pubkey),Object.values(guard));
+  assert.throws(()=>buildSettlementClaim(k(99),{...accounts,marketFlags:3},e,proofs[0]),/guard required/);
+  assert.throws(()=>buildSettlementClaim(k(99),{...accounts,aggregateGuard:{...guard,baseVault:k(26)}},e,proofs[0]),/vault mismatch/);
   assert.throws(()=>buildSettlementClaim(k(99),accounts,{...e,claimed:[0]},proofs[0]));
   assert.throws(()=>recoverEpochProofs({...e,claimRoot:k(77).toString("hex")},makers));
   assert.throws(()=>buildSettlementClaim(k(99),{...accounts,vault:k(14)},e,proofs[0]));
