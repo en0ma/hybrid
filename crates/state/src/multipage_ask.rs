@@ -40,17 +40,31 @@ pub fn apply_linked_ask_fills(
     sidecars: &[AskOwnerPage],
     fills: &[hybrid_engine::ActiveFill],
 ) -> Result<(Vec<AskPage>, Vec<AskOwnerPage>, usize), StateError> {
+    let mut pages = pages.to_vec();
+    let mut sidecars = sidecars.to_vec();
+    let mut entries = Vec::new();
+    let removed = compact_linked_ask_fills(&mut pages, &mut sidecars, fills, &mut entries)?;
+    Ok((pages, sidecars, removed))
+}
+
+/// Reuse instruction-local scratch; callers must discard scratch on error.
+pub fn compact_linked_ask_fills(
+    pages: &mut Vec<AskPage>,
+    sidecars: &mut Vec<AskOwnerPage>,
+    fills: &[hybrid_engine::ActiveFill],
+    entries: &mut Vec<(AskEntry, [u8; 32])>,
+) -> Result<usize, StateError> {
     if pages.is_empty() || pages.len() > 8 || pages.len() != sidecars.len() {
         return Err(StateError::Corrupt);
     }
     crate::validate_ask_chain(pages)?;
-    for (page, sidecar) in pages.iter().zip(sidecars) {
+    for (page, sidecar) in pages.iter().zip(sidecars.iter()) {
         sidecar.validate_parallel(page)?;
     }
 
-    let mut entries: Vec<(AskEntry, [u8; 32])> =
-        Vec::with_capacity(pages.iter().map(AskPage::len).sum());
-    for (page, sidecar) in pages.iter().zip(sidecars) {
+    entries.clear();
+    entries.reserve_exact(pages.iter().map(AskPage::len).sum());
+    for (page, sidecar) in pages.iter().zip(sidecars.iter()) {
         entries.extend(
             page.as_slice()
                 .iter()
@@ -92,20 +106,15 @@ pub fn apply_linked_ask_fills(
         .max(1)
         .div_ceil(ASKS_PER_PAGE)
         .max(if pages.len() == 2 { 2 } else { 1 });
-    let mut result_pages = Vec::with_capacity(surviving_page_count);
-    let mut result_sidecars = Vec::with_capacity(surviving_page_count);
-    append_compacted_ask_pages(
-        &entries,
-        surviving_page_count,
-        &mut result_pages,
-        &mut result_sidecars,
-    )?;
+    pages.clear();
+    sidecars.clear();
+    append_compacted_ask_pages(entries, surviving_page_count, pages, sidecars)?;
     // The caller must retire the released page/sidecar accounts after a successful write.
-    crate::validate_ask_chain(&result_pages)?;
-    for (page, owners) in result_pages.iter().zip(&result_sidecars) {
+    crate::validate_ask_chain(pages)?;
+    for (page, owners) in pages.iter().zip(sidecars.iter()) {
         owners.validate_parallel(page)?;
     }
-    Ok((result_pages, result_sidecars, initial_len - entries.len()))
+    Ok(initial_len - entries.len())
 }
 
 #[cfg(test)]

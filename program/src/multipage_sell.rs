@@ -2,6 +2,16 @@ use super::*;
 
 const MULTIPAGE_SELL_FIXED: usize = 9;
 
+#[derive(Default)]
+pub(super) struct SellScratch {
+    pages: Vec<hybrid_state::BidPage>,
+    sidecars: Vec<hybrid_state::AskOwnerPage>,
+    flat: Vec<hybrid_engine::LimitAsk>,
+    owners_flat: Vec<[u8; 32]>,
+    entries: Vec<(hybrid_state::BidEntry, [u8; 32])>,
+    makers: Vec<hybrid_state::MakerBalance>,
+}
+
 /// Opcodes 25 and 26: bounded linked-book exact-in and exact-out sells.
 /// ABI: [opcode, page_count, amount:u64 LE, limit:u64 LE].
 /// Accounts: market, custody, taker, taker-base, taker-quote,
@@ -13,7 +23,14 @@ pub(super) fn process_multipage_sell(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    process_multipage_sell_bounded(program_id, accounts, data, None).map(|_| ())
+    process_multipage_sell_bounded(
+        program_id,
+        accounts,
+        data,
+        None,
+        &mut SellScratch::default(),
+    )
+    .map(|_| ())
 }
 
 #[inline(never)]
@@ -22,6 +39,7 @@ pub(super) fn process_multipage_sell_bounded(
     accounts: &[AccountInfo],
     data: &[u8],
     tick: Option<u128>,
+    scratch: &mut SellScratch,
 ) -> Result<usize, ProgramError> {
     if data.len() != 18 || (data[0] != 25 && data[0] != 26) {
         return Err(ProgramError::InvalidInstructionData);
@@ -82,14 +100,28 @@ pub(super) fn process_multipage_sell_bounded(
     if !market.collateralized_active() {
         return Err(ProgramError::InvalidAccountData);
     }
-    let mut pages = Vec::with_capacity(count);
-    let mut sidecars = Vec::with_capacity(count);
-    let mut flat = Vec::new();
-    let mut owners_flat = Vec::new();
-    // SBF's bump allocator does not reclaim dropped boxes. Reuse one
-    // decode buffer per page type across the authenticated chain.
-    let mut page = load_active_bid_page(&accounts[MULTIPAGE_SELL_FIXED])?;
-    let mut owner = load_owner_page_box(&accounts[MULTIPAGE_SELL_FIXED + 1])?;
+    let SellScratch {
+        pages,
+        sidecars,
+        flat,
+        owners_flat,
+        entries,
+        makers,
+    } = scratch;
+    pages.clear();
+    sidecars.clear();
+    flat.clear();
+    owners_flat.clear();
+    makers.clear();
+    pages.resize_with(count, hybrid_state::BidPage::default);
+    sidecars.resize_with(count, hybrid_state::AskOwnerPage::default);
+    let order_count = market.bid_count() as usize;
+    if order_count > count * hybrid_state::BIDS_PER_PAGE {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    flat.reserve_exact(order_count);
+    owners_flat.reserve_exact(order_count);
+    makers.reserve_exact(maker_accounts.len());
     for index in 0..count {
         let page_account = &accounts[MULTIPAGE_SELL_FIXED + 2 * index];
         let owner_account = &accounts[MULTIPAGE_SELL_FIXED + 2 * index + 1];
@@ -116,12 +148,12 @@ pub(super) fn process_multipage_sell_bounded(
         if *page_account.key != expected_page || !valid_owner {
             return Err(ProgramError::InvalidSeeds);
         }
-        if index != 0 {
-            hybrid_state::BidPage::decode_into(&page_account.try_borrow_data()?, &mut page)
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-            hybrid_state::AskOwnerPage::decode_into(&owner_account.try_borrow_data()?, &mut owner)
-                .map_err(|_| ProgramError::InvalidAccountData)?;
-        }
+        let page = &mut pages[index];
+        let owner = &mut sidecars[index];
+        hybrid_state::BidPage::decode_into(&page_account.try_borrow_data()?, page)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        hybrid_state::AskOwnerPage::decode_into(&owner_account.try_borrow_data()?, owner)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
         if owner.len() != page.len()
             || owner.links() != page.links()
             || owner.as_slice().contains(&[0; 32])
@@ -135,10 +167,8 @@ pub(super) fn process_multipage_sell_bounded(
                 .map(hybrid_state::BidEntry::as_limit_ask),
         );
         owners_flat.extend(owner.as_slice().iter().copied());
-        pages.push(*page);
-        sidecars.push(*owner);
     }
-    hybrid_state::validate_bid_chain(&pages).map_err(|_| ProgramError::InvalidAccountData)?;
+    hybrid_state::validate_bid_chain(pages).map_err(|_| ProgramError::InvalidAccountData)?;
     if flat.len() != market.bid_count() as usize {
         return Err(ProgramError::InvalidAccountData);
     }
@@ -168,40 +198,39 @@ pub(super) fn process_multipage_sell_bounded(
     {
         return Err(ProgramError::InvalidAccountData);
     }
+    let (plan_tick, eligible) = if let Some(tick) = tick {
+        if flat
+            .first()
+            .is_none_or(|entry| entry.sqrt_price_x64 != tick)
+        {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        let end = flat.partition_point(|entry| entry.sqrt_price_x64 == tick);
+        (tick, &flat[..end])
+    } else {
+        (market.sqrt_price_x64, flat.as_slice())
+    };
     let plan = plan_active_sell(
         if data[0] == 25 { 17 } else { 18 },
-        market.sqrt_price_x64,
-        &flat,
+        plan_tick,
+        eligible,
         amount,
         limit,
     )?;
     let fills = &plan.fills[..usize::from(plan.fill_count)];
-    if let Some(tick) = tick {
-        if flat.first().is_none_or(|entry| entry.sqrt_price_x64 != tick) {
-            return Err(ProgramError::InvalidInstructionData);
-        }
-        if fills
-            .iter()
-            .any(|fill| flat[usize::from(fill.bid_index)].sqrt_price_x64 != tick)
-        {
-            return Err(ProgramError::InvalidInstructionData);
-        }
-    }
-    let mut maker_states = Vec::with_capacity(maker_accounts.len());
     for account in maker_accounts {
         let state = hybrid_state::MakerBalance::decode_from(&account.try_borrow_data()?)
             .map_err(|_| ProgramError::InvalidAccountData)?;
-        maker_states.push(load_maker_balance_for_owner(
+        makers.push(load_maker_balance_for_owner(
             program_id,
             market_account,
             account,
             state.owner,
         )?);
     }
-    let mut settled = maker_states.clone();
     for fill in fills {
         let owner = owners_flat[usize::from(fill.bid_index)];
-        let maker_index = maker_states
+        let maker_index = makers
             .iter()
             .position(|state| state.owner == owner)
             .ok_or(ProgramError::NotEnoughAccountKeys)?;
@@ -215,7 +244,7 @@ pub(super) fn process_multipage_sell_bounded(
         let remaining = original
             .checked_sub(fill.base_qty)
             .ok_or(ProgramError::InvalidAccountData)?;
-        settled[maker_index]
+        makers[maker_index]
             .settle_bid_fill(
                 original,
                 remaining,
@@ -225,8 +254,8 @@ pub(super) fn process_multipage_sell_bounded(
             )
             .map_err(|_| ProgramError::InsufficientFunds)?;
     }
-    let (next_pages, next_sidecars, removed) =
-        hybrid_state::multipage_bid::apply_linked_bid_fills(&pages, &sidecars, fills)
+    let removed =
+        hybrid_state::multipage_bid::compact_linked_bid_fills(pages, sidecars, fills, entries)
             .map_err(|_| ProgramError::InvalidAccountData)?;
     let next_count = market
         .bid_count()
@@ -262,12 +291,12 @@ pub(super) fn process_multipage_sell_bounded(
     market
         .encode_into(&mut market_account.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    store_bid_page_updates(accounts, count, &next_pages, &next_sidecars)?;
-    for (account, state) in maker_accounts.iter().zip(settled.iter()) {
+    store_bid_page_updates(accounts, count, pages, sidecars)?;
+    for (account, state) in maker_accounts.iter().zip(makers.iter()) {
         store_maker_balance(account, state)?;
     }
     store_custody(custody_account, &custody)?;
-    Ok(next_pages.len())
+    Ok(pages.len())
 }
 
 /// Isolate large page/owner-page encode temporaries from the settlement

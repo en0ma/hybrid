@@ -544,6 +544,8 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
     };
     active.extend(indices.iter().map(|&i| accounts[i].clone()));
     let mut passive = Vec::with_capacity(fixed + pages);
+    let mut buy_scratch = crate::multipage_buy::BuyScratch::default();
+    let mut sell_scratch = crate::multipage_sell::SellScratch::default();
     active.reserve_exact(2 * pages + makers.len());
     for leg in data[4..end].as_chunks::<21>().0 {
         let live_book = &book[..2 * live_pages];
@@ -580,6 +582,7 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
                     &active,
                     &instruction,
                     Some(edge),
+                    &mut buy_scratch,
                 )?
             } else {
                 crate::multipage_sell::process_multipage_sell_bounded(
@@ -587,6 +590,7 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
                     &active,
                     &instruction,
                     Some(edge),
+                    &mut sell_scratch,
                 )?
             };
             // Both handlers authenticate the complete live chain, validate
