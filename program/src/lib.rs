@@ -56,7 +56,88 @@ mod passive_multi;
 const PASSIVE_FEE_BPS: u16 = 100;
 mod passive_swap;
 
+// The market flag is monotone: initializing either liability ledger opts
+// every token-moving instruction into the canonical aggregate guard.
+const MARKET_FLAG_AGGREGATE_GUARD: u16 = 2;
+
 pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    data: &[u8],
+) -> ProgramResult {
+    if matches!(data.first(), Some(13..=18 | 20 | 21 | 23..=26 | 33..=37 | 40..=42 | 44 | 45)) {
+        let market = accounts.first().ok_or(ProgramError::NotEnoughAccountKeys)?;
+        if market.owner != program_id {
+            return Err(ProgramError::IncorrectProgramId);
+        }
+        let header = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        if header.flags & MARKET_FLAG_AGGREGATE_GUARD != 0 {
+            let split = accounts.len().checked_sub(4).ok_or(ProgramError::NotEnoughAccountKeys)?;
+            let (inner, guard) = accounts.split_at(split);
+            let custody_index = if data[0] == 40 { 4 } else { 1 };
+            let custody = inner.get(custody_index).ok_or(ProgramError::NotEnoughAccountKeys)?;
+            verify_aggregate_coverage(program_id, market, custody, guard)?;
+            dispatch_instruction(program_id, inner, data)?;
+            return verify_aggregate_coverage(program_id, market, custody, guard);
+        }
+    }
+    dispatch_instruction(program_id, accounts, data)
+}
+
+// Guard tail: canonical passive pool, lazy reserve, base vault, quote vault.
+// A missing ledger must be proven by its canonical system-owned empty PDA.
+#[inline(never)]
+fn verify_aggregate_coverage(
+    program_id: &Pubkey,
+    market: &AccountInfo,
+    custody_account: &AccountInfo,
+    guard: &[AccountInfo],
+) -> ProgramResult {
+    let custody = load_custody(program_id, market, custody_account)?;
+    let (pool_key, bump) =
+        Pubkey::find_program_address(&[b"passive-pool", market.key.as_ref()], program_id);
+    let (reserve_key, _) =
+        Pubkey::find_program_address(&[b"lazy-reserve", market.key.as_ref()], program_id);
+    if *guard[0].key != pool_key || *guard[1].key != reserve_key
+        || guard[2].key.to_bytes() != custody.base_vault
+        || guard[3].key.to_bytes() != custody.quote_vault
+    {
+        return Err(ProgramError::InvalidSeeds);
+    }
+    let pool = if guard[0].owner == program_id {
+        let state = hybrid_state::passive::PoolAccount::decode_from(&guard[0].try_borrow_data()?)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        if state.market != market.key.to_bytes() || state.bump != bump {
+            return Err(ProgramError::InvalidAccountData);
+        }
+        state.pool
+    } else if *guard[0].owner == Pubkey::default() && guard[0].data_is_empty() {
+        hybrid_state::passive::PassivePool::default()
+    } else {
+        return Err(ProgramError::InvalidAccountData);
+    };
+    let (base, quote) = if guard[1].owner == program_id {
+        lazy_reserve::load_lazy_reserve(program_id, market, &guard[1])?
+            .vault_floor(custody.total_base, custody.total_quote)
+            .map_err(|_| ProgramError::InvalidAccountData)?
+    } else if *guard[1].owner == Pubkey::default() && guard[1].data_is_empty() {
+        (custody.total_base, custody.total_quote)
+    } else {
+        return Err(ProgramError::InvalidAccountData);
+    };
+    let (authority, _) =
+        Pubkey::find_program_address(&[b"vault-authority", market.key.as_ref()], program_id);
+    if token_account_fields(&guard[2])? != (custody.base_mint, authority.to_bytes())
+        || token_account_fields(&guard[3])? != (custody.quote_mint, authority.to_bytes())
+    {
+        return Err(ProgramError::InvalidAccountData);
+    }
+    pool.verify_vault_coverage(base, quote, checked_token_amount(&guard[2])?, checked_token_amount(&guard[3])?)
+        .map_err(|_| ProgramError::InsufficientFunds)
+}
+
+fn dispatch_instruction(
     _program_id: &Pubkey,
     _accounts: &[AccountInfo],
     data: &[u8],
@@ -1777,9 +1858,9 @@ fn process_init_passive_pool(
         return Err(ProgramError::IncorrectProgramId);
     }
     load_custody(program_id, market, custody)?;
-    let market_state = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
+    let mut market_state = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
-    if !market_state.collateralized_active() {
+    if !market.is_writable || !market_state.collateralized_active() {
         return Err(ProgramError::InvalidAccountData);
     }
     let (expected, bump) =
@@ -1803,6 +1884,10 @@ fn process_init_passive_pool(
     };
     state
         .encode_into(&mut pool_account.try_borrow_mut_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    market_state.flags |= MARKET_FLAG_AGGREGATE_GUARD;
+    market_state
+        .encode_into(&mut market.try_borrow_mut_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)
 }
 
