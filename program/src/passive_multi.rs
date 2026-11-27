@@ -543,16 +543,18 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
         [0, 1, 3, 4, 5, 6, 7, 10, 11]
     };
     active.extend(indices.iter().map(|&i| accounts[i].clone()));
-    let active_prefix = active;
+    let mut passive = Vec::with_capacity(fixed + pages);
+    active.reserve_exact(2 * pages + makers.len());
     for leg in data[4..end].as_chunks::<21>().0 {
         let live_book = &book[..2 * live_pages];
-        let mut passive = accounts[..fixed].to_vec();
-        passive.extend(live_book.iter().step_by(2).cloned());
         if leg[1] != side {
             return Err(ProgramError::InvalidInstructionData);
         }
         crate::verify_aggregate_coverage(program_id, market, &accounts[1], guard)?;
         if matches!(leg[0], 35 | 36) && usize::from(leg[20]) == n {
+            passive.clear();
+            passive.extend(accounts[..fixed].iter().cloned());
+            passive.extend(live_book.iter().step_by(2).cloned());
             process_segment(program_id, &passive, leg, None)?;
         } else if matches!((buy, leg[0]), (true, 23 | 24) | (false, 25 | 26))
             && leg[18..20] == [0, 0]
@@ -560,18 +562,15 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
         {
             let h = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
                 .map_err(|_| ProgramError::InvalidAccountData)?;
-            let edge = active_price_limit(program_id, market.key, &h, buy, &passive[fixed..])?
-                .ok_or(ProgramError::InvalidInstructionData)?;
-            // Only execute the active book at its best price. Do not skip
-            // passive liquidity or allow an active leg to sweep worse ticks.
-            if edge != h.sqrt_price_x64 {
-                return Err(ProgramError::InvalidInstructionData);
-            }
+            // The bounded handler authenticates the full chain and checks
+            // the best order and every fill against this live price. Avoid
+            // decoding all the same pages a second time on the bump heap.
+            let edge = h.sqrt_price_x64;
             let mut instruction = [0u8; 18];
             instruction[0] = leg[0];
             instruction[1] = live_pages as u8;
             instruction[2..].copy_from_slice(&leg[2..18]);
-            let mut active = active_prefix.clone();
+            active.truncate(9);
             active.extend(live_book.iter().cloned());
             active.extend(makers.iter().cloned());
             // The existing active handler authenticates owners and all makers.

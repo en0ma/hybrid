@@ -48,7 +48,8 @@ pub fn apply_linked_ask_fills(
         sidecar.validate_parallel(page)?;
     }
 
-    let mut entries: Vec<(AskEntry, [u8; 32])> = Vec::new();
+    let mut entries: Vec<(AskEntry, [u8; 32])> =
+        Vec::with_capacity(pages.iter().map(AskPage::len).sum());
     for (page, sidecar) in pages.iter().zip(sidecars) {
         entries.extend(
             page.as_slice()
@@ -82,8 +83,6 @@ pub fn apply_linked_ask_fills(
         }
     }
 
-    let mut result_pages = Vec::with_capacity(pages.len());
-    let mut result_sidecars = Vec::with_capacity(pages.len());
     // Preserve an already linked two-page maker ABI after partial fills.
     // Shrinking to a single page would prevent opcode 31 cancellation.
     // Constructing both pages here also avoids copying large page structs
@@ -93,6 +92,8 @@ pub fn apply_linked_ask_fills(
         .max(1)
         .div_ceil(ASKS_PER_PAGE)
         .max(if pages.len() == 2 { 2 } else { 1 });
+    let mut result_pages = Vec::with_capacity(surviving_page_count);
+    let mut result_sidecars = Vec::with_capacity(surviving_page_count);
     append_compacted_ask_pages(
         &entries,
         surviving_page_count,

@@ -1273,6 +1273,26 @@ async fn exact_out_rounding_transfers_only_requested_atom_in_both_directions() {
     }
 }
 
+// Assert the specific transaction error, not merely that a route failed.
+// In particular, a heap panic must never satisfy the rollback regression.
+async fn hybrid_failure(
+    ctx: &mut solana_program_test::ProgramTestContext,
+    ix: Instruction,
+    signer: &Keypair,
+) -> String {
+    let hash = ctx.get_new_latest_blockhash().await.unwrap();
+    let tx = Transaction::new_signed_with_payer(
+        &[ix],
+        Some(&ctx.payer.pubkey()),
+        &[&ctx.payer, signer],
+        hash,
+    );
+    format!(
+        "{:?}",
+        ctx.banks_client.process_transaction(tx).await.unwrap_err()
+    )
+}
+
 #[tokio::test]
 async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures() {
     use hybrid_engine::{quote_base_in_for_quote_out, quote_quote_in_for_base_out, PassiveState};
@@ -1457,13 +1477,18 @@ async fn funded_hybrid_routes_cross_compacted_books_and_rollback_late_failures()
         }
         // The first leg is affordable, but the subsequent SPL transfer is
         // not. The whole route must roll back, including retired pages.
-        assert!(!send(&mut ctx, route(1_000, 2_000), &f.taker).await);
+        let error = hybrid_failure(&mut ctx, route(1_000, 2_000), &f.taker).await;
+        assert!(error.contains("InstructionError(0, Custom(1))"), "{error}");
         for (key, expected) in keys.iter().zip(&before) {
             let actual = ctx.banks_client.get_account(*key).await.unwrap().unwrap();
             assert_eq!(&actual, expected);
         }
         // Both legs are affordable, but the final aggregate max is exceeded.
-        assert!(!send(&mut ctx, route(100, active_amount + 99), &f.taker).await);
+        let error = hybrid_failure(&mut ctx, route(100, active_amount + 99), &f.taker).await;
+        assert!(
+            error.contains("InstructionError(0, InvalidInstructionData)"),
+            "{error}"
+        );
         for (key, expected) in keys.iter().zip(&before) {
             let actual = ctx.banks_client.get_account(*key).await.unwrap().unwrap();
             assert_eq!(&actual, expected);

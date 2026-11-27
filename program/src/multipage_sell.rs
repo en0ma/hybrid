@@ -86,6 +86,10 @@ pub(super) fn process_multipage_sell_bounded(
     let mut sidecars = Vec::with_capacity(count);
     let mut flat = Vec::new();
     let mut owners_flat = Vec::new();
+    // SBF's bump allocator does not reclaim dropped boxes. Reuse one
+    // decode buffer per page type across the authenticated chain.
+    let mut page = load_active_bid_page(&accounts[MULTIPAGE_SELL_FIXED])?;
+    let mut owner = load_owner_page_box(&accounts[MULTIPAGE_SELL_FIXED + 1])?;
     for index in 0..count {
         let page_account = &accounts[MULTIPAGE_SELL_FIXED + 2 * index];
         let owner_account = &accounts[MULTIPAGE_SELL_FIXED + 2 * index + 1];
@@ -112,8 +116,12 @@ pub(super) fn process_multipage_sell_bounded(
         if *page_account.key != expected_page || !valid_owner {
             return Err(ProgramError::InvalidSeeds);
         }
-        let page = load_active_bid_page(page_account)?;
-        let owner = load_owner_page_box(owner_account)?;
+        if index != 0 {
+            hybrid_state::BidPage::decode_into(&page_account.try_borrow_data()?, &mut page)
+                .map_err(|_| ProgramError::InvalidAccountData)?;
+            hybrid_state::AskOwnerPage::decode_into(&owner_account.try_borrow_data()?, &mut owner)
+                .map_err(|_| ProgramError::InvalidAccountData)?;
+        }
         if owner.len() != page.len()
             || owner.links() != page.links()
             || owner.as_slice().contains(&[0; 32])
@@ -169,6 +177,9 @@ pub(super) fn process_multipage_sell_bounded(
     )?;
     let fills = &plan.fills[..usize::from(plan.fill_count)];
     if let Some(tick) = tick {
+        if flat.first().is_none_or(|entry| entry.sqrt_price_x64 != tick) {
+            return Err(ProgramError::InvalidInstructionData);
+        }
         if fills
             .iter()
             .any(|fill| flat[usize::from(fill.bid_index)].sqrt_price_x64 != tick)

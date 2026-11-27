@@ -53,7 +53,8 @@ pub fn apply_linked_bid_fills(
         }
     }
 
-    let mut entries: Vec<(BidEntry, [u8; 32])> = Vec::new();
+    let mut entries: Vec<(BidEntry, [u8; 32])> =
+        Vec::with_capacity(pages.iter().map(BidPage::len).sum());
     for (page, sidecar) in pages.iter().zip(sidecars) {
         entries.extend(
             page.as_slice()
@@ -87,9 +88,9 @@ pub fn apply_linked_bid_fills(
         }
     }
 
-    let mut result_pages = Vec::with_capacity(pages.len());
-    let mut result_sidecars = Vec::with_capacity(pages.len());
     let surviving_page_count = entries.len().max(1).div_ceil(BIDS_PER_PAGE);
+    let mut result_pages = Vec::with_capacity(surviving_page_count);
+    let mut result_sidecars = Vec::with_capacity(surviving_page_count);
     append_compacted_bid_pages(
         &entries,
         surviving_page_count,
