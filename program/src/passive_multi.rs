@@ -5,7 +5,6 @@ use crate::{
     TOKEN_PROGRAM_ID,
 };
 use hybrid_engine::{
-    passive_exact_out::{buy_exact_out, sell_exact_out},
     passive_sell_to_target, passive_to_target, quote_base_in_for_quote_out,
     quote_quote_in_for_base_out, PassiveState,
 };
@@ -318,34 +317,48 @@ fn process_segment(
         };
         if exact_out && quote.amount_out >= output - total_out {
             let target = output - total_out;
-            // A boundary payment is already the conservative quote at that edge.
-            // Use the ordinary exact-out solver only if it stays in this segment.
-            let exact = if buy {
-                buy_exact_out(state, target)
-            } else {
-                sell_exact_out(state, target)
-            };
-            let mut solved = false;
-            if let Ok(exact) = exact {
-                let cost = gross_for(exact.amount_in)?;
-                if cost <= leg_gross
-                    && boundary.is_none_or(|edge| {
+            // The current quote already proves an affordable upper bound.
+            // Do not search all of u64: that is unnecessarily expensive on SBF.
+            let mut low = 1u64;
+            let mut high = quote.amount_in;
+            while low < high {
+                let mid = low + (high - low) / 2;
+                let candidate = if buy {
+                    quote_quote_in_for_base_out(state, mid)
+                } else {
+                    quote_base_in_for_quote_out(state, mid)
+                }
+                .map_err(|_| ProgramError::InvalidInstructionData)?;
+                if candidate.amount_out >= target {
+                    high = mid;
+                } else {
+                    low = mid + 1;
+                }
+            }
+            // Reuse the original quote when the entire proven segment input
+            // is necessary (including a conservatively priced boundary).
+            if low < quote.amount_in {
+                let exact = if buy {
+                    quote_quote_in_for_base_out(state, low)
+                } else {
+                    quote_base_in_for_quote_out(state, low)
+                }
+                .map_err(|_| ProgramError::InvalidInstructionData)?;
+                if exact.amount_out < target
+                    || boundary.is_some_and(|edge| {
                         if buy {
-                            exact.next_sqrt_price_x64 <= edge
+                            exact.next_sqrt_price_x64 > edge
                         } else {
-                            exact.next_sqrt_price_x64 >= edge
+                            exact.next_sqrt_price_x64 < edge
                         }
                     })
                 {
-                    quote = exact;
-                    leg_gross = cost;
-                    solved = true;
+                    return Err(ProgramError::InvalidInstructionData);
                 }
-            }
-            // A proven boundary payment is a conservative fallback. Never
-            // charge the entire remaining maximum on an unsolved exact-out.
-            if !solved && !at_boundary {
-                return Err(ProgramError::InvalidInstructionData);
+                leg_gross = gross_for(exact.amount_in)?;
+                quote = exact;
+            } else if !at_boundary {
+                leg_gross = gross_for(quote.amount_in)?;
             }
             // Integer input may buy more than the requested output. Keep
             // the conservative input and price movement; the surplus stays
