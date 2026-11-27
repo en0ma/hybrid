@@ -13,7 +13,7 @@ pub(super) fn process_multipage_buy(
     accounts: &[AccountInfo],
     data: &[u8],
 ) -> ProgramResult {
-    process_multipage_buy_bounded(program_id, accounts, data, None)
+    process_multipage_buy_bounded(program_id, accounts, data, None).map(|_| ())
 }
 
 #[inline(never)]
@@ -22,7 +22,7 @@ pub(super) fn process_multipage_buy_bounded(
     accounts: &[AccountInfo],
     data: &[u8],
     tick: Option<u128>,
-) -> ProgramResult {
+) -> Result<usize, ProgramError> {
     if data.len() != 18 || (data[0] != 23 && data[0] != 24) {
         return Err(ProgramError::InvalidInstructionData);
     }
@@ -235,7 +235,8 @@ pub(super) fn process_multipage_buy_bounded(
     for (account, state) in maker_accounts.iter().zip(settled.iter()) {
         store_maker_balance(account, state)?;
     }
-    store_custody(custody_account, &custody)
+    store_custody(custody_account, &custody)?;
+    Ok(next_pages.len())
 }
 
 /// Isolate large page/owner-page encode temporaries from the settlement
