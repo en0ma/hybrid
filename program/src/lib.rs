@@ -164,6 +164,7 @@ pub fn process_instruction(
         Some(44 | 45) => {
             lazy_multipage_bid_execute::execute_and_seal_multipage(_program_id, _accounts, data)
         }
+        Some(46) => passive_multi::process_hybrid(_program_id, _accounts, data),
         _ => Err(ProgramError::InvalidInstructionData),
     }
 }

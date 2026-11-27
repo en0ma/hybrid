@@ -441,6 +441,120 @@ fn process_segment(
     Ok(())
 }
 
+/// Opcode 46: one atomic, same-direction route of up to eight legs.
+/// Each 21-byte leg uses the passive ABI or an active exact-in/out opcode
+/// (23..26), side, amount, limit, zero fee, and page count.
+/// Prefix: normal passive accounts and LP roster, canonical lazy reserve,
+/// then page/owner pairs and maker balances. Header: 46, legs, LPs, pages.
+/// The initial snapshot follows the legs; each leg observes live state.
+#[inline(never)]
+pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]) -> ProgramResult {
+    if data.len() < 4 || !(1..=8).contains(&data[1]) || !(1..=8).contains(&data[2])
+        || !(1..=8).contains(&data[3])
+    {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let n = usize::from(data[2]);
+    let pages = usize::from(data[3]);
+    let end = 4 + usize::from(data[1]) * 21;
+    let fixed = 12 + n;
+    if data.len() != end + 24 + 8 * n || accounts.len() <= fixed + 2 * pages + 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let market = &accounts[0];
+    let reserve = crate::lazy_reserve::load_lazy_reserve(program_id, market, &accounts[fixed])?;
+    let book = &accounts[fixed + 1..fixed + 1 + 2 * pages];
+    let makers = &accounts[fixed + 1 + 2 * pages..];
+    let side = data[5];
+    if side > 1 {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    let buy = side == 0;
+    let mut passive = accounts[..fixed].to_vec();
+    passive.extend(book.iter().step_by(2).cloned());
+    let snapshot = &data[end..];
+    let header = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    if header.sqrt_price_x64 != u128::from_le_bytes(snapshot[..16].try_into().unwrap())
+        || header.next_sequence != u64::from_le_bytes(snapshot[16..24].try_into().unwrap())
+    {
+        return Err(ProgramError::InvalidInstructionData);
+    }
+    for (i, account) in accounts[12..fixed].iter().enumerate() {
+        let state = PositionAccount::decode_from(&account.try_borrow_data()?)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        if state.revision != u64::from_le_bytes(snapshot[24 + i * 8..32 + i * 8].try_into().unwrap()) {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+    }
+    let (pool_key, bump) = Pubkey::find_program_address(&[b"passive-pool", market.key.as_ref()], program_id);
+    let mut active = Vec::new();
+    let indices = if buy { [0, 1, 3, 5, 4, 7, 6, 10, 11] } else { [0, 1, 3, 4, 5, 6, 7, 10, 11] };
+    active.extend(indices.iter().map(|&i| accounts[i].clone()));
+    active.extend(book.iter().cloned());
+    active.extend(makers.iter().cloned());
+    for leg in data[4..end].as_chunks::<21>().0 {
+        if leg[1] != side {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+        let custody = load_custody(program_id, market, &accounts[1])?;
+        let pool = PoolAccount::decode_from(&accounts[2].try_borrow_data()?)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        if accounts[2].owner != program_id || *accounts[2].key != pool_key
+            || pool.bump != bump || pool.market != market.key.to_bytes()
+        {
+            return Err(ProgramError::InvalidSeeds);
+        }
+        let (base, quote) = reserve.vault_floor(custody.total_base, custody.total_quote)
+            .map_err(|_| ProgramError::InvalidAccountData)?;
+        pool.pool.verify_vault_coverage(base, quote, crate::checked_token_amount(&accounts[6])?,
+            crate::checked_token_amount(&accounts[7])?).map_err(|_| ProgramError::InsufficientFunds)?;
+        if matches!(leg[0], 35 | 36) && usize::from(leg[20]) == n {
+            process_segment(program_id, &passive, leg, None)?;
+        } else if matches!((buy, leg[0]), (true, 23 | 24) | (false, 25 | 26))
+            && leg[18..20] == [0, 0] && usize::from(leg[20]) == pages
+        {
+            let h = hybrid_state::MarketHeader::decode_from(&market.try_borrow_data()?)
+                .map_err(|_| ProgramError::InvalidAccountData)?;
+            let edge = active_price_limit(program_id, market.key, &h, buy, &passive[fixed..])?
+                .ok_or(ProgramError::InvalidInstructionData)?;
+            // Only execute the active book at its best price. Do not skip
+            // passive liquidity or allow an active leg to sweep worse ticks.
+            if edge != h.sqrt_price_x64 {
+                return Err(ProgramError::InvalidInstructionData);
+            }
+            for page in passive[fixed..].iter() {
+                if buy {
+                    if crate::load_active_ask_page(page)?.as_slice().iter().any(|e| e.sqrt_price_x64 != edge) {
+                        return Err(ProgramError::InvalidInstructionData);
+                    }
+                } else if crate::load_active_bid_page(page)?.as_slice().iter().any(|e| e.sqrt_price_x64 != edge) {
+                    return Err(ProgramError::InvalidInstructionData);
+                }
+            }
+            let mut instruction = [0u8; 18];
+            instruction[0] = leg[0];
+            instruction[1] = data[3];
+            instruction[2..].copy_from_slice(&leg[2..18]);
+            // The existing active handler authenticates owners and all makers.
+            if buy {
+                crate::multipage_buy::process_multipage_buy(program_id, &active, &instruction)?;
+            } else {
+                crate::multipage_sell::process_multipage_sell(program_id, &active, &instruction)?;
+            }
+        } else {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+    }
+    let custody = load_custody(program_id, market, &accounts[1])?;
+    let pool = PoolAccount::decode_from(&accounts[2].try_borrow_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    let (base, quote) = reserve.vault_floor(custody.total_base, custody.total_quote)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    pool.pool.verify_vault_coverage(base, quote, crate::checked_token_amount(&accounts[6])?,
+        crate::checked_token_amount(&accounts[7])?).map_err(|_| ProgramError::InsufficientFunds)
+}
+
 /// Authenticate all pages of the relevant side, including cross-page priority.
 fn active_price_limit(
     program_id: &Pubkey,
