@@ -547,12 +547,16 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
     let mut buy_scratch = crate::multipage_buy::BuyScratch::default();
     let mut sell_scratch = crate::multipage_sell::SellScratch::default();
     active.reserve_exact(2 * pages + makers.len());
+    // Authenticate all fixed ledger and vault identities before any CPI.
+    // Subsequent legs cannot replace these accounts: active and passive
+    // handlers write only settlement state and use the canonical SPL
+    // transfer instructions. Re-read live liabilities after each leg.
+    crate::verify_aggregate_coverage(program_id, market, &accounts[1], guard)?;
     for leg in data[4..end].as_chunks::<21>().0 {
         let live_book = &book[..2 * live_pages];
         if leg[1] != side {
             return Err(ProgramError::InvalidInstructionData);
         }
-        crate::verify_aggregate_coverage(program_id, market, &accounts[1], guard)?;
         if matches!(leg[0], 35 | 36) && usize::from(leg[20]) == n {
             passive.clear();
             passive.extend(accounts[..fixed].iter().cloned());
@@ -599,8 +603,8 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
         } else {
             return Err(ProgramError::InvalidInstructionData);
         }
+        verify_hybrid_live_coverage(&accounts[1], guard)?;
     }
-    crate::verify_aggregate_coverage(program_id, market, &accounts[1], guard)?;
     let spent = input_before
         .checked_sub(crate::checked_token_amount(input_account)?)
         .ok_or(ProgramError::InvalidAccountData)?;
@@ -611,6 +615,35 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
         return Err(ProgramError::InvalidInstructionData);
     }
     Ok(())
+}
+
+/// Only called after the fixed accounts pass canonical aggregate
+/// authentication in this instruction. No route leg can change their
+/// identities, and the reserve is not writable by any leg handler.
+/// Decode all three liability classes afresh and enforce the combined
+/// floor before allowing another leg or returning success.
+#[inline(never)]
+fn verify_hybrid_live_coverage(
+    custody_account: &AccountInfo,
+    guard: [&AccountInfo; 4],
+) -> ProgramResult {
+    let custody = hybrid_state::CustodyState::decode_from(&custody_account.try_borrow_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    let pool = PoolAccount::decode_from(&guard[0].try_borrow_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    let reserve = hybrid_state::lazy_reserve::LazyReserve::decode(&guard[1].try_borrow_data()?)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    let (base, quote) = reserve
+        .vault_floor(custody.total_base, custody.total_quote)
+        .map_err(|_| ProgramError::InvalidAccountData)?;
+    pool.pool
+        .verify_vault_coverage(
+            base,
+            quote,
+            crate::checked_token_amount(guard[2])?,
+            crate::checked_token_amount(guard[3])?,
+        )
+        .map_err(|_| ProgramError::InsufficientFunds)
 }
 
 /// Authenticate all pages of the relevant side, including cross-page priority.
