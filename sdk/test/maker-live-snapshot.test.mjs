@@ -1,3 +1,4 @@
+import {planLiveMakerQuotes} from "../src/maker-live-plan.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {PublicKey} from "@solana/web3.js";
@@ -6,7 +7,7 @@ const Q=1n<<64n;
 const key=n=>new PublicKey(Buffer.alloc(32,n));
 const [programId,market,maker,askHeadOwner,bidHeadOwner]=[1,2,3,4,5].map(key);
 const expectedGenesisHash="4".repeat(44);
-const adapter={findProgramAddressSync:PublicKey.findProgramAddressSync,fromBytes:b=>new PublicKey(b)};
+const adapter={findProgramAddressSync:(seeds,program)=>PublicKey.findProgramAddressSync(seeds,program),fromBytes:b=>new PublicKey(b)};
 const TOKEN=new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 const derive=(...seeds)=>PublicKey.findProgramAddressSync(seeds,programId);
 const put128=(b,i,v)=>{b.writeBigUInt64LE(v&(Q-1n),i);b.writeBigUInt64LE(v>>64n,i+8);};
@@ -147,4 +148,48 @@ test("reject discovery identity changes and inventory in excess of custody",asyn
   await assert.rejects(loadLiveMakerSnapshot(a.connection,a.args),/Custody identity changed/);
   const b=fixture();b.inventory.writeBigUInt64LE(101n,80);
   await assert.rejects(loadLiveMakerSnapshot(b.connection,b.args),/exceeds custody/);
+});
+
+test("lazy debits explain nominal inventory before claim but never authorize spending",async()=>{
+  const f=fixture();const {r}=f.addLedgers();
+  f.custodyData.writeBigUInt64LE(110n,176);
+  r.writeBigUInt64LE(10n,104);
+  const s=await loadLiveMakerSnapshot(f.connection,f.args);
+  assert.equal(s.nominalBound.base,120n);
+  assert.equal(s.inventory.freeBase+s.inventory.lockedBase,120n);
+  assert.equal(s.pendingLazySettlement,true);
+  assert.equal(s.canSubmit,false);
+  // One atom more than authenticated pending debits remains invalid.
+  const g=fixture();g.addLedgers().r.writeBigUInt64LE(9n,104);
+  g.custodyData.writeBigUInt64LE(110n,176);
+  await assert.rejects(loadLiveMakerSnapshot(g.connection,g.args),/exceeds custody/);
+});
+
+const policy={enabled:true,killSwitch:false,pendingMutation:false,maxLagSlots:4,maxOrders:8,maxChanges:8,
+  maxBaseExposure:"200",maxQuoteNotional:"100",maxLossQuote:"0",baselineEquityQuote:"230",
+  maxOrdersPerWindow:8,maxTransactionsPerWindow:8,maxRetries:2,ordersInWindow:0,transactionsInWindow:0,retries:0};
+const targets=[{side:"ask",priceAtoms:"1",sizeAtoms:"10"},{side:"ask",priceAtoms:"1",sizeAtoms:"10"},
+  {side:"bid",priceAtoms:"1",sizeAtoms:"10"}];
+test("advisory exact targets match existing quotes without reusing locked funds",async()=>{
+  const f=fixture();
+  const p=await planLiveMakerQuotes(f.connection,{snapshotOptions:f.args,orders:targets,policy});
+  assert.equal(p.phase,"noop");assert.equal(p.canSubmit,false);assert.equal(p.markedEquityQuote,230n);
+});
+test("cancel only before any replacement and reject unsupported linked page changes",async()=>{
+  const f=fixture();
+  const p=await planLiveMakerQuotes(f.connection,{snapshotOptions:f.args,orders:targets.slice(0,2),policy});
+  assert.equal(p.phase,"cancel");assert.equal(p.actions.length,1);assert.equal(p.requiresFreshSnapshot,true);
+  const g=fixture();
+  await assert.rejects(planLiveMakerQuotes(g.connection,{snapshotOptions:g.args,orders:[],policy}),/multi-page cancellation/);
+});
+test("advisory risk fails closed on loss, exposure, rate and unresolved claims",async()=>{
+  for(const [patch,pattern] of [[{baselineEquityQuote:"231"},/loss limit/],
+    [{maxBaseExposure:"129"},/Base exposure/],[{maxQuoteNotional:"29"},/notional/],
+    [{ordersInWindow:8},/rate limit/]]){
+    const f=fixture();
+    await assert.rejects(planLiveMakerQuotes(f.connection,{snapshotOptions:f.args,
+      orders:targets.slice(0,2),policy:{...policy,...patch}}),pattern);
+  }
+  const f=fixture();f.addLedgers();
+  await assert.rejects(planLiveMakerQuotes(f.connection,{snapshotOptions:f.args,orders:targets,policy}),/Pending lazy claims/);
 });

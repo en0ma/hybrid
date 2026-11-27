@@ -193,9 +193,18 @@ export async function loadLiveMakerSnapshot(connection,{
   }
   if(inventory.lockedBase<requiredBase||inventory.lockedQuote<requiredQuote)
     throw new Error("Maker locked collateral deficit");
-  if(inventory.freeBase+inventory.lockedBase>state.totalBase||
-    inventory.freeQuote+inventory.lockedQuote>state.totalQuote)
-    throw new Error("Maker inventory exceeds custody liabilities");
+  // Lazy fills debit custody immediately, but leave nominal maker
+  // balances unchanged until their claims settle. Global pending debits
+  // bound nominal inventory; they are not maker-specific spendable funds.
+  const nominalBound={base:state.totalBase+(reserveState?.makerBaseDebit??0n),
+    quote:state.totalQuote+(reserveState?.makerQuoteDebit??0n)};
+  if(inventory.freeBase+inventory.lockedBase>nominalBound.base||
+    inventory.freeQuote+inventory.lockedQuote>nominalBound.quote)
+    throw new Error("Maker inventory exceeds custody liabilities and pending debits");
+  const pendingLazySettlement=Boolean(reserveState&&[
+    reserveState.makerBaseDebit,reserveState.makerQuoteDebit,
+    reserveState.makerBaseCredit,reserveState.makerQuoteCredit,
+  ].some(v=>v!==0n));
   const observedSlot=await connection.getSlot(commitment);
   if(!slotOk(observedSlot)||observedSlot<slot||observedSlot-slot>maxLagSlots)
     throw new Error("Maker snapshot is stale");
@@ -205,7 +214,7 @@ export async function loadLiveMakerSnapshot(connection,{
     asks:results.ask.orders,bids:results.bid.orders,ownedOrders,inventory,
     requiredLocked:{base:requiredBase,quote:requiredQuote},
     custody:custody.key,custodyState:state,baseVault,quoteVault,baseMint,quoteMint,
-    vaultAuthority:authority.key,vaultAmounts,floor,reserveState,
+    vaultAuthority:authority.key,vaultAmounts,floor,reserveState,nominalBound,pendingLazySettlement,
     marketFlags:header.flags,aggregateGuard:header.aggregateGuardEnabled?
       {pool:pool.key,reserve:reserve.key,baseVault,quoteVault}:undefined};
 }
