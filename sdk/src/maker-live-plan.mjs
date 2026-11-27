@@ -101,5 +101,13 @@ export async function planLiveMakerQuotes(connection,{snapshotOptions,orders,pol
     snapshotSlot:snapshot.slot,observedSlot:snapshot.observedSlot,
     markedEquityQuote:equity,markedLossQuote:loss,
     requiresFreshSnapshot:phase==="cancel",requiresDurableJournalAndFreshSimulation:true,
-    desired:converted.desired};
+    desired:converted.desired,
+    before:{slot:snapshot.slot,nextSequence:String(snapshot.header.nextSequence),
+      inventory:Object.fromEntries(["freeBase","lockedBase","freeQuote","lockedQuote"]
+        .map(k=>[k,String(snapshot.inventory[k])])),
+      ownedOrders:existing.map(o=>({side:o.side,sequence:String(o.sequence),
+        priceX64:String(o.priceX64),sqrtPriceX64:String(o.sqrtPriceX64),
+        baseQty:String(o.baseQty),pageIndex:o.pageIndex})),
+      custody:{base:String(snapshot.custodyState.totalBase),quote:String(snapshot.custodyState.totalQuote)},
+      vaults:{base:String(snapshot.vaultAmounts.base),quote:String(snapshot.vaultAmounts.quote)}}};
 }

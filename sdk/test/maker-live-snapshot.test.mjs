@@ -8,7 +8,8 @@ import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {createSolanaSettlementAdapter} from "../src/settlement-solana.mjs";
 import {initializeLiveMakerSession,inspectLiveMakerSession,reserveLiveMakerIntent,
-  prepareLiveMakerIntent,observeLiveMakerIntent} from "../src/maker-live-session.mjs";
+  prepareLiveMakerIntent,observeLiveMakerIntent,submitSandboxMakerIntent,
+  finalizeSandboxMakerIntent} from "../src/maker-live-session.mjs";
 import {loadLiveMakerSnapshot} from "../src/maker-live-snapshot.mjs";
 const Q=1n<<64n;
 const key=n=>new PublicKey(Buffer.alloc(32,n));
@@ -212,6 +213,7 @@ async function sessionFixture(callback){
       assert.deepEqual(opts,{commitment:"confirmed",minContextSlot:102});
       return {context:{slot:102},value:{blockhash:key(99).toBase58(),lastValidBlockHeight:500}};
     };
+    f.connection.rpcEndpoint="http://127.0.0.1:8899";
     f.connection.getBlockHeight=async()=>499;
     f.connection.simulateTransaction=async(tx,opts)=>{
       assert.equal(opts.sigVerify,true);assert.equal(opts.replaceRecentBlockhash,false);
@@ -260,5 +262,80 @@ test("kill switch and interrupted durable state block reservation",async()=>{
       orders:targets.slice(0,2),control:{enabled:true,killSwitch:true}}),/disabled/);
     await writeFile(sessionPath+".pending","torn update");
     await assert.rejects(reserve(),/Interrupted session/);
+  });
+});
+
+const sandboxControl={...control,sandboxSubmit:true};
+async function preparedFixture(callback){
+  await sessionFixture(async({f,sessionPath,reserve})=>{
+    const r=await reserve();
+    const transaction=VersionedTransaction.deserialize(Buffer.from(r.unsignedWireBase64,"base64"));
+    transaction.sign([makerSigner]);
+    const prepared=await prepareLiveMakerIntent(f.connection,{sessionPath,snapshotOptions:f.args,transaction,control});
+    // Fresh batch at the same simulated slot; the prior fixture deliberately
+    // asserted its initial two discovery/read contexts.
+    const later=fixture();
+    let reads=0;
+    f.connection.getMultipleAccountsInfoAndContext=async(keys,opts)=>{
+      reads++;
+      assert.equal(keys.length,reads===1?1:41);
+      assert.equal(opts.minContextSlot,102);
+      return {context:{slot:102},value:keys.map(k=>later.accounts.get(k.toBase58())??null)};
+    };
+    const opts={sessionPath,snapshotOptions:f.args,transaction,control:sandboxControl};
+    await callback({f,sessionPath,transaction,prepared,opts});
+  });
+}
+test("sandbox submission persists intent before send, matches receipt and blocks further work",async()=>{
+  await preparedFixture(async({f,sessionPath,transaction,prepared,opts})=>{
+    let sends=0;
+    f.connection.sendRawTransaction=async(bytes,options)=>{
+      sends++;assert.deepEqual(bytes,Buffer.from(transaction.serialize()));
+      assert.equal(options.maxRetries,0);assert.equal(options.skipPreflight,false);
+      assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"submitted");
+      return prepared.signature;
+    };
+    const result=await submitSandboxMakerIntent(f.connection,opts);
+    assert.equal(result.state,"submitted");assert.equal(sends,1);
+    f.connection.getSignatureStatuses=async()=>({context:{slot:104},
+      value:[{slot:103,confirmationStatus:"finalized",err:null}]});
+    f.connection.getTransaction=async()=>({version:0,slot:103,meta:{err:null},
+      transaction:{signatures:[prepared.signature],message:transaction.message}});
+    const done=await finalizeSandboxMakerIntent(f.connection,opts);
+    assert.equal(done.state,"finalized-success");assert.equal(done.canRelease,false);
+    assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"finalized");
+    assert.equal(sends,1);
+    await assert.rejects(submitSandboxMakerIntent(f.connection,opts),/duplicate submission/);
+  });
+});
+test("ambiguous send is never retried, and null history cannot release",async()=>{
+  await preparedFixture(async({f,sessionPath,opts})=>{
+    let sends=0;
+    f.connection.sendRawTransaction=async()=>{sends++;throw new Error("RPC disconnected");};
+    assert.equal((await submitSandboxMakerIntent(f.connection,opts)).state,"unknown");
+    assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"submitted");
+    const status=await finalizeSandboxMakerIntent(f.connection,opts);
+    assert.equal(status.state,"unknown");assert.equal(status.canRelease,false);
+    await assert.rejects(submitSandboxMakerIntent(f.connection,opts),/duplicate submission/);
+    assert.equal(sends,1);
+  });
+});
+test("sandbox refuses public RPC and requires explicit submit switch",async()=>{
+  await preparedFixture(async({f,opts})=>{
+    f.connection.rpcEndpoint="https://api.devnet.solana.com";
+    await assert.rejects(submitSandboxMakerIntent(f.connection,opts),/Loopback RPC/);
+    f.connection.rpcEndpoint="http://127.0.0.1:8899";
+    await assert.rejects(submitSandboxMakerIntent(f.connection,{...opts,control}),/sandbox submission opt-in/);
+  });
+});
+test("finalized status without matching full receipt never retires journal",async()=>{
+  await preparedFixture(async({f,sessionPath,prepared,opts})=>{
+    f.connection.sendRawTransaction=async()=>prepared.signature;
+    await submitSandboxMakerIntent(f.connection,opts);
+    f.connection.getSignatureStatuses=async()=>({context:{slot:104},
+      value:[{slot:103,confirmationStatus:"finalized",err:null}]});
+    f.connection.getTransaction=async()=>null;
+    await assert.rejects(finalizeSandboxMakerIntent(f.connection,opts),/receipt does not match/);
+    assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"submitted");
   });
 });
