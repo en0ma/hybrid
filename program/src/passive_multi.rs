@@ -491,8 +491,6 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
             return Err(ProgramError::InvalidInstructionData);
         }
     }
-    let (pool_key, bump) =
-        Pubkey::find_program_address(&[b"passive-pool", market.key.as_ref()], program_id);
     let mut active = Vec::new();
     let indices = if buy {
         [0, 1, 3, 5, 4, 7, 6, 10, 11]
@@ -506,27 +504,7 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
         if leg[1] != side {
             return Err(ProgramError::InvalidInstructionData);
         }
-        let custody = load_custody(program_id, market, &accounts[1])?;
-        let pool = PoolAccount::decode_from(&accounts[2].try_borrow_data()?)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-        if accounts[2].owner != program_id
-            || *accounts[2].key != pool_key
-            || pool.bump != bump
-            || pool.market != market.key.to_bytes()
-        {
-            return Err(ProgramError::InvalidSeeds);
-        }
-        let (base, quote) = reserve
-            .vault_floor(custody.total_base, custody.total_quote)
-            .map_err(|_| ProgramError::InvalidAccountData)?;
-        pool.pool
-            .verify_vault_coverage(
-                base,
-                quote,
-                crate::checked_token_amount(&accounts[6])?,
-                crate::checked_token_amount(&accounts[7])?,
-            )
-            .map_err(|_| ProgramError::InsufficientFunds)?;
+        check_hybrid_coverage(program_id, accounts, &reserve)?;
         if matches!(leg[0], 35 | 36) && usize::from(leg[20]) == n {
             process_segment(program_id, &passive, leg, None)?;
         } else if matches!((buy, leg[0]), (true, 23 | 24) | (false, 25 | 26))
@@ -566,9 +544,32 @@ pub fn process_hybrid(program_id: &Pubkey, accounts: &[AccountInfo], data: &[u8]
             return Err(ProgramError::InvalidInstructionData);
         }
     }
+    check_hybrid_coverage(program_id, accounts, &reserve)
+}
+
+/// Verify the sum of all three liability classes against canonical vaults.
+#[inline(never)]
+fn check_hybrid_coverage(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    reserve: &hybrid_state::lazy_reserve::LazyReserve,
+) -> ProgramResult {
+    let market = &accounts[0];
     let custody = load_custody(program_id, market, &accounts[1])?;
-    let pool = PoolAccount::decode_from(&accounts[2].try_borrow_data()?)
+    let pool_account = &accounts[2];
+    let (key, bump) =
+        Pubkey::find_program_address(&[b"passive-pool", market.key.as_ref()], program_id);
+    let pool = PoolAccount::decode_from(&pool_account.try_borrow_data()?)
         .map_err(|_| ProgramError::InvalidAccountData)?;
+    if pool_account.owner != program_id
+        || *pool_account.key != key
+        || pool.bump != bump
+        || pool.market != market.key.to_bytes()
+        || accounts[6].key.to_bytes() != custody.base_vault
+        || accounts[7].key.to_bytes() != custody.quote_vault
+    {
+        return Err(ProgramError::InvalidSeeds);
+    }
     let (base, quote) = reserve
         .vault_floor(custody.total_base, custody.total_quote)
         .map_err(|_| ProgramError::InvalidAccountData)?;
