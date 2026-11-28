@@ -1,9 +1,10 @@
 // M84 exact-receipt and aggregation primitives, no signing or sending.
 export const MANIFEST_PIN="d04b7aa90b098ba64ebcdf398e9a24d89a9114d8";
 const validInt=n=>Number.isSafeInteger(n)&&n>=0;
-export function auditExecutedReceipt(receipt,{signature,wire,programId,market,bs58}){
+const errorEquals=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+export function auditExecutedReceipt(receipt,{signature,wire,programId,market,bs58,expectedError=null}){
  if(!receipt||receipt.version!==0||!validInt(receipt.slot)||receipt.slot===0||
-   receipt.meta?.err!==null||!validInt(receipt.meta.computeUnitsConsumed)||
+   !errorEquals(receipt.meta?.err,expectedError)||!validInt(receipt.meta.computeUnitsConsumed)||
    receipt.meta.computeUnitsConsumed===0||!validInt(receipt.meta.fee)||
    receipt.transaction?.signatures?.[0]!==signature)
   throw Error("Missing or invalid finalized metered receipt");
@@ -73,7 +74,7 @@ export function validateFullFillPair(pair){
 // Poll only HTTP methods, never signatureSubscribe/confirmTransaction.
  // The caller must use a transport with an independent per-request deadline.
  // A missing signature or receipt is uncertainty, not authorization to resend.
-export async function waitForFinalized(connection,signature,{receiptRequired=true,attempts=120,
+export async function waitForFinalized(connection,signature,{receiptRequired=true,attempts=120,expectedError=null,
  delay=()=>new Promise(resolve=>setTimeout(resolve,500))}={}){
  if(!Number.isSafeInteger(attempts)||attempts<=0||attempts>120)throw Error("Invalid finality polling budget");
  for(let i=0;i<attempts;i++){
@@ -81,14 +82,14 @@ export async function waitForFinalized(connection,signature,{receiptRequired=tru
   if(!Array.isArray(response?.value)||response.value.length!==1)throw Error("Invalid signature status response");
   const status=response.value[0];
   if(status?.confirmationStatus==="finalized"){
-   if(status.err!==null||!validInt(status.slot)||status.slot===0)throw Error("Finalized failure or invalid status: "+signature);
+   if(!errorEquals(status.err,expectedError)||!validInt(status.slot)||status.slot===0)throw Error("Finalized failure or invalid status: "+signature);
    const finalizedSlot=await connection.getSlot("finalized");
    if(!validInt(finalizedSlot))throw Error("Invalid finalized bank slot");
    if(finalizedSlot>=status.slot){
     if(!receiptRequired)return {slot:status.slot};
     const receipt=await connection.getTransaction(signature,{commitment:"finalized",maxSupportedTransactionVersion:0});
     if(receipt){
-     if(receipt.slot!==status.slot||receipt.meta?.err!==null||
+     if(receipt.slot!==status.slot||!errorEquals(receipt.meta?.err,expectedError)||
        receipt.transaction?.signatures?.[0]!==signature)throw Error("Finalized status/receipt mismatch");
      return receipt;
     }
@@ -101,12 +102,12 @@ export async function waitForFinalized(connection,signature,{receiptRequired=tru
 
 // A CI shard is evidence for exactly one paired workload on one runtime.
 export function validatePairedShard(report,{hybridCommit,manifestCommit,makers}){
- if(![1,8,2,4].includes(makers)||!report||report.complete!==true||report.error!==undefined||
+ if(![1,8,2,4,5].includes(makers)||!report||report.complete!==true||report.error!==undefined||
   report.kind!=="preliminary-paired-full-fill"||report.network!=="offline-surfpool"||
   report.hybridCommit!==hybridCommit||report.manifestCommit!==manifestCommit||
   !/^[0-9a-f]{40}$/.test(hybridCommit)||manifestCommit!==MANIFEST_PIN||
   !Array.isArray(report.selectedMakers)||report.selectedMakers.length!==1||report.selectedMakers[0]!==makers||
-  !Array.isArray(report.cases)||report.cases.length!==1||report.cases[0].makers!==(makers===2?1:makers===4?2:makers))
+  !Array.isArray(report.cases)||report.cases.length!==1||report.cases[0].makers!==(makers===2?1:[4,5].includes(makers)?2:makers))
   throw Error("Incomplete or wrong-head paired shard");
  const row=report.cases[0];
  if(row.hybrid?.pendingAttempt||row.manifest?.pendingAttempt||
@@ -117,7 +118,7 @@ export function validatePairedShard(report,{hybridCommit,manifestCommit,makers})
      .every(x=>typeof x==="string"&&/^[0-9a-f]{64}$/.test(x))||
    typeof report.genesis!=="string"||!report.genesis||report.toolchain?.caseMakers!==String(makers))
   throw Error("Missing pinned runtime or completed receipt evidence");
- return makers===2?validateTwoMarketPair(row):makers===4?validatePartialPair(row):validateFullFillPair(row);
+ return makers===2?validateTwoMarketPair(row):makers===4?validatePartialPair(row):makers===5?validateStressPair(row):validateFullFillPair(row);
 }
 
 // Two simultaneous local markets share one funded external maker wallet.
@@ -231,5 +232,90 @@ export function validatePartialPair(row){
   signatures.push(...v.receipts.map(r=>r.signature));
  }
  if(row.hybrid.market===row.manifest.market||new Set(signatures).size!==signatures.length)throw Error("Partial pair alias");
+ return true;
+}
+
+// Compare protocol state, excluding observation slot and shared external wallet.
+function protocolState(s){
+ return JSON.stringify({makers:s.makers,vaultBase:s.vaultBase,vaultQuote:s.vaultQuote,
+  footprint:s.footprint.accounts});
+}
+export function validateStressPair(row){
+ if(row.name!=="adverse-price-collateral-stress"||row.makers!==2||row.makerOwners?.length!==2||
+  new Set(row.makerOwners).size!==2||row.orderBaseAtoms!=="100"||row.initialMakerBaseAtoms!=="1000000000")
+  throw Error("Invalid stress fixture");
+ const signatures=[],markets=[],wallets=[];
+ const specs={
+  before:{base:"200",quote:"0",qty:"100",price:"2",free:"0",credit:"0"},
+  cancelled:{base:"200",quote:"0",qty:"0",price:"0",free:"100",credit:"0"},
+  repriced:{base:"200",quote:"0",qty:"100",price:"1",free:"0",credit:"0"},
+  partial:{base:"150",quote:"50",qty:"50",price:"1",free:"0",credit:"50"},
+  rejected:{base:"150",quote:"50",qty:"50",price:"1",free:"0",credit:"50"},
+  final:{base:"150",quote:"0",qty:"50",price:"1",free:"0",credit:"0"}
+ };
+ const expectedError={InstructionError:[1,"InsufficientFunds"]};
+ const checkWallets=(state,baseDebit,fill,paid)=>{
+  const expected=[[1000000000n-baseDebit,1000000000n+paid],[1000000000n-baseDebit,1000000000n],
+    [1000000000n+fill,1000000000n-fill]];
+  return Array.isArray(state)&&state.length===3&&state.every((a,i)=>String(a.base)===String(expected[i][0])&&String(a.quote)===String(expected[i][1]));
+ };
+ for(const v of [row.hybrid,row.manifest]){
+  if(v?.verified!==true||v.markets?.length!==2||v.walletKeys?.length!==3||
+   v.inventoryUtilization?.numerator!=="400"||v.inventoryUtilization?.denominator!=="2000000000"||
+   v.protocolFeeQuoteAtoms!=="0"||!checkWallets(v.initialWallets,0n,0n,0n)||
+   !checkWallets(v.concurrentWallets,200n,0n,0n)||!checkWallets(v.finalWallets,200n,100n,100n))
+   throw Error("Stress shared wallet mismatch");
+  if(v.walletKeys.some((x,i)=>x.owner!==(i===2?row.taker:row.makerOwners[i])))throw Error("Stress wallet owner mismatch");
+  wallets.push(...v.walletKeys.flatMap(x=>[x.base,x.quote]));
+  for(const [i,market] of v.markets.entries()){
+   if(market?.verified!==true||market.pendingAttempt||market.programId!==v.programId||
+     typeof market.market!=="string"||market.grossBaseAtoms!=="50"||market.grossQuoteAtoms!=="50"||
+     market.protocolFeeQuoteAtoms!=="0"||market.payouts?.join(",")!=="50,0")
+    throw Error("Stress market outcome mismatch");
+   const receipts=market.receipts,negative=market.rejectedWithdrawal;
+   if(receipts.map(r=>r.stage).join(",")!=="initialize,initialize,deposit,place,initialize,deposit,place,cancel,replace,execute,payout"||
+    receipts.some((r,j)=>!validInt(r.slot)||r.slot===0||(j>0&&r.slot<receipts[j-1].slot))||
+    !negative||!errorEquals(negative.expectedError,expectedError)||!errorEquals(negative.simulationError,expectedError)||
+    negative.amountBaseAtoms!=="1"||negative.sendAttempts!==1||
+    typeof negative.signature!=="string"||!validInt(negative.slot)||negative.slot<receipts[9].slot||negative.slot>receipts[10].slot||
+    !["computeUnits","packetBytes","accountKeys","instructionMetas","feeLamports"].every(k=>validInt(negative[k])&&negative[k]>0)||
+    negative.packetBytes>1232)throw Error("Missing finalized insufficient-funds withdrawal evidence");
+   const states=market.states;
+   for(const [name,spec] of Object.entries(specs)){
+    const state=states?.[name],a=state?.makers?.[0],b=state?.makers?.[1];
+    const minSlot=name==="before"?receipts[6].slot:name==="cancelled"?receipts[7].slot:name==="repriced"?receipts[8].slot:
+      name==="partial"?receipts[9].slot:name==="rejected"?negative.slot:receipts[10].slot;
+    if(state?.vaultBase!==spec.base||state.vaultQuote!==spec.quote||state.makers?.length!==2||
+     !validInt(state.footprint?.slot)||state.footprint.slot<minSlot||
+     !validInt(state.footprint?.bytes)||state.footprint.bytes===0||!validInt(state.footprint?.lamports)||state.footprint.lamports===0||
+     !Array.isArray(state.footprint.accounts)||state.footprint.accounts.length===0||
+     a.owner!==row.makerOwners[0]||b.owner!==row.makerOwners[1]||a.freeBase!==spec.free||a.lockedBase!==spec.qty||
+     a.freeQuote!==spec.credit||a.lockedQuote!=="0"||b.freeBase!=="0"||b.lockedBase!=="100"||b.freeQuote!=="0"||b.lockedQuote!=="0"||
+     a.orders?.length!==(spec.qty==="0"?0:1)||b.orders?.length!==1||b.orders[0].base!=="100"||b.orders[0].price!=="3"||
+     (spec.qty!=="0"&&(a.orders[0].base!==spec.qty||a.orders[0].price!==spec.price||!/^[0-9]+$/.test(a.orders[0].sequence))))
+      throw Error("Stress maker state mismatch: "+name);
+    const previous=name==="before"?0n:BigInt(i)*50n;
+    const filled=["partial","rejected","final"].includes(name)?50n:0n;
+    const paid=name==="final"?50n:0n;
+    if(!checkWallets(state.wallets,200n,previous+filled,previous+paid))
+     throw Error("Stress phase wallet mismatch: "+name);
+    if(name!=="before"&&b.orders[0].sequence!==states.before.makers[1].orders[0].sequence)
+     throw Error("Stress unrelated maker order changed");
+   }
+   const newSequence=states.repriced.makers[0].orders[0].sequence;
+   if(newSequence===states.before.makers[0].orders[0].sequence||
+    ["partial","rejected","final"].some(n=>states[n].makers[0].orders[0].sequence!==newSequence)||
+    protocolState(states.partial)!==protocolState(states.rejected)||
+    !checkWallets(states.rejected.wallets,200n,BigInt(i+1)*50n,BigInt(i)*50n)||
+    protocolState(market.otherBefore)!==protocolState(market.otherAfter))
+     throw Error("Stress rollback or other-market isolation mismatch");
+   if(states.before.footprint.slot>Math.min(...v.markets.map(x=>x.receipts.find(r=>r.stage==="cancel").slot)))
+    throw Error("Stress markets not concurrently funded");
+   if(JSON.stringify(summarizeReceipts(receipts))!==JSON.stringify(market.metrics))throw Error("Stress receipt aggregate mismatch");
+   signatures.push(...receipts.map(r=>r.signature),negative.signature);markets.push(market.market);
+  }
+ }
+ if(new Set(signatures).size!==signatures.length||new Set(markets).size!==4||new Set(wallets).size!==12)
+  throw Error("Stress cross-market or protocol alias");
  return true;
 }

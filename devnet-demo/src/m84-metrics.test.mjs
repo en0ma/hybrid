@@ -128,3 +128,13 @@ test("injected acknowledgement loss reconciles original signature without anothe
   sendOnce:async()=>{sends++;throw Error("transport unavailable");},reconcile:async()=>{throw Error("unexpected read");}}),/transport unavailable/);
  assert.equal(sends,3);
 });
+
+test("finality accepts only the explicitly expected negative transaction error",async()=>{
+ const expectedError={InstructionError:[1,"InsufficientFunds"]};
+ const receipt={slot:8,meta:{err:expectedError},transaction:{signatures:["sig"]}};
+ const rpc={getSignatureStatuses:async()=>({value:[{slot:8,confirmationStatus:"finalized",err:expectedError}]}),
+  getSlot:async()=>8,getTransaction:async()=>receipt};
+ assert.equal(await waitForFinalized(rpc,"sig",{attempts:1,expectedError}),receipt);
+ await assert.rejects(waitForFinalized(rpc,"sig",{attempts:1}),/Finalized failure/);
+ await assert.rejects(waitForFinalized({...rpc,getTransaction:async()=>({...receipt,meta:{err:null}})},"sig",{attempts:1,expectedError}),/status\/receipt mismatch/);
+});

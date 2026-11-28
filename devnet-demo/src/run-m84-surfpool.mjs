@@ -15,7 +15,7 @@ import {prepareSettlement} from "../../sdk/src/settlement-plan.mjs";
 import {buildSettlementClaim,recoverEpochProofs,reserveVaultFloor} from "../../sdk/src/settlement.mjs";
 import {loadLiveMakerSnapshot} from "../../sdk/src/maker-live-snapshot.mjs";
 import {canonicalSqrtPriceX64} from "../../sdk/src/quote-orders.mjs";
-import {auditExecutedReceipt,summarizeReceipts,validateFullFillPair,validateTwoMarketPair,validatePartialPair,submitAndReconcileOnce,waitForFinalized,MANIFEST_PIN} from "./m84-metrics.mjs";
+import {auditExecutedReceipt,summarizeReceipts,validateFullFillPair,validateTwoMarketPair,validatePartialPair,validateStressPair,submitAndReconcileOnce,waitForFinalized,MANIFEST_PIN} from "./m84-metrics.mjs";
 const {PublicKey,Keypair,Connection,SystemProgram,ComputeBudgetProgram,TransactionMessage,VersionedTransaction}=web3;
 const H=new PublicKey(PROGRAM_ID),M=new PublicKey("MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms");
 const T=new PublicKey(TOKEN_PROGRAM_ID),T22=new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
@@ -79,6 +79,28 @@ async function send(result,stage,market,program,instructions,payer,others=[],sim
  delete result.pendingAttempt;
  await checkpoint();
  console.log(JSON.stringify({stage,program:pk(program),market:pk(market),signature,slot:proof.slot,computeUnits:proof.computeUnits}));
+ return proof;
+}
+// Deliberate negative test on a disposable offline fixture only. A signed
+// withdrawal must fail specifically on locked collateral; never retry it.
+async function rejectLockedWithdrawal(result,market,program,instruction,payer){
+ const {blockhash}=await rpc.getLatestBlockhash("confirmed");
+ const message=new TransactionMessage({payerKey:payer.publicKey,recentBlockhash:blockhash,
+  instructions:[ComputeBudgetProgram.setComputeUnitLimit({units:400000}),instruction]}).compileToV0Message();
+ const tx=new VersionedTransaction(message);tx.sign([payer]);
+ const wire=Buffer.from(tx.serialize()),signature=bs58.encode(tx.signatures[0]);
+ const expectedError={InstructionError:[1,"InsufficientFunds"]};
+ const sim=await rpc.simulateTransaction(tx,{sigVerify:true,replaceRecentBlockhash:false,commitment:"confirmed"});
+ fail(JSON.stringify(sim.value.err)===JSON.stringify(expectedError),"Expected locked-collateral simulation rejection, got "+JSON.stringify(sim.value.err));
+ result.pendingAttempt={stage:"rejected-withdrawal",signature,status:"submission-attempted"};
+ await checkpoint();
+ fail(await rpc.sendRawTransaction(wire,{maxRetries:0,skipPreflight:true})===signature,"Rejected withdrawal signature mismatch");
+ const receipt=await waitForFinalized(rpc,signature,{expectedError});
+ const proof=auditExecutedReceipt(receipt,{signature,wire,programId:program,market,bs58,expectedError});
+ result.rejectedWithdrawal={...proof,expectedError,simulationError:sim.value.err,
+  simulationComputeUnits:sim.value.unitsConsumed,amountBaseAtoms:"1",sendAttempts:1};
+ delete result.pendingAttempt;
+ await checkpoint();
  return proof;
 }
 async function externalAccounts(f){
@@ -153,8 +175,8 @@ async function hybrid(f,accounts,result){
   await send(result,"deposit",mk,H,[transferMakerCollateral(H,{market:mk,custody,makerBalance,maker:maker.publicKey,
    source:accounts[i].base,vault:baseVault,mint:f.baseMint,tokenProgram:T},{direction:"deposit",asset:"base",amount:ORDER})],maker);
   await send(result,"place",mk,H,[placeOrder(H,{market:mk,page:askPage,ownerPage:askOwner,makerBalance,maker:maker.publicKey},
-   {side:"ask",baseQty:ORDER,priceX64:f.partial?BigInt(i+1)*Q:priceX64,
-    sqrtPriceX64:canonicalSqrtPriceX64(f.partial?BigInt(i+1)*Q:priceX64)})],maker);
+   {side:"ask",baseQty:ORDER,priceX64:f.partial?BigInt(i+(f.stress?2:1))*Q:priceX64,
+    sqrtPriceX64:canonicalSqrtPriceX64(f.partial?BigInt(i+(f.stress?2:1))*Q:priceX64)})],maker);
  }
  const taker=accounts.at(-1);
  const snap=()=>authenticateSettlementCollateral(rpc,{adapter,programId:H,market:mk,side:"ask",
@@ -199,17 +221,21 @@ async function hybrid(f,accounts,result){
     wallets:await walletState(accounts,f),footprint:await footprint(keys)};
   };
   const roles={market:mk,page:askPage,ownerPage:askOwner,makerBalance:balances[0],maker:f.makers[0].publicKey};
-  return runPartial(f,result,states,{
+  const operations={
    trade:()=>send(result,"execute",mk,H,[swap(H,{market:mk,custody,page:askPage,ownerPage:askOwner,
     taker:f.taker.publicKey,takerQuote:taker.quote,takerBase:taker.base,quoteVault,baseVault,
     vaultAuthority:authority,tokenProgram:T,makerBalances:[balances[0]]},{side:"buy",mode:"exact-out",amount:50n,limit:50n})],f.taker),
    cancel:sequence=>send(result,"cancel",mk,H,[cancelOrder(H,roles,{side:"ask",sequence:BigInt(sequence)})],f.makers[0]),
-   replace:()=>send(result,"replace",mk,H,[placeOrder(H,roles,{side:"ask",baseQty:50n,priceX64:3n*Q,
-    sqrtPriceX64:canonicalSqrtPriceX64(3n*Q)})],f.makers[0],[],true),
+   replace:()=>send(result,"replace",mk,H,[placeOrder(H,roles,{side:"ask",baseQty:f.stress?100n:50n,priceX64:(f.stress?1n:3n)*Q,
+    sqrtPriceX64:canonicalSqrtPriceX64((f.stress?1n:3n)*Q)})],f.makers[0],[],!f.stress),
+   rejectWithdrawal:()=>rejectLockedWithdrawal(result,mk,H,transferMakerCollateral(H,{market:mk,custody,makerBalance:balances[0],
+    maker:f.makers[0].publicKey,vault:baseVault,destination:accounts[0].base,mint:f.baseMint,
+    vaultAuthority:authority,tokenProgram:T},{direction:"withdraw",asset:"base",amount:1n}),f.makers[0]),
    payout:()=>send(result,"payout",mk,H,[transferMakerCollateral(H,{market:mk,custody,makerBalance:balances[0],
     maker:f.makers[0].publicKey,vault:quoteVault,destination:accounts[0].quote,mint:f.quoteMint,
     vaultAuthority:authority,tokenProgram:T},{direction:"withdraw",asset:"quote",amount:50n})],f.makers[0])
-  });
+  };
+  return f.stress?{states,operations}:runPartial(f,result,states,operations);
  }
  const fill=ORDER*BigInt(f.makers.length),gross=fill*price,fee=gross/100n;
  async function checkOpen(){
@@ -302,7 +328,7 @@ async function manifest(f,accounts,result){
   const prefix=[meta(maker.publicKey,true,true),meta(mk,true),meta(SYS)];
   await send(result,"initialize",mk,M,[ix(M,prefix,Buffer.from([1]))],maker);
   await send(result,"deposit",mk,M,[balances(2,maker,accounts[i].base,baseVault,f.baseMint)],maker);
-  const data=Buffer.concat([Buffer.from([6,0]),u32(0),u32(1),u64(ORDER),u32(f.partial?i+1:Number(price)),Buffer.from([0,0]),u32(0),Buffer.from([0])]);
+  const data=Buffer.concat([Buffer.from([6,0]),u32(0),u32(1),u64(ORDER),u32(f.partial?i+(f.stress?2:1):Number(price)),Buffer.from([0,0]),u32(0),Buffer.from([0])]);
   await send(result,"place",mk,M,[ix(M,prefix,data)],maker);
  }
  const readBook=async()=>{const a=await rpc.getAccountInfo(mk,"finalized");fail(a?.owner.equals(M),"Manifest market owner mismatch");
@@ -325,14 +351,16 @@ async function manifest(f,accounts,result){
     wallets:await walletState(accounts,f),footprint:await footprint([mk,baseVault,quoteVault])};
   };
   const taker=accounts.at(-1),prefix=[meta(f.makers[0].publicKey,true,true),meta(mk,true),meta(SYS)];
-  return runPartial(f,result,states,{
+  const operations={
    trade:()=>send(result,"execute",mk,M,[ix(M,[meta(f.taker.publicKey,true,true),meta(mk,true),meta(SYS),
     meta(taker.base,true),meta(taker.quote,true),meta(baseVault,true),meta(quoteVault,true),meta(T)],
     Buffer.concat([Buffer.from([4]),u64(50n),u64(50n),Buffer.from([0,0])]))],f.taker),
    cancel:sequence=>send(result,"cancel",mk,M,[ix(M,prefix,Buffer.concat([Buffer.from([6,0]),u32(1),u64(BigInt(sequence)),Buffer.from([0]),u32(0)]))],f.makers[0]),
-   replace:()=>send(result,"replace",mk,M,[ix(M,prefix,Buffer.concat([Buffer.from([6,0]),u32(0),u32(1),u64(50n),u32(3),Buffer.from([0,0]),u32(0),Buffer.from([0])]))],f.makers[0],[],true),
+   replace:()=>send(result,"replace",mk,M,[ix(M,prefix,Buffer.concat([Buffer.from([6,0]),u32(0),u32(1),u64(f.stress?100n:50n),u32(f.stress?1:3),Buffer.from([0,0]),u32(0),Buffer.from([0])]))],f.makers[0],[],!f.stress),
+   rejectWithdrawal:()=>rejectLockedWithdrawal(result,mk,M,balances(3,f.makers[0],accounts[0].base,baseVault,f.baseMint,1n),f.makers[0]),
    payout:()=>send(result,"payout",mk,M,[balances(3,f.makers[0],accounts[0].quote,quoteVault,f.quoteMint,50n)],f.makers[0])
-  });
+  };
+  return f.stress?{states,operations}:runPartial(f,result,states,operations);
  }
  const fill=ORDER*BigInt(f.makers.length),gross=fill*price;
  async function checkOpen(){
@@ -401,6 +429,45 @@ async function twoMarket(f,accounts,run,result,fee){
  result.verified=true;
  await checkpoint();
 }
+async function stressPair(f,accounts,run,result){
+ Object.assign(result,{programId:pk(run===hybrid?H:M),markets:[{},{}],
+  walletKeys:accounts.map(a=>({owner:pk(a.owner.publicKey),base:pk(a.base),quote:pk(a.quote)})),
+  initialWallets:await walletState(accounts,f)});
+ fail(result.initialWallets.every(a=>a.base===FUND&&a.quote===FUND),"Stress initial funding mismatch");
+ const handles=[];
+ for(const market of result.markets){
+  market.states={};
+  handles.push(await run({...f,partial:true,stress:true},accounts,market));
+  market.states={};
+ }
+ const take=async(i,name)=>{
+  const state=await handles[i].states();
+  result.markets[i].states[name]=state;await checkpoint();return state;
+ };
+ const initial=[];
+ for(let i=0;i<2;i++)initial.push(await take(i,"before"));
+ // Both markets are funded and resting before any adverse update.
+ result.concurrentWallets=await walletState(accounts,f);
+ for(let i=0;i<2;i++){
+  const {operations}=handles[i],market=result.markets[i],other=1-i;
+  // Capture the other market's complete protocol state without wallet values
+  // (the wallet is deliberately shared and changes on a legitimate trade).
+  market.otherBefore=await handles[other].states();
+  await operations.cancel(initial[i].makers[0].orders[0].sequence);
+  await take(i,"cancelled");
+  await operations.replace();await take(i,"repriced");
+  await operations.trade();await take(i,"partial");
+  await operations.rejectWithdrawal();await take(i,"rejected");
+  await operations.payout();const final=await take(i,"final");
+  market.otherAfter=await handles[other].states();
+  Object.assign(market,{verified:true,grossBaseAtoms:"50",grossQuoteAtoms:"50",protocolFeeQuoteAtoms:"0",
+   payouts:["50","0"],footprint:final.footprint,metrics:summarizeReceipts(market.receipts)});
+  await checkpoint();
+ }
+ Object.assign(result,{verified:true,finalWallets:await walletState(accounts,f),
+  inventoryUtilization:{numerator:"400",denominator:String(2n*FUND)},protocolFeeQuoteAtoms:"0"});
+ await checkpoint();
+}
 async function main(){
  const endpoint=new URL(process.env.SOLANA_RPC_URL||"http://127.0.0.1:8899");
  fail(endpoint.protocol==="http:"&&endpoint.hostname==="127.0.0.1"&&endpoint.port&&endpoint.pathname==="/"&&
@@ -415,8 +482,8 @@ async function main(){
  const hybridCommit=rev(".."),manifestCommit=rev(process.env.MANIFEST_REPO);
  fail(hybridCommit===process.env.HYBRID_BENCHMARK_COMMIT&&manifestCommit===MANIFEST_PIN,"Unpinned checkout");
  const dir=resolve(process.env.M84_EVIDENCE_DIR||".m84-evidence");await mkdir(dir,{recursive:true,mode:0o700});
- const selected=process.env.M84_CASE_MAKERS===undefined?[1,8,2,4]:[Number(process.env.M84_CASE_MAKERS)];
- fail(selected.every(m=>[1,8,2,4].includes(m)),"Unknown benchmark case selection");
+ const selected=process.env.M84_CASE_MAKERS===undefined?[1,8,2,4,5]:[Number(process.env.M84_CASE_MAKERS)];
+ fail(selected.every(m=>[1,8,2,4,5].includes(m)),"Unknown benchmark case selection");
  const report={schemaVersion:1,kind:"preliminary-paired-full-fill",network:"offline-surfpool",selectedMakers:selected,
   hybridCommit,manifestCommit,genesis:pk(genesis),toolchain:{node:process.version,
    solana:execFileSync("solana",["--version"],{encoding:"utf8"}).trim(),
@@ -425,7 +492,7 @@ async function main(){
    surfpoolBinarySha256:process.env.M84_SURFPOOL_SHA256||null,
    runner:process.env.GITHUB_RUN_ID||"local",job:process.env.GITHUB_JOB||"local",
    caseMakers:selected.join(","),arch:process.arch},cases:[],complete:false,
-  unmeasured:["adverse-price-collateral-stress"]};
+  unmeasured:[]};
  const evidencePath=join(dir,"m84-empirical.json");
  checkpoint=async()=>{
   const next=evidencePath+".next";
@@ -438,7 +505,7 @@ async function main(){
   report.manifestBuild=await deploy(M,process.env.MANIFEST_SBF_PATH);
   await checkpoint();
   for(const selection of selected){
-   const makers=selection===2?1:selection===4?2:selection;
+   const makers=selection===2?1:[4,5].includes(selection)?2:selection;
    const f={makers:Array.from({length:makers},key),taker:key(),payer:key(),baseMint:key().publicKey,quoteMint:key().publicKey};
    // Distinct newly generated actor accounts: issue funding once per actor,
    // then wait for all finalized balances concurrently. No trade is parallelized.
@@ -455,7 +522,7 @@ async function main(){
     const data=classicMintBytes(f.payer.publicKey);data.writeBigUInt64LE(supply,36);await seed(mint,T,data);
    }
    const h=await externalAccounts(f),m=await externalAccounts(f);
-   const row={name:selection===4?"partial-fill-cancel-replace-retry":selection===2?"two-market-inventory":makers===1?"one-maker-one-level-full-fill":"eight-maker-fanout-full-fill",makers,
+   const row={name:selection===5?"adverse-price-collateral-stress":selection===4?"partial-fill-cancel-replace-retry":selection===2?"two-market-inventory":makers===1?"one-maker-one-level-full-fill":"eight-maker-fanout-full-fill",makers,
     baseMint:pk(f.baseMint),quoteMint:pk(f.quoteMint),makerOwners:f.makers.map(x=>pk(x.publicKey)),
     taker:pk(f.taker.publicKey),orderBaseAtoms:String(ORDER),initialMakerBaseAtoms:String(FUND),initialMakerQuoteAtoms:String(FUND),
     initialTakerBaseAtoms:String(FUND),initialTakerQuoteAtoms:String(FUND),baseDecimals:6,quoteDecimals:6};
@@ -469,6 +536,10 @@ async function main(){
     await hybrid({...f,partial:true},h,row.hybrid);
     await manifest({...f,partial:true},m,row.manifest);
     validatePartialPair(row);
+   }else if(selection===5){
+    await stressPair(f,h,hybrid,row.hybrid);
+    await stressPair(f,m,manifest,row.manifest);
+    validateStressPair(row);
    }else{
     await hybrid(f,h,row.hybrid);await manifest(f,m,row.manifest);
     validateFullFillPair(row);
