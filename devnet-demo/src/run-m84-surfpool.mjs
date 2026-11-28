@@ -139,13 +139,33 @@ async function hybrid(f,accounts,result){
  const taker=accounts.at(-1);
  const snap=()=>authenticateSettlementCollateral(rpc,{adapter,programId:H,market:mk,side:"ask",
   headOwnerPage:askOwner,genesisHex:hex(genesis),taker:f.taker.publicKey,takerBase:taker.base,takerQuote:taker.quote});
+ // Preserve the SDK's slot policy. Capture actual RPC slot pairs on failure,
+ // without replacing or inventing a commitment slot.
+ async function makerSnapshot(maker,commitment,minContextSlot){
+  const diagnostics={commitment,minContextSlot,batches:[]};
+  const traced={
+   getGenesisHash:()=>rpc.getGenesisHash(),
+   async getMultipleAccountsInfoAndContext(keys,opts){
+    const response=await rpc.getMultipleAccountsInfoAndContext(keys,opts);
+    diagnostics.batches.push({requestedMinSlot:opts.minContextSlot,slot:response.context.slot,accounts:keys.length});
+    return response;
+   },
+   async getSlot(level){const slot=await rpc.getSlot(level);diagnostics.observedSlot=slot;return slot;}
+  };
+  try{
+   return await loadLiveMakerSnapshot(traced,{adapter,programId:H,market:mk,maker:maker.publicKey,
+    askHeadOwner:askOwner,bidHeadOwner:bidOwner,expectedGenesisHash:pk(genesis),commitment,minContextSlot,maxLagSlots:32});
+  }catch(error){
+   result.snapshotDiagnostics=diagnostics;
+   throw Error("Hybrid "+commitment+" maker snapshot: "+error.message);
+  }
+ }
  const before=await snap(),fill=ORDER*BigInt(f.makers.length),fee=fill/100n;
  fail(before.orders.length===f.makers.length&&before.orders.every((o,i)=>o.baseQty===ORDER&&o.priceX64===Q&&
   Buffer.from(o.owner).equals(bytes(f.makers[i].publicKey)))&&before.custodyState.totalBase===fill&&
   before.custodyState.totalQuote===0n,"Hybrid pre-trade depth/custody mismatch");
  for(const [i,maker] of f.makers.entries()){
-  const state=await loadLiveMakerSnapshot(rpc,{adapter,programId:H,market:mk,maker:maker.publicKey,
-   askHeadOwner:askOwner,bidHeadOwner:bidOwner,expectedGenesisHash:pk(genesis),maxLagSlots:32});
+  const state=await makerSnapshot(maker,"confirmed",result.receipts.at(-1).slot);
   fail(state.inventory.lockedBase===ORDER&&state.inventory.freeBase===0n&&state.ownedOrders.length===1,
    "Hybrid maker inventory mismatch");
  }
@@ -171,8 +191,7 @@ async function hybrid(f,accounts,result){
  const floor=reserveVaultFloor(r,cFinal.totalBase,cFinal.totalQuote);
  fail(cFinal.totalBase===0n&&cFinal.totalQuote===0n&&floor.base===0n&&floor.quote===fee,"Hybrid final custody mismatch");
  for(const maker of f.makers){
-  const state=await loadLiveMakerSnapshot(rpc,{adapter,programId:H,market:mk,maker:maker.publicKey,askHeadOwner:askOwner,
-   bidHeadOwner:bidOwner,expectedGenesisHash:pk(genesis),commitment:"finalized",maxLagSlots:32});
+  const state=await makerSnapshot(maker,"finalized",result.receipts.at(-1).slot);
   fail(state.ownedOrders.length===0&&["freeBase","lockedBase","freeQuote","lockedQuote"].every(k=>state.inventory[k]===0n),
    "Hybrid residual orders or collateral");
  }
@@ -263,8 +282,8 @@ async function main(){
   hybridCommit,manifestCommit,genesis:pk(genesis),toolchain:{node:process.version,
    solana:execFileSync("solana",["--version"],{encoding:"utf8"}).trim(),
    rust:execFileSync("rustc",["--version"],{encoding:"utf8"}).trim(),
-   surfpool:process.env.SURFPOOL_VERSION||execFileSync("surfpool",["--version"],{encoding:"utf8"}).trim(),
-   surfpoolImage:process.env.M84_SURFPOOL_IMAGE||null,
+   surfpool:execFileSync("surfpool",["--version"],{encoding:"utf8"}).trim(),
+   surfpoolBinarySha256:process.env.M84_SURFPOOL_SHA256||null,
    runner:process.env.GITHUB_RUN_ID||"local",arch:process.arch},cases:[],complete:false,
   unmeasured:["two-market-inventory","partial-fill-cancel-replace-retry","adverse-price-collateral-stress"]};
  try{
