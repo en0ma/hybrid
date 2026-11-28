@@ -363,7 +363,10 @@ export async function observeLiveMakerIntent(connection,{sessionPath,snapshotOpt
   const {record}=await verifiedJournal(sessionPath,state);
   const observation=await observeSignatureStatus(connection,{signature:record.signature,
     expectedGenesisHash:record.genesisHash,lastValidBlockHeight:record.lastValidBlockHeight});
-  return {state:observation.state,canSubmit:false,canRetry:false,requiresIndependentReconciliation:true};
+  return {state:observation.state,phase:state.phase,signature:record.signature,
+    slot:observation.slot,contextSlot:observation.contextSlot,
+    currentBlockHeight:observation.currentBlockHeight,expiredBlockhash:observation.expiredBlockhash,
+    canSubmit:false,canRetry:false,canRelease:false,requiresIndependentReconciliation:true};
 }
 /** Match the finalized receipt to the exact reserved message and signature.
  * Keep the session blocked even on success until independent post-state

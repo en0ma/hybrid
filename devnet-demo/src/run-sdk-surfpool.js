@@ -1,7 +1,10 @@
 // Actual SBF-backed SDK settlement on isolated loopback Surfpool.
 import * as web3 from "@solana/web3.js";
 import bs58 from "bs58";
-import {writeFile,mkdir,readFile} from "node:fs/promises";
+import {writeFile,mkdir,readFile,unlink} from "node:fs/promises";
+import {execFile} from "node:child_process";
+import {promisify} from "node:util";
+import {fileURLToPath} from "node:url";
 import {resolve,join} from "node:path";
 import {clusterConfig,assertCluster} from "./cluster.js";
 import {PROGRAM_ID,TOKEN_PROGRAM_ID} from "./abi.js";
@@ -12,9 +15,7 @@ import {prepareSettlement} from "../../sdk/src/settlement-plan.mjs";
 import {initPassivePool,openPassivePosition,closePassivePosition,transferMakerCollateral,swap} from "../../sdk/src/instructions.mjs";
 import {canonicalSqrtPriceX64} from "../../sdk/src/quote-orders.mjs";
 import {loadLiveMakerSnapshot} from "../../sdk/src/maker-live-snapshot.mjs";
-import {initializeLiveMakerSession,inspectLiveMakerSession,reserveLiveMakerIntent,
- prepareLiveMakerIntent,submitSandboxMakerIntent,finalizeSandboxMakerIntent,
- reconcileSandboxMakerIntent} from "../../sdk/src/maker-live-session.mjs";
+// Maker mutations below deliberately traverse separate CLI processes.
 import {buildSettlementClaim,recoverEpochProofs,decodeLazyReserve,reserveVaultFloor} from "../../sdk/src/settlement.mjs";
 import {decodeMakerBalance} from "../../sdk/src/maker-balance.mjs";
 import {simulateSettlement,journalSettlementClaim,loadSettlementLookupTable,recoverSettlementClaim} from "../../sdk/src/settlement-lifecycle.mjs";
@@ -350,9 +351,26 @@ async function runMakerSession(rpc,url,genesis,dir,report){
  const sessionPath=join(dir,"m83-maker.session"),policy={maxLagSlots:32,maxOrders:8,maxChanges:8,
   maxBaseExposure:"500",maxQuoteNotional:"500",maxLossQuote:"0",baselineEquityQuote:"400",
   maxOrdersPerWindow:8,maxTransactionsPerWindow:8,maxRetries:0};
- const control={enabled:true,killSwitch:false,sandboxSubmit:true};
- await initializeLiveMakerSession({sessionPath,snapshotOptions,policy,acknowledgeEmptySession:true});
- const opts={sessionPath,snapshotOptions,control};
+ const configPath=join(dir,"m83-maker-cli-config.json");
+ const config={rpcUrl:url,expectedGenesisHash:genesis.toBase58(),market:market.toBase58(),
+  maker:maker.publicKey.toBase58(),askHeadOwner:f.head.toBase58(),bidHeadOwner:f.bidHead.toBase58(),
+  sessionPath,policy,orders:[],isolatedTestWalletAcknowledged:true,acknowledgeEmptySession:true};
+ const child=promisify(execFile),script=fileURLToPath(new URL("./maker-session-cli.mjs",import.meta.url));
+ const env={...process.env,HYBRID_SANDBOX_EXECUTION:"1",HYBRID_MAKER_KILL_SWITCH:"off"};
+ const disabled={...env,HYBRID_SANDBOX_EXECUTION:"0",HYBRID_MAKER_KILL_SWITCH:"on"};
+ await writeFile(configPath,json(config),{mode:0o600,flag:"wx"});
+ async function command(name,extra=[],execution=true){
+  // Never forward child stdout/stderr on error: reserve output contains wire.
+  let out;
+  try{out=await child(process.execPath,[script,name,configPath,...extra],{
+   env:execution?env:disabled,timeout:30000,maxBuffer:1024*1024});}
+  catch(e){throw Error("M83 CLI "+name+" failed (exit "+String(e.code??"unknown")+")");}
+  return JSON.parse(out.stdout);
+ }
+ async function setOrders(orders){
+  await writeFile(configPath,json({...config,orders}),{mode:0o600});
+ }
+ await command("sandbox-init");
  const ask=(qty,price="1")=>({side:"ask",priceAtoms:price,sizeAtoms:String(qty)});
  const bid=(qty,price="0.5")=>({side:"bid",priceAtoms:price,sizeAtoms:String(qty)});
  async function waitFinalized(signature){
@@ -369,19 +387,32 @@ async function runMakerSession(rpc,url,genesis,dir,report){
   throw Error("M83 finalized receipt unavailable");
  }
  async function mutate(orders,phase){
-  const reserved=await reserveLiveMakerIntent(rpc,{...opts,orders});
+  await setOrders(orders);
+  const reserved=await command("sandbox-reserve");
   fail(reserved.phase==="reserved"&&reserved.action,"M83 reservation missing");
   const tx=web3.VersionedTransaction.deserialize(Buffer.from(reserved.unsignedWireBase64,"base64"));
   tx.sign([maker]);
-  const prepared=await prepareLiveMakerIntent(rpc,{...opts,transaction:tx});
-  fail((await inspectLiveMakerSession(sessionPath)).phase==="prepared","M83 restart preparation mismatch");
-  const sent=await submitSandboxMakerIntent(rpc,{...opts,transaction:tx});
+  const wirePath=join(dir,"m83-private-wire-"+result.mutations.length+".base64");
+  await writeFile(wirePath,Buffer.from(tx.serialize()).toString("base64"),{mode:0o600,flag:"wx"});
+  const prepared=await command("sandbox-prepare",[wirePath]);
+  const inspected=await command("inspect",[],false);
+  fail(inspected.phase==="prepared"&&inspected.signature===prepared.signature&&
+   inspected.canSubmit===false&&!Object.hasOwn(inspected,"intent"),"M83 restart preparation mismatch");
+  const beforeStatus=await command("status",[],false);
+  fail(beforeStatus.state==="unknown"&&beforeStatus.phase==="prepared"&&
+   beforeStatus.signature===prepared.signature&&!beforeStatus.canSubmit&&!beforeStatus.canRetry&&
+   !beforeStatus.canRelease,"M83 disabled read-only status mismatch");
+  const sent=await command("sandbox-submit",[wirePath]);
   fail(sent.state==="submitted"||sent.state==="unknown","M83 unexpected send result");
   const receipt=await waitFinalized(prepared.signature);
-  const final=await finalizeSandboxMakerIntent(rpc,opts);
+  const status=await command("status",[],false);
+  fail(status.state==="finalized-success"&&status.slot===receipt.slot&&status.signature===prepared.signature&&
+   !status.canSubmit&&!status.canRetry&&!status.canRelease,"M83 restarted finalized status mismatch");
+  const final=await command("sandbox-finalize");
   fail(final.state==="finalized-success"&&final.finalizedSlot===receipt.slot,"M83 finality mismatch");
-  const reconciled=await reconcileSandboxMakerIntent(rpc,opts);
-  const saved=await inspectLiveMakerSession(sessionPath);
+  const reconciled=await command("sandbox-reconcile");
+  const saved=await command("inspect",[],false);
+  await unlink(wirePath);
   fail(reconciled.state==="reconciled"&&saved.phase==="idle"&&
    saved.ordersReserved===result.mutations.length+1,"M83 retirement/counter mismatch");
   const archive=JSON.parse(await readFile(sessionPath+".settled."+prepared.signature,"utf8"));
@@ -389,7 +420,7 @@ async function runMakerSession(rpc,url,genesis,dir,report){
    "M83 archived phase mismatch");
   result.mutations.push({phase,signature:prepared.signature,slot:receipt.slot,
    units:receipt.meta.computeUnitsConsumed,action:reserved.action,post:archive.state.audit,
-   restartVerified:true,reconciled:true});
+   restartVerified:true,independentCliProcesses:true,disabledStatusVerified:true,reconciled:true});
  }
  await mutate([ask(100),bid(20)],"place");
  // Real active taker partial fill between retired intents, not inferred
@@ -419,9 +450,10 @@ async function runMakerSession(rpc,url,genesis,dir,report){
   end.inventory.freeBase===175n&&end.inventory.freeQuote===225n&&
   end.vaultAmounts.base===end.floor.base&&end.vaultAmounts.quote===end.floor.quote,
   "M83 final inventory/vault mismatch");
- const noOp=await reserveLiveMakerIntent(rpc,{...opts,orders:[]});
+ await setOrders([]);
+ const noOp=await command("sandbox-reserve");
  fail(noOp.phase==="noop","M83 empty desired plan not idempotent");
- const saved=await inspectLiveMakerSession(sessionPath);
+ const saved=await command("inspect",[],false);
  fail(saved.phase==="idle"&&saved.transactionsReserved===5,"M83 final durable session mismatch");
  Object.assign(result,{complete:true,finalInventory:end.inventory,finalFloor:end.floor,
   durableCounters:{orders:saved.ordersReserved,transactions:saved.transactionsReserved},

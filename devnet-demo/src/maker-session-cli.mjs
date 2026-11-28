@@ -7,12 +7,12 @@ import {PROGRAM_ID} from "./abi.js";
 import {createSolanaSettlementAdapter} from "../../sdk/src/settlement-solana.mjs";
 import {loadLiveMakerSnapshot} from "../../sdk/src/maker-live-snapshot.mjs";
 import {planLiveMakerQuotes} from "../../sdk/src/maker-live-plan.mjs";
-import {initializeLiveMakerSession,inspectLiveMakerSession,reserveLiveMakerIntent,
+import {initializeLiveMakerSession,inspectLiveMakerSession,observeLiveMakerIntent,reserveLiveMakerIntent,
  prepareLiveMakerIntent,submitSandboxMakerIntent,finalizeSandboxMakerIntent,
  reconcileSandboxMakerIntent,renewSandboxMakerRateWindow,reconcileFailedSandboxMakerIntent} from "../../sdk/src/maker-live-session.mjs";
 const {PublicKey,Connection,VersionedTransaction}=web3;
 const adapter=createSolanaSettlementAdapter(web3);
-const commands=new Set(["observe","plan","inspect","sandbox-init","sandbox-reserve","sandbox-prepare","sandbox-submit","sandbox-finalize","sandbox-reconcile","sandbox-recover-failed","sandbox-renew"]);
+const commands=new Set(["observe","plan","inspect","status","sandbox-init","sandbox-reserve","sandbox-prepare","sandbox-submit","sandbox-finalize","sandbox-reconcile","sandbox-recover-failed","sandbox-renew"]);
 const signedCommands=new Set(["sandbox-prepare","sandbox-submit"]);
 const json=value=>JSON.stringify(value,(_,v)=>typeof v==="bigint"?String(v):v,2);
 async function boundedText(path,max){
@@ -42,7 +42,7 @@ export function parseMakerConfig(config,command,env=process.env){
  if(typeof config.expectedGenesisHash!=="string"||
    new PublicKey(config.expectedGenesisHash).toBase58()!==config.expectedGenesisHash)
   throw Error("Invalid pinned genesis");
- if((sandbox||command==="inspect")&&
+ if((sandbox||command==="inspect"||command==="status")&&
    (typeof config.sessionPath!=="string"||!isAbsolute(config.sessionPath)))
   throw Error("Absolute private session path required");
  if(["plan","sandbox-reserve"].includes(command)&&!Array.isArray(config.orders))
@@ -66,6 +66,7 @@ export async function runMakerCommand(command,config,signedPath,env=process.env,
    requiresManualRecovery:state.requiresManualRecovery};
  }
  const rpc=makeConnection(opts.url);
+ if(command==="status")return observeLiveMakerIntent(rpc,opts);
  if(command==="observe")return loadLiveMakerSnapshot(rpc,{...opts.snapshotOptions,
    maxLagSlots:opts.policy?.maxLagSlots??4});
  if(command==="plan"){

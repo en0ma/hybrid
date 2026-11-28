@@ -101,7 +101,7 @@ jobs:
           const m=r.makerSession;
           if(!m?.complete||!m.partialFill?.verified||!m.idempotentNoop||
             m.mutations?.length!==5||new Set(m.mutations.map(x=>x.signature)).size!==5||
-            m.mutations.some(x=>!x.reconciled||!x.restartVerified)||
+            m.mutations.some(x=>!x.reconciled||!x.restartVerified||!x.independentCliProcesses||!x.disabledStatusVerified)||
             m.mutations.map(x=>x.phase).join(",")!=="place,cancel,place,cancel,cancel"||
             m.durableCounters?.transactions!==5||
             m.finalInventory?.freeBase!=="175"||m.finalInventory?.freeQuote!=="225"||

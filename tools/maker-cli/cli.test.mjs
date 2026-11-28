@@ -34,6 +34,7 @@ test("valid key is not rejected by argument validation",()=>{
 
 test("session commands enforce exact file argument counts",()=>{
  assert.equal(run("observe").status,2);
+ assert.equal(run("status").status,2);
  assert.equal(run("sandbox-submit","config.json").status,2);
  assert.equal(run("sandbox-reserve","config.json","unexpected").status,2);
 });

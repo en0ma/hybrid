@@ -18,7 +18,7 @@ test("sandbox commands require both explicit switches and literal loopback",()=>
  }
 });
 test("read-only commands do not enable submission even with switches",()=>{
- for(const command of ["observe","plan","inspect"]){
+ for(const command of ["observe","plan","inspect","status"]){
   const opts=parseMakerConfig({...cfg,rpcUrl:"https://api.devnet.solana.com"},command,env);
   assert.equal(opts.control.enabled,false);assert.equal(opts.control.sandboxSubmit,false);
  }
@@ -33,4 +33,11 @@ test("public sandbox command rejected before RPC construction",async()=>{
  await assert.rejects(runMakerCommand("sandbox-submit",{...cfg,rpcUrl:"https://api.devnet.solana.com"},
   "/tmp/wire",env,()=>{calls++;throw Error("Unexpected RPC");}),/Sandbox requires/);
  assert.equal(calls,0);
+});
+
+test("read-only status requires an absolute session path but no execution permission",()=>{
+ const opts=parseMakerConfig(cfg,"status",{HYBRID_MAKER_KILL_SWITCH:"on"});
+ assert.equal(opts.control.enabled,false);assert.equal(opts.control.killSwitch,true);
+ assert.equal(opts.sessionPath,cfg.sessionPath);
+ assert.throws(()=>parseMakerConfig({...cfg,sessionPath:"relative"},"status",{}),/Absolute/);
 });

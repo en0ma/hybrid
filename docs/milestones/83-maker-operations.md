@@ -8,7 +8,7 @@ Status: experimental, loopback sandbox only; independent security and operations
 - Default is read-only; enable sandbox mutations per process only. The environment switch is not a live interprocess emergency signal. Never run concurrent operators or store keys in the config.
 
 ## Normal operation
-Each CLI invocation performs one stage. Reserve, externally sign the exact message, prepare, submit once, inspect, finalize and reconcile. Do not issue another reservation until the journal is retired and a new authenticated plan is available. A signed wire is sensitive until blockhash expiry; do not paste it into public logs. Keep all archive evidence and capture the signature, finalized slot, phase, maker inventory and custody/vault proof. Rate renewal is explicit, idle-only after a full finalized-slot quiet interval; it never resets the loss baseline or retry count.
+Each CLI invocation performs one stage. Reserve, externally sign the exact message, prepare, submit once, inspect, finalize and reconcile. Use read-only status with the execution switch off to check the original signature on the pinned genesis; neither status nor inspect grants release or retry. Do not issue another reservation until the journal is retired and a new authenticated plan is available. A signed wire is sensitive until blockhash expiry; do not paste it into public logs. Keep all archive evidence and capture the signature, finalized slot, phase, maker inventory and custody/vault proof. Rate renewal is explicit, idle-only after a full finalized-slot quiet interval; it never resets the loss baseline or retry count.
 
 ## Incident response
 | Signal | Required action |
