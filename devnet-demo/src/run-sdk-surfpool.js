@@ -1,7 +1,7 @@
 // Actual SBF-backed SDK settlement on isolated loopback Surfpool.
 import * as web3 from "@solana/web3.js";
 import bs58 from "bs58";
-import {writeFile,mkdir,readFile,unlink} from "node:fs/promises";
+import {writeFile,mkdir,readFile,unlink,stat} from "node:fs/promises";
 import {execFile} from "node:child_process";
 import {promisify} from "node:util";
 import {fileURLToPath} from "node:url";
@@ -360,12 +360,16 @@ async function runMakerSession(rpc,url,genesis,dir,report,incident=false){
  const env={...process.env,HYBRID_SANDBOX_EXECUTION:"1",HYBRID_MAKER_KILL_SWITCH:"off"};
  const disabled={...env,HYBRID_SANDBOX_EXECUTION:"0",HYBRID_MAKER_KILL_SWITCH:"on"};
  await writeFile(configPath,json(config),{mode:0o600,flag:"wx"});
- async function command(name,extra=[],execution=true){
+ async function command(name,extra=[],execution=true,expectedError=null){
   // Never forward child stdout/stderr on error: reserve output contains wire.
   let out;
   try{out=await child(process.execPath,[script,name,configPath,...extra],{
    env:execution?env:disabled,timeout:30000,maxBuffer:1024*1024});}
-  catch(e){throw Error("M83 CLI "+name+" failed (exit "+String(e.code??"unknown")+")");}
+  catch(e){
+   if(expectedError&&e.code===1&&expectedError.test(String(e.stderr)))return {rejected:true};
+   throw Error("M83 CLI "+name+" failed (exit "+String(e.code??"unknown")+")");
+  }
+  fail(!expectedError,"M83 CLI "+name+" unexpectedly succeeded");
   return JSON.parse(out.stdout);
  }
  async function setOrders(orders){
@@ -439,19 +443,19 @@ async function runMakerSession(rpc,url,genesis,dir,report,incident=false){
     ["inventory.lockedBase","inventory.freeQuote","ownedOrders","custody","vaults"]
       .every(k=>audit.differences.includes(k))&&
     !audit.canSubmit&&!audit.canRetry&&!audit.canRelease,"M83 incident audit mismatch");
-   let rejected=false;
-   try{await command("sandbox-reconcile");}
-   catch(e){rejected=/M83 CLI sandbox-reconcile failed/.test(e.message);}
-   fail(rejected,"M83 incident reconciliation unexpectedly released");
+   const rejected=await command("sandbox-reconcile",[],true,/Unexplained post-finality maker, custody or vault state/);
+   fail(rejected.rejected,"M83 incident reconciliation unexpectedly released");
    const saved=await command("inspect",[],false);
    fail(saved.phase==="finalized"&&saved.signature===prepared.signature&&
     saved.transactionsReserved===1,"M83 incident journal not retained");
    const after=await command("audit",[],false);
    fail(!after.matches&&after.signature===prepared.signature,"M83 locked incident audit unavailable");
-   let blocked=false;
-   try{await command("sandbox-reserve");}
-   catch(e){blocked=/M83 CLI sandbox-reserve failed/.test(e.message);}
-   fail(blocked,"M83 incident permitted a new reservation");
+   const blocked=await command("sandbox-reserve",[],true,/EEXIST.*maker|EEXIST.*incident/);
+   fail(blocked.rejected,"M83 incident permitted a new reservation");
+   fail((await stat(sessionPath+".lock")).isFile()&&(await stat(sessionPath+".transaction")).isFile(),
+    "M83 incident lock or journal missing");
+   try{await stat(sessionPath+".settled."+prepared.signature);throw Error("M83 unexpected archive");}
+   catch(e){if(e.code!=="ENOENT")throw e;}
    await unlink(wirePath);
    Object.assign(result,{complete:true,signature:prepared.signature,finalizedSlot:receipt.slot,
     audit:after,reconcileRejected:true,newReservationBlocked:true,retainedPhase:saved.phase,

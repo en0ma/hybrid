@@ -408,7 +408,7 @@ async function finalizedCancelFixture(callback){
     let reads=0;
     f.connection.getMultipleAccountsInfoAndContext=async(keys,options)=>{
       reads++;assert.equal(options.commitment,"finalized");
-      assert.equal(options.minContextSlot,reads===1?103:104);
+      assert.equal(options.minContextSlot,reads%2===1?103:104);
       return {context:{slot:104},value:keys.map(k=>after.accounts.get(k.toBase58())??null)};
     };
     f.connection.getSlot=async()=>104;
