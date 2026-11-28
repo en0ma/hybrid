@@ -157,12 +157,20 @@ export function validateTwoMarketPair(row){
 // A deliberate fault injection discards the acknowledgement after one real
 // submission. No second submission is allowed, including on real RPC error.
 export async function submitAndReconcileOnce({signature,simulateTimeout=false,sendOnce,reconcile}){
- const response=await sendOnce();
- if(response!==signature)throw Error("Send signature mismatch");
- // The injected acknowledgement loss is local and deterministic: the real
- // transaction has been sent; recovery receives only the precomputed signature.
+ const injectedTimeout=new Error("Injected acknowledgement timeout");
+ let acknowledgementLost=false;
+ try{
+  const response=await sendOnce();
+  if(response!==signature)throw Error("Send signature mismatch");
+  if(simulateTimeout)throw injectedTimeout;
+ }catch(error){
+  // Only this exact fault injection is recoverable here. Unexpected transport
+  // errors stop the benchmark, retaining its pending-attempt checkpoint.
+  if(error!==injectedTimeout)throw error;
+  acknowledgementLost=true;
+ }
  const receipt=await reconcile(signature);
- return {receipt,attempts:1,acknowledgementLost:simulateTimeout};
+ return {receipt,attempts:1,acknowledgementLost};
 }
 export function validatePartialPair(row){
  if(row.name!=="partial-fill-cancel-replace-retry"||row.makers!==2||row.makerOwners?.length!==2||
@@ -184,13 +192,17 @@ export function validatePartialPair(row){
   const stages=v.receipts.map(r=>r.stage).join(",");
   if(stages!=="initialize,initialize,deposit,place,initialize,deposit,place,execute,cancel,replace,payout")
    throw Error("Missing ordered mutation receipts");
+  if(v.receipts.some((r,i)=>!validInt(r.slot)||r.slot===0||(i>0&&r.slot<v.receipts[i-1].slot)))
+   throw Error("Invalid mutation receipt ordering");
   const receipt=v.receipts.find(r=>r.stage==="replace");
   if(v.timeout?.kind!=="injected-lost-submission-acknowledgement"||v.timeout.signature!==receipt.signature||
     v.timeout.finalizedSlot!==receipt.slot||v.timeout.sendAttempts!==1||v.timeout.canRetry!==false||
     v.timeout.reconciled!==true||v.timeout.acknowledgementLost!==true)throw Error("Missing one-send signature reconciliation");
   for(const [name,spec] of Object.entries(specs)){
    const state=v.states?.[name],makers=state?.makers;
+   const phaseReceipt=v.receipts[name==="before"?6:name==="partial"?7:name==="cancelled"?8:name==="replaced"?9:10];
    if(state?.vaultBase!==spec.base||state.vaultQuote!==spec.quote||makers?.length!==2||
+     !validInt(state.footprint?.slot)||state.footprint.slot<phaseReceipt.slot||
      state.wallets?.length!==3||!validInt(state.footprint?.bytes)||state.footprint.bytes===0||
      !validInt(state.footprint?.lamports)||state.footprint.lamports===0)
     throw Error("Partial state mismatch: "+name);

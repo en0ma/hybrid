@@ -186,7 +186,7 @@ async function hybrid(f,accounts,result){
    const snapshots=await Promise.all(f.makers.map(maker=>makerSnapshot(maker,"finalized",result.receipts.at(-1).slot)));
    const out=snapshots.map((v,i)=>{
     const {freeBase,lockedBase,freeQuote,lockedQuote}=v.inventory;
-    fail(v.ownedOrders.length<=1&&v.ownedOrders.every(o=>o.side==="ask")&&!v.pendingLazySettlement,"Unsupported Hybrid partial book");
+    fail(v.ownedOrders.length<=1&&v.ownedOrders.every(o=>o.side==="ask"&&o.priceX64%Q===0n)&&!v.pendingLazySettlement,"Unsupported Hybrid partial book");
     return {owner:pk(f.makers[i].publicKey),freeBase:String(freeBase),lockedBase:String(lockedBase),
      freeQuote:String(freeQuote),lockedQuote:String(lockedQuote),
      orders:v.ownedOrders.map(o=>({sequence:String(o.sequence),base:String(o.baseQty),price:String(o.priceX64/Q)}))};
@@ -314,7 +314,7 @@ async function manifest(f,accounts,result){
     const seat=book.seats.find(s=>s.owner.equals(maker.publicKey));
     fail(seat,"Missing Manifest maker seat");
     const orders=book.asks.filter(o=>o.owner.equals(maker.publicKey));
-    fail(orders.length<=1,"Unsupported Manifest partial book");
+    fail(orders.length<=1&&orders.every(o=>o.price%(10n**18n)===0n),"Unsupported Manifest partial book");
     return {owner:pk(maker.publicKey),freeBase:String(seat.base),lockedBase:String(orders.reduce((n,o)=>n+o.base,0n)),
      freeQuote:String(seat.quote),lockedQuote:"0",orders:orders.map(o=>({sequence:String(o.sequence),base:String(o.base),price:String(o.price/(10n**18n))}))};
    });
