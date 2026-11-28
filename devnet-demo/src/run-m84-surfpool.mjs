@@ -14,7 +14,7 @@ import {authenticateSettlementCollateral,loadSettlementEpochs,decodeSettlementCu
 import {prepareSettlement} from "../../sdk/src/settlement-plan.mjs";
 import {buildSettlementClaim,recoverEpochProofs,reserveVaultFloor} from "../../sdk/src/settlement.mjs";
 import {loadLiveMakerSnapshot} from "../../sdk/src/maker-live-snapshot.mjs";
-import {auditExecutedReceipt,summarizeReceipts,validateFullFillPair,MANIFEST_PIN} from "./m84-metrics.mjs";
+import {auditExecutedReceipt,summarizeReceipts,validateFullFillPair,waitForFinalized,MANIFEST_PIN} from "./m84-metrics.mjs";
 const {PublicKey,Keypair,Connection,SystemProgram,ComputeBudgetProgram,TransactionMessage,VersionedTransaction}=web3;
 const H=new PublicKey(PROGRAM_ID),M=new PublicKey("MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms");
 const T=new PublicKey(TOKEN_PROGRAM_ID),T22=new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
@@ -26,12 +26,11 @@ const u64=n=>{const b=Buffer.alloc(8);b.writeBigUInt64LE(n);return b;};
 const hash=b=>createHash("sha256").update(b).digest("hex");
 const fail=(ok,msg)=>{if(!ok)throw Error(msg);};
 const json=x=>JSON.stringify(x,(_,v)=>typeof v==="bigint"?String(v):v,2)+"\n";
-const wait=ms=>new Promise(r=>setTimeout(r,ms));
-const ix=(programId,keys,data)=>({programId,keys,data});
+ const ix=(programId,keys,data)=>({programId,keys,data});
 const adapter=createSolanaSettlementAdapter(web3);
 let rpc,url,genesis;
 async function cheat(method,params){
- const response=await fetch(url,{method:"POST",headers:{"content-type":"application/json"},
+ const response=await fetch(url,{method:"POST",signal:AbortSignal.timeout(10000),redirect:"error",headers:{"content-type":"application/json"},
   body:JSON.stringify({jsonrpc:"2.0",id:1,method,params})});
  const value=await response.json();fail(response.ok&&!value.error,"Local fixture "+method+" failed");
  return value.result;
@@ -51,7 +50,7 @@ async function deploy(program,path){
  return {programId:pk(program),elfSha256:hash(elf),elfBytes:elf.length};
 }
 async function send(result,stage,market,program,instructions,payer,others=[]){
- const {blockhash,lastValidBlockHeight}=await rpc.getLatestBlockhash("confirmed");
+ const {blockhash}=await rpc.getLatestBlockhash("confirmed");
  const message=new TransactionMessage({payerKey:payer.publicKey,recentBlockhash:blockhash,
   instructions:[ComputeBudgetProgram.setComputeUnitLimit({units:400000}),...instructions]}).compileToV0Message();
  const tx=new VersionedTransaction(message);tx.sign([payer,...others]);
@@ -61,18 +60,7 @@ async function send(result,stage,market,program,instructions,payer,others=[]){
  fail(sim.value.err===null,"Simulation failed "+stage+" "+JSON.stringify(sim.value.err));
  result.pendingAttempt.status="submission-attempted";
  fail(await rpc.sendRawTransaction(wire,{maxRetries:0,skipPreflight:false})===signature,"Send signature mismatch");
- const confirmed=await rpc.confirmTransaction({signature,blockhash,lastValidBlockHeight},"confirmed");
- fail(confirmed.value.err===null,"Failed "+stage+" "+signature);
- let receipt;
- for(let i=0;i<120;i++){
-  const response=await rpc.getSignatureStatuses([signature],{searchTransactionHistory:true});
-  if(response.value[0]?.confirmationStatus==="finalized"){
-   fail(response.value[0].err===null,"Finalized failure");
-   receipt=await rpc.getTransaction(signature,{commitment:"finalized",maxSupportedTransactionVersion:0});
-   if(receipt&&await rpc.getSlot("finalized")>=receipt.slot)break;
-  }
-  receipt=null;await wait(500);
- }
+ const receipt=await waitForFinalized(rpc,signature);
  const proof=auditExecutedReceipt(receipt,{signature,wire,programId:program,market,bs58});
  result.receipts.push({stage,...proof,simulationComputeUnits:sim.value.unitsConsumed});
  delete result.pendingAttempt;
@@ -262,7 +250,10 @@ async function main(){
  fail(endpoint.protocol==="http:"&&endpoint.hostname==="127.0.0.1"&&endpoint.port&&endpoint.pathname==="/"&&
   !endpoint.username&&!endpoint.password&&!endpoint.search&&!endpoint.hash&&process.env.M84_OFFLINE_FIXTURE==="1",
   "Explicit isolated offline Surfpool required");
- url=endpoint.href;rpc=new Connection(url,{commitment:"confirmed",disableRetryOnRateLimit:true});
+ url=endpoint.href;
+ // web3.js must never wait indefinitely for HTTP or retry HTTP 429.
+ const boundedFetch=(input,init)=>fetch(input,{...init,signal:AbortSignal.timeout(10000),redirect:"error"});
+ rpc=new Connection(url,{commitment:"confirmed",disableRetryOnRateLimit:true,fetch:boundedFetch});
  genesis=new PublicKey(await rpc.getGenesisHash());
  const rev=path=>execFileSync("git",["-C",path,"rev-parse","HEAD"],{encoding:"utf8"}).trim();
  const hybridCommit=rev(".."),manifestCommit=rev(process.env.MANIFEST_REPO);
@@ -282,7 +273,9 @@ async function main(){
   for(const makers of [1,8]){
    const f={makers:Array.from({length:makers},key),taker:key(),payer:key(),baseMint:key().publicKey,quoteMint:key().publicKey};
    for(const actor of [f.payer,f.taker,...f.makers]){
-    const sig=await rpc.requestAirdrop(actor.publicKey,2000000000);await rpc.confirmTransaction(sig,"confirmed");
+    const sig=await rpc.requestAirdrop(actor.publicKey,2000000000);
+    await waitForFinalized(rpc,sig,{receiptRequired:false});
+    fail(await rpc.getBalance(actor.publicKey,"finalized")>=2000000000,"Airdrop funding unavailable in finalized bank");
    }
    const supply=2n*BigInt(makers+1)*FUND;
    for(const mint of [f.baseMint,f.quoteMint]){

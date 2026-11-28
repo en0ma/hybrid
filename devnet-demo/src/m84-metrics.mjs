@@ -67,3 +67,32 @@ export function validateFullFillPair(pair){
   throw Error("Cross-protocol receipt reuse");
  return true;
 }
+
+// Poll only HTTP methods, never signatureSubscribe/confirmTransaction.
+ // The caller must use a transport with an independent per-request deadline.
+ // A missing signature or receipt is uncertainty, not authorization to resend.
+export async function waitForFinalized(connection,signature,{receiptRequired=true,attempts=120,
+ delay=()=>new Promise(resolve=>setTimeout(resolve,500))}={}){
+ if(!Number.isSafeInteger(attempts)||attempts<=0||attempts>120)throw Error("Invalid finality polling budget");
+ for(let i=0;i<attempts;i++){
+  const response=await connection.getSignatureStatuses([signature],{searchTransactionHistory:true});
+  if(!Array.isArray(response?.value)||response.value.length!==1)throw Error("Invalid signature status response");
+  const status=response.value[0];
+  if(status?.confirmationStatus==="finalized"){
+   if(status.err!==null||!validInt(status.slot)||status.slot===0)throw Error("Finalized failure or invalid status: "+signature);
+   const finalizedSlot=await connection.getSlot("finalized");
+   if(!validInt(finalizedSlot))throw Error("Invalid finalized bank slot");
+   if(finalizedSlot>=status.slot){
+    if(!receiptRequired)return {slot:status.slot};
+    const receipt=await connection.getTransaction(signature,{commitment:"finalized",maxSupportedTransactionVersion:0});
+    if(receipt){
+     if(receipt.slot!==status.slot||receipt.meta?.err!==null||
+       receipt.transaction?.signatures?.[0]!==signature)throw Error("Finalized status/receipt mismatch");
+     return receipt;
+    }
+   }
+  }
+  if(i+1<attempts)await delay();
+ }
+ throw Error("Finalized "+(receiptRequired?"receipt":"status")+" unavailable within polling budget: "+signature);
+}

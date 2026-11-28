@@ -73,6 +73,7 @@ jobs:
           docker logs hybrid-m84-surfpool
           exit 1
       - name: Execute paired full-fill cases
+        timeout-minutes: 20
         working-directory: devnet-demo
         run: node src/run-m84-surfpool.mjs
       - name: Require actual paired receipt evidence

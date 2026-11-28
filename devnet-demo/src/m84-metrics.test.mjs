@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {summarizeReceipts,validateFullFillPair,auditExecutedReceipt} from "./m84-metrics.mjs";
+import {summarizeReceipts,validateFullFillPair,auditExecutedReceipt,waitForFinalized} from "./m84-metrics.mjs";
 import {Keypair,TransactionMessage,VersionedTransaction,PublicKey} from "@solana/web3.js";
 import bs58 from "bs58";
 test("aggregate execution and all payout costs, never setup-only costs",()=>{
@@ -34,4 +34,33 @@ test("paired aggregate rejects missing or unequal state evidence",()=>{
  assert.equal(validateFullFillPair(pair),true);
  assert.throws(()=>validateFullFillPair({...pair,manifest:{...pair.manifest,payouts:["99"]}}),/Unmatched/);
  assert.throws(()=>validateFullFillPair({...pair,manifest:{...pair.manifest,protocolFeeQuoteAtoms:"1"}}),/fee/);
+});
+
+test("HTTP-only finality waits for status, finalized bank and exact receipt",async()=>{
+ let polls=0,reads=0,delays=0;
+ const receipt={slot:9,meta:{err:null},transaction:{signatures:["sig"]}};
+ const connection={
+  async getSignatureStatuses(keys,opts){
+   assert.deepEqual(keys,["sig"]);assert.equal(opts.searchTransactionHistory,true);
+   polls++;return {value:[polls===1?null:{slot:9,confirmationStatus:"finalized",err:null}]};
+  },
+  async getSlot(commitment){assert.equal(commitment,"finalized");return polls===2?8:9;},
+  async getTransaction(signature,opts){assert.equal(signature,"sig");assert.equal(opts.commitment,"finalized");reads++;return reads===1?null:receipt;}
+ };
+ assert.equal(await waitForFinalized(connection,"sig",{attempts:4,delay:async()=>{delays++;}}),receipt);
+ assert.equal(polls,4);assert.equal(reads,2);assert.equal(delays,3);
+});
+test("airdrop status-only finality does not require a transaction receipt",async()=>{
+ const connection={getSignatureStatuses:async()=>({value:[{slot:8,confirmationStatus:"finalized",err:null}]}),
+ getSlot:async()=>8};
+ assert.deepEqual(await waitForFinalized(connection,"funding",{receiptRequired:false,attempts:1}),{slot:8});
+});
+test("missing, failed and mismatched finality never release the polling gate",async()=>{
+ let polls=0;
+ const opts={attempts:3,delay:async()=>{}};
+ await assert.rejects(waitForFinalized({getSignatureStatuses:async()=>{polls++;return {value:[null]};}},"sig",opts),/unavailable within polling budget/);
+ assert.equal(polls,3);
+ const finalized={getSignatureStatuses:async()=>({value:[{slot:8,confirmationStatus:"finalized",err:null}]}),getSlot:async()=>8};
+ await assert.rejects(waitForFinalized({...finalized,getTransaction:async()=>({slot:9,meta:{err:null},transaction:{signatures:["sig"]}})},"sig",opts),/status\/receipt mismatch/);
+ await assert.rejects(waitForFinalized({getSignatureStatuses:async()=>({value:[{slot:8,confirmationStatus:"finalized",err:{InstructionError:[0,1]}}]})},"sig",opts),/Finalized failure/);
 });
