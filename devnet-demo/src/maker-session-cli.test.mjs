@@ -9,7 +9,7 @@ const cfg={rpcUrl:"http://127.0.0.1:8899",expectedGenesisHash:key(1),market:key(
 const env={HYBRID_SANDBOX_EXECUTION:"1",HYBRID_MAKER_KILL_SWITCH:"off"};
 test("sandbox commands require both explicit switches and literal loopback",()=>{
  for(const command of ["sandbox-init","sandbox-reserve","sandbox-prepare","sandbox-submit",
-   "sandbox-finalize","sandbox-reconcile","sandbox-renew"]){
+   "sandbox-finalize","sandbox-reconcile","sandbox-recover-failed","sandbox-renew"]){
   assert.throws(()=>parseMakerConfig(cfg,command,{}),/Sandbox requires/);
   for(const rpcUrl of ["https://api.devnet.solana.com","http://localhost:8899","http://127.0.0.1:8899/path"])
    assert.throws(()=>parseMakerConfig({...cfg,rpcUrl},command,env),/Sandbox requires/);

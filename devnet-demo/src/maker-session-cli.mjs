@@ -9,10 +9,10 @@ import {loadLiveMakerSnapshot} from "../../sdk/src/maker-live-snapshot.mjs";
 import {planLiveMakerQuotes} from "../../sdk/src/maker-live-plan.mjs";
 import {initializeLiveMakerSession,inspectLiveMakerSession,reserveLiveMakerIntent,
  prepareLiveMakerIntent,submitSandboxMakerIntent,finalizeSandboxMakerIntent,
- reconcileSandboxMakerIntent,renewSandboxMakerRateWindow} from "../../sdk/src/maker-live-session.mjs";
+ reconcileSandboxMakerIntent,renewSandboxMakerRateWindow,reconcileFailedSandboxMakerIntent} from "../../sdk/src/maker-live-session.mjs";
 const {PublicKey,Connection,VersionedTransaction}=web3;
 const adapter=createSolanaSettlementAdapter(web3);
-const commands=new Set(["observe","plan","inspect","sandbox-init","sandbox-reserve","sandbox-prepare","sandbox-submit","sandbox-finalize","sandbox-reconcile","sandbox-renew"]);
+const commands=new Set(["observe","plan","inspect","sandbox-init","sandbox-reserve","sandbox-prepare","sandbox-submit","sandbox-finalize","sandbox-reconcile","sandbox-recover-failed","sandbox-renew"]);
 const signedCommands=new Set(["sandbox-prepare","sandbox-submit"]);
 const json=value=>JSON.stringify(value,(_,v)=>typeof v==="bigint"?String(v):v,2);
 async function boundedText(path,max){
@@ -52,13 +52,13 @@ export function parseMakerConfig(config,command,env=process.env){
  return {url:url.href,snapshotOptions,sessionPath:config.sessionPath,orders:config.orders,
   policy:config.policy,acknowledgeEmptySession:config.acknowledgeEmptySession===true,
   control:{enabled:sandbox,killSwitch:!sandbox,sandboxSubmit:sandbox,
-   renewRateWindow:command==="sandbox-renew"}};
+   renewRateWindow:command==="sandbox-renew",recoverFinalizedFailure:command==="sandbox-recover-failed"}};
 }
 export async function runMakerCommand(command,config,signedPath,env=process.env,makeConnection=
  url=>new Connection(url,{commitment:"confirmed",disableRetryOnRateLimit:true})){
  const opts=parseMakerConfig(config,command,env);
  if(command==="inspect"){
-  const state=await inspectLiveMakerSession(opts.sessionPath);
+  const state=await inspectLiveMakerSession(opts.sessionPath,opts.snapshotOptions);
   // Do not print signed wire or unsigned transaction messages during inspection.
   return {phase:state.phase,lastSlot:state.lastSlot,ordersReserved:state.ordersReserved,
    transactionsReserved:state.transactionsReserved,retries:state.retries,
@@ -93,6 +93,7 @@ export async function runMakerCommand(command,config,signedPath,env=process.env,
  if(command==="sandbox-finalize")return finalizeSandboxMakerIntent(rpc,opts);
  if(command==="sandbox-reconcile")return reconcileSandboxMakerIntent(rpc,opts);
  if(command==="sandbox-renew")return renewSandboxMakerRateWindow(rpc,opts);
+ if(command==="sandbox-recover-failed")return reconcileFailedSandboxMakerIntent(rpc,opts);
  throw Error("Unsupported maker command");
 }
 async function main(){

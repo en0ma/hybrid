@@ -127,8 +127,9 @@ export async function initializeLiveMakerSession({sessionPath,snapshotOptions,po
     return {phase:"idle",canSubmit:false};
   });
 }
-export async function inspectLiveMakerSession(sessionPath){
+export async function inspectLiveMakerSession(sessionPath,snapshotOptions){
   const state=await read(sessionPath);
+  if(snapshotOptions!==undefined)sameDomain(state,snapshotOptions);
   return {...state,canSubmit:false,requiresManualRecovery:state.phase!=="idle"};
 }
 /** Reserve a SINGLE canonical SDK action and its exact unsigned message.
@@ -465,13 +466,7 @@ export async function reconcileSandboxMakerIntent(connection,{sessionPath,snapsh
     const audit={slot:snapshot.slot,actual,custody,vaults};
     // Exclusive archive creation retains both complete records. If anything
     // fails after archival, the lock and/or non-idle state prevent reuse.
-    const path=archivePath(sessionPath,record.signature);
-    if(await exists(path))throw new Error("Existing reconciliation archive; manual recovery required");
-    await persist(path,{session:state,journal:record,audit},true,ARCHIVE_BYTES);
-    await unlink(journal(sessionPath));
-    const directory=await open(dirname(sessionPath),"r");
-    try{await directory.sync();}finally{await directory.close();}
-    await persist(sessionPath,{...state,phase:"idle",lastSlot:snapshot.slot,intent:null});
+    await retireWithArchive(sessionPath,state,record,audit);
     return {state:"reconciled",signature:record.signature,slot:snapshot.slot,
       canSubmit:false,canRetry:false,requiresFreshPlan:true};
   });
@@ -507,5 +502,70 @@ export async function renewSandboxMakerRateWindow(connection,{sessionPath,snapsh
     await persist(path,{session:state,renewalSlot:slot},true,ARCHIVE_BYTES);
     await persist(sessionPath,{...state,ordersReserved:0,transactionsReserved:0,lastSlot:slot});
     return {state:"renewed",slot,canSubmit:false,requiresFreshPlan:true};
+  });
+}
+
+async function retireWithArchive(sessionPath,state,record,audit){
+  const path=archivePath(sessionPath,record.signature);
+  if(await exists(path))throw new Error("Existing reconciliation archive; manual recovery required");
+  await persist(path,{session:state,journal:record,audit},true,ARCHIVE_BYTES);
+  await unlink(journal(sessionPath));
+  const directory=await open(dirname(sessionPath),"r");
+  try{await directory.sync();}finally{await directory.close();}
+  await persist(sessionPath,{...state,phase:"idle",lastSlot:audit.slot,intent:null});
+}
+/** Explicit recovery of a conclusively failed transaction, not a retry.
+ * Only the exact signed message with a finalized error and independently
+ * authenticated unchanged market collateral/order state can be retired.
+ * Native transaction fees may be charged despite instruction rollback.
+ * Unknown, expired-without-receipt or concurrent changes remain blocked.
+ */
+export async function reconcileFailedSandboxMakerIntent(connection,{sessionPath,snapshotOptions,control}){
+  sandbox(connection,control);
+  if(control.recoverFinalizedFailure!==true)throw new Error("Explicit finalized-failure recovery approval required");
+  return withMakerJournalLock(sessionPath+".lock",async()=>{
+    const state=await read(sessionPath);sameDomain(state,snapshotOptions);
+    if(state.phase!=="submitted")throw new Error("No submitted maker intent to recover");
+    const {record,wire}=await verifiedJournal(sessionPath,state);
+    const observation=await observeSignatureStatus(connection,{signature:record.signature,
+      expectedGenesisHash:record.genesisHash,lastValidBlockHeight:record.lastValidBlockHeight});
+    if(observation.state!=="finalized-failure")
+      return {state:observation.state,canRetry:false,canRelease:false};
+    const receipt=await connection.getTransaction(record.signature,{
+      commitment:"finalized",maxSupportedTransactionVersion:0,
+    });
+    const error=receipt?.meta?.err;
+    if(!receipt||receipt.version!==0||receipt.slot!==observation.slot||
+      receipt.slot<state.lastSlot||error===null||error===undefined||
+      !(typeof error==="string"||(typeof error==="object"&&!Array.isArray(error)))||
+      Buffer.byteLength(JSON.stringify(error))>4096||!integer(receipt.meta.fee)||
+      !Array.isArray(receipt.transaction?.signatures)||receipt.transaction.signatures.length!==1||
+      receipt.transaction.signatures[0]!==record.signature||
+      typeof receipt.transaction.message?.serialize!=="function"||
+      !Buffer.from(receipt.transaction.message.serialize()).equals(wire.subarray(65)))
+      throw new Error("Finalized failure receipt does not match journaled signed message");
+    const before=state.intent.before;
+    if(!positive(before?.slot)||before.slot>receipt.slot)
+      throw new Error("Missing pre-submit inventory proof");
+    const snapshot=await loadLiveMakerSnapshot(connection,{
+      ...snapshotOptions,commitment:"finalized",maxLagSlots:state.limits.maxLagSlots,
+      minContextSlot:Math.max(snapshotOptions.minContextSlot??0,receipt.slot),
+    });
+    const actual={inventory:Object.fromEntries(inventoryFields.map(k=>[k,String(snapshot.inventory[k])])),
+      orders:sortedOrders(snapshot.ownedOrders),nextSequence:String(snapshot.header.nextSequence)};
+    const expected={inventory:before.inventory,orders:sortedOrders(before.ownedOrders),
+      nextSequence:before.nextSequence};
+    const custody={base:String(snapshot.custodyState.totalBase),quote:String(snapshot.custodyState.totalQuote)};
+    const vaults={base:String(snapshot.vaultAmounts.base),quote:String(snapshot.vaultAmounts.quote)};
+    if(snapshot.pendingLazySettlement||!equal(actual,expected)||
+      !equal(custody,before.custody)||!equal(vaults,before.vaults))
+      throw new Error("Unexplained failed-transaction post-state; manual reconciliation required");
+    sandbox(connection,control);
+    if(control.recoverFinalizedFailure!==true)throw new Error("Finalized-failure recovery no longer approved");
+    const audit={outcome:"finalized-failure",finalizedSlot:receipt.slot,slot:snapshot.slot,
+      error,feeLamports:receipt.meta.fee,actual,custody,vaults};
+    await retireWithArchive(sessionPath,state,record,audit);
+    return {state:"reconciled-failure",signature:record.signature,slot:snapshot.slot,
+      feeLamports:receipt.meta.fee,canSubmit:false,canRetry:false,requiresFreshPlan:true};
   });
 }

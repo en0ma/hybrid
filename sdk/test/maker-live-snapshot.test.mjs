@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as web3 from "@solana/web3.js";
 import {PublicKey,Keypair,VersionedTransaction} from "@solana/web3.js";
-import {mkdtemp,rm,writeFile,stat} from "node:fs/promises";
+import {mkdtemp,rm,writeFile,stat,readFile} from "node:fs/promises";
 import {createServer} from "node:http";
 import {once} from "node:events";
 import {tmpdir} from "node:os";
@@ -11,7 +11,8 @@ import {join} from "node:path";
 import {createSolanaSettlementAdapter} from "../src/settlement-solana.mjs";
 import {initializeLiveMakerSession,inspectLiveMakerSession,reserveLiveMakerIntent,
   prepareLiveMakerIntent,observeLiveMakerIntent,submitSandboxMakerIntent,
-  finalizeSandboxMakerIntent,reconcileSandboxMakerIntent,renewSandboxMakerRateWindow} from "../src/maker-live-session.mjs";
+  finalizeSandboxMakerIntent,reconcileSandboxMakerIntent,renewSandboxMakerRateWindow,
+  reconcileFailedSandboxMakerIntent} from "../src/maker-live-session.mjs";
 import {loadLiveMakerSnapshot} from "../src/maker-live-snapshot.mjs";
 const Q=1n<<64n;
 const key=n=>new PublicKey(Buffer.alloc(32,n));
@@ -516,5 +517,80 @@ test("a pending signed or unsigned reservation cannot renew its quota",async()=>
       control:{...sandboxControl,renewRateWindow:true}});
     assert.equal(renewal.state,"pending-intent");
     assert.equal((await inspectLiveMakerSession(sessionPath)).ordersReserved,1);
+  });
+});
+
+async function failedIntentFixture(callback){
+  await preparedFixture(async({f,sessionPath,transaction,prepared,opts})=>{
+    await withSubmitServer(f.connection,async(value,res)=>replySignature(value,res,prepared.signature),
+      async()=>{await submitSandboxMakerIntent(f.connection,opts);});
+    const error={InstructionError:[0,{Custom:1}]};
+    f.connection.getSignatureStatuses=async()=>({context:{slot:104},
+      value:[{slot:103,confirmationStatus:"finalized",err:error}]});
+    const receipt={version:0,slot:103,meta:{err:error,fee:5000},
+      transaction:{signatures:[prepared.signature],message:transaction.message}};
+    f.connection.getTransaction=async()=>receipt;
+    const after=fixture();
+    f.connection.getMultipleAccountsInfoAndContext=async(keys,options)=>{
+      assert.equal(options.commitment,"finalized");assert.ok(options.minContextSlot>=103);
+      return {context:{slot:104},value:keys.map(k=>after.accounts.get(k.toBase58())??null)};
+    };
+    f.connection.getSlot=async()=>104;
+    const recover=()=>reconcileFailedSandboxMakerIntent(f.connection,{...opts,
+      control:{...sandboxControl,recoverFinalizedFailure:true}});
+    await callback({f,sessionPath,prepared,opts,after,receipt,recover});
+  });
+}
+test("explicit finalized failure recovery archives exact unchanged state and fee without retry",async()=>{
+  await failedIntentFixture(async({f,sessionPath,prepared,opts,recover})=>{
+    await assert.rejects(reconcileFailedSandboxMakerIntent(f.connection,opts),/Explicit finalized-failure/);
+    assert.equal((await finalizeSandboxMakerIntent(f.connection,opts)).state,"finalized-failure");
+    assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"submitted");
+    const done=await recover();
+    assert.equal(done.state,"reconciled-failure");assert.equal(done.canRetry,false);assert.equal(done.feeLamports,5000);
+    const saved=await inspectLiveMakerSession(sessionPath);
+    assert.equal(saved.phase,"idle");assert.equal(saved.transactionsReserved,1);assert.equal(saved.lastSlot,104);
+    const archive=JSON.parse(await readFile(sessionPath+".settled."+prepared.signature,"utf8")).state;
+    assert.equal(archive.audit.outcome,"finalized-failure");assert.equal(archive.audit.feeLamports,5000);
+    assert.equal(archive.journal.phase,"submitted");
+    await assert.rejects(stat(sessionPath+".transaction"),/ENOENT/);
+    await assert.rejects(recover(),/No submitted maker intent/);
+  });
+});
+test("unknown status, even after expiry, cannot release failed intent",async()=>{
+  await failedIntentFixture(async({f,sessionPath,recover})=>{
+    f.connection.getBlockHeight=async()=>999;
+    f.connection.getSignatureStatuses=async()=>({context:{slot:104},value:[null]});
+    const result=await recover();assert.equal(result.state,"unknown");assert.equal(result.canRelease,false);
+    assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"submitted");
+  });
+});
+test("failed receipt with mismatched wire or successful result is rejected",async()=>{
+  await failedIntentFixture(async({sessionPath,receipt,recover})=>{
+    receipt.transaction.message={serialize:()=>Buffer.from([0])};
+    await assert.rejects(recover(),/failure receipt does not match/);
+    assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"submitted");
+  });
+  await failedIntentFixture(async({sessionPath,receipt,recover})=>{
+    receipt.meta.err=null;
+    await assert.rejects(recover(),/failure receipt does not match/);
+    assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"submitted");
+  });
+});
+test("failed receipt with unexplained inventory or vault change cannot release",async()=>{
+  await failedIntentFixture(async({sessionPath,after,recover})=>{
+    after.inventory.writeBigUInt64LE(99n,80);
+    await assert.rejects(recover(),/Unexplained failed-transaction/);
+    assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"submitted");
+  });
+  await failedIntentFixture(async({sessionPath,after,recover})=>{
+    after.baseToken.writeBigUInt64LE(149n,64);
+    await assert.rejects(recover(),/Unexplained failed-transaction/);
+    assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"submitted");
+  });
+});
+test("read-only session inspection rejects configured domain mismatch",async()=>{
+  await sessionFixture(async({f,sessionPath})=>{
+    await assert.rejects(inspectLiveMakerSession(sessionPath,{...f.args,maker:key(99)}),/domain mismatch/);
   });
 });
