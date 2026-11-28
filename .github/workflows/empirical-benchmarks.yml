@@ -7,9 +7,15 @@ permissions:
   contents: read
 jobs:
   paired:
+    name: Paired full-fill (${{ matrix.makers }} makers)
     runs-on: ubuntu-latest
     timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        makers: [1, 8]
     env:
+      M84_CASE_MAKERS: ${{ matrix.makers }}
       SOLANA_RPC_URL: http://127.0.0.1:8899
       M84_OFFLINE_FIXTURE: "1"
       HYBRID_BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -78,7 +84,7 @@ jobs:
           cat m84-surfpool.log
           exit 1
       - name: Execute paired full-fill cases
-        timeout-minutes: 20
+        timeout-minutes: 35
         working-directory: devnet-demo
         run: node src/run-m84-surfpool.mjs
       - name: Require actual paired receipt evidence
@@ -86,12 +92,10 @@ jobs:
         run: |
           node --input-type=module -e '
           import {readFileSync} from "node:fs";
-          import {validateFullFillPair,MANIFEST_PIN} from "./src/m84-metrics.mjs";
+          import {validatePairedShard,MANIFEST_PIN} from "./src/m84-metrics.mjs";
           const r=JSON.parse(readFileSync(".m84-evidence/m84-empirical.json"));
-          if(!r.complete||r.hybridCommit!==process.env.HYBRID_BENCHMARK_COMMIT||
-             r.manifestCommit!==MANIFEST_PIN||r.cases.map(x=>x.makers).join(",")!=="1,8")
-            throw Error("Incomplete paired evidence");
-          for(const c of r.cases)validateFullFillPair(c);
+          validatePairedShard(r,{hybridCommit:process.env.HYBRID_BENCHMARK_COMMIT,
+            manifestCommit:MANIFEST_PIN,makers:Number(process.env.M84_CASE_MAKERS)});
           console.log(JSON.stringify(r.cases.map(c=>({name:c.name,hybrid:c.hybrid.metrics,manifest:c.manifest.metrics})),null,2));
           '
       - name: Print bounded partial evidence on failure
@@ -113,7 +117,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m84-empirical-${{ github.run_id }}
+          name: m84-empirical-${{ github.run_id }}-${{ matrix.makers }}-makers
           include-hidden-files: true
           if-no-files-found: warn
           path: |
@@ -123,3 +127,38 @@ jobs:
         if: always()
         working-directory: devnet-demo
         run: if [ -f m84-surfpool.pid ]; then kill "$(cat m84-surfpool.pid)" 2>/dev/null || true; fi
+
+  require-both-pairs:
+    name: Require both paired workloads
+    needs: [paired]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful independent shards
+        env:
+          MATRIX_RESULT: ${{ needs.paired.result }}
+        run: test "$MATRIX_RESULT" = success
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: m84-empirical-${{ github.run_id }}-*-makers
+          path: paired-evidence
+      - name: Validate exact-head evidence from both independent runs
+        env:
+          HYBRID_BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node --input-type=module -e '
+          import {readFileSync} from "node:fs";
+          import {validatePairedShard,MANIFEST_PIN} from "./devnet-demo/src/m84-metrics.mjs";
+          const reports=[1,8].map(makers=>{
+            const file="paired-evidence/m84-empirical-"+process.env.GITHUB_RUN_ID+"-"+makers+"-makers/.m84-evidence/m84-empirical.json";
+            const report=JSON.parse(readFileSync(file));
+            validatePairedShard(report,{hybridCommit:process.env.HYBRID_BENCHMARK_COMMIT,manifestCommit:MANIFEST_PIN,makers});
+            return report;
+          });
+          if(new Set(reports.map(r=>r.genesis)).size!==2)
+            console.log("Note: disposable runtimes reported the same genesis; compare each pair only within its own runner.");
+          console.log(JSON.stringify(reports.map(r=>({runner:r.toolchain.runner,genesis:r.genesis,cases:r.cases.map(c=>({name:c.name,hybrid:c.hybrid.metrics,manifest:c.manifest.metrics}))})),null,2));
+          '

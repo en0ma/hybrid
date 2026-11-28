@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {summarizeReceipts,validateFullFillPair,auditExecutedReceipt,waitForFinalized} from "./m84-metrics.mjs";
+import {summarizeReceipts,validateFullFillPair,auditExecutedReceipt,waitForFinalized,validatePairedShard,MANIFEST_PIN} from "./m84-metrics.mjs";
 import {Keypair,TransactionMessage,VersionedTransaction,PublicKey} from "@solana/web3.js";
 import bs58 from "bs58";
 test("aggregate execution and all payout costs, never setup-only costs",()=>{
@@ -63,4 +63,25 @@ test("missing, failed and mismatched finality never release the polling gate",as
  const finalized={getSignatureStatuses:async()=>({value:[{slot:8,confirmationStatus:"finalized",err:null}]}),getSlot:async()=>8};
  await assert.rejects(waitForFinalized({...finalized,getTransaction:async()=>({slot:9,meta:{err:null},transaction:{signatures:["sig"]}})},"sig",opts),/status\/receipt mismatch/);
  await assert.rejects(waitForFinalized({getSignatureStatuses:async()=>({value:[{slot:8,confirmationStatus:"finalized",err:{InstructionError:[0,1]}}]})},"sig",opts),/Finalized failure/);
+});
+
+test("paired shard requires exact revision, case, program hashes, runtime and complete evidence",()=>{
+ const h="US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",m="MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms";
+ const result=(programId,fee)=>{
+  const receipts=["execute","payout"].map((stage,i)=>({stage,signature:programId+i,computeUnits:10,packetBytes:200,accountKeys:5,instructionMetas:3,feeLamports:5000}));
+  return {programId,verified:true,grossBaseAtoms:"100",grossQuoteAtoms:"100",payouts:["100"],protocolFeeQuoteAtoms:fee,
+   inventoryUtilization:{numerator:"100",denominator:"1000000000"},footprint:{bytes:100,lamports:500},receipts,metrics:summarizeReceipts(receipts)};
+ };
+ const report={kind:"preliminary-paired-full-fill",network:"offline-surfpool",complete:true,hybridCommit:"a".repeat(40),
+  manifestCommit:MANIFEST_PIN,selectedMakers:[1],genesis:"fixture",toolchain:{caseMakers:"1",surfpoolBinarySha256:"b".repeat(64)},
+  hybridBuild:{programId:h,elfSha256:"c".repeat(64)},manifestBuild:{programId:m,elfSha256:"d".repeat(64)},
+  cases:[{makers:1,orderBaseAtoms:"100",initialMakerBaseAtoms:"1000000000",hybrid:result(h,"1"),manifest:result(m,"0")}]};
+ const opts={hybridCommit:report.hybridCommit,manifestCommit:MANIFEST_PIN,makers:1};
+ assert.equal(validatePairedShard(report,opts),true);
+ assert.throws(()=>validatePairedShard(report,{...opts,makers:8}),/wrong-head/);
+ assert.throws(()=>validatePairedShard({...report,complete:false},opts),/wrong-head/);
+ assert.throws(()=>validatePairedShard({...report,hybridCommit:"e".repeat(40)},opts),/wrong-head/);
+ assert.throws(()=>validatePairedShard({...report,toolchain:{caseMakers:"1"}},opts),/pinned runtime/);
+ const pending=structuredClone(report);pending.cases[0].hybrid.pendingAttempt={status:"submission-attempted"};
+ assert.throws(()=>validatePairedShard(pending,opts),/completed receipt/);
 });

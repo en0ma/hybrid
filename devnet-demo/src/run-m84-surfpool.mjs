@@ -1,7 +1,7 @@
 // Local-only paired full-fill SBF comparison. No public endpoint or wallet keys.
 import * as web3 from "@solana/web3.js";
 import bs58 from "bs58";
-import {readFile,mkdir,writeFile} from "node:fs/promises";
+import {readFile,mkdir,writeFile,rename} from "node:fs/promises";
 import {resolve,join} from "node:path";
 import {createHash} from "node:crypto";
 import {execFileSync} from "node:child_process";
@@ -28,7 +28,7 @@ const fail=(ok,msg)=>{if(!ok)throw Error(msg);};
 const json=x=>JSON.stringify(x,(_,v)=>typeof v==="bigint"?String(v):v,2)+"\n";
  const ix=(programId,keys,data)=>({programId,keys,data});
 const adapter=createSolanaSettlementAdapter(web3);
-let rpc,url,genesis;
+let rpc,url,genesis,checkpoint=async()=>{};
 async function cheat(method,params){
  const response=await fetch(url,{method:"POST",signal:AbortSignal.timeout(10000),redirect:"error",headers:{"content-type":"application/json"},
   body:JSON.stringify({jsonrpc:"2.0",id:1,method,params})});
@@ -56,14 +56,18 @@ async function send(result,stage,market,program,instructions,payer,others=[]){
  const tx=new VersionedTransaction(message);tx.sign([payer,...others]);
  const wire=Buffer.from(tx.serialize()),signature=bs58.encode(tx.signatures[0]);
  result.pendingAttempt={stage,signature,slot:await rpc.getSlot("confirmed"),status:"prepared"};
+ await checkpoint();
  const sim=await rpc.simulateTransaction(tx,{sigVerify:true,replaceRecentBlockhash:false,commitment:"confirmed"});
  fail(sim.value.err===null,"Simulation failed "+stage+" "+JSON.stringify(sim.value.err));
  result.pendingAttempt.status="submission-attempted";
+ await checkpoint();
  fail(await rpc.sendRawTransaction(wire,{maxRetries:0,skipPreflight:false})===signature,"Send signature mismatch");
  const receipt=await waitForFinalized(rpc,signature);
  const proof=auditExecutedReceipt(receipt,{signature,wire,programId:program,market,bs58});
  result.receipts.push({stage,...proof,simulationComputeUnits:sim.value.unitsConsumed});
  delete result.pendingAttempt;
+ await checkpoint();
+ console.log(JSON.stringify({stage,program:pk(program),market:pk(market),signature,slot:proof.slot,computeUnits:proof.computeUnits}));
  return proof;
 }
 async function externalAccounts(f){
@@ -278,24 +282,40 @@ async function main(){
  const hybridCommit=rev(".."),manifestCommit=rev(process.env.MANIFEST_REPO);
  fail(hybridCommit===process.env.HYBRID_BENCHMARK_COMMIT&&manifestCommit===MANIFEST_PIN,"Unpinned checkout");
  const dir=resolve(process.env.M84_EVIDENCE_DIR||".m84-evidence");await mkdir(dir,{recursive:true,mode:0o700});
- const report={schemaVersion:1,kind:"preliminary-paired-full-fill",network:"offline-surfpool",
+ const selected=process.env.M84_CASE_MAKERS===undefined?[1,8]:[Number(process.env.M84_CASE_MAKERS)];
+ fail(selected.every(m=>[1,8].includes(m)),"Unknown full-fill case selection");
+ const report={schemaVersion:1,kind:"preliminary-paired-full-fill",network:"offline-surfpool",selectedMakers:selected,
   hybridCommit,manifestCommit,genesis:pk(genesis),toolchain:{node:process.version,
    solana:execFileSync("solana",["--version"],{encoding:"utf8"}).trim(),
    rust:execFileSync("rustc",["--version"],{encoding:"utf8"}).trim(),
    surfpool:execFileSync("surfpool",["--version"],{encoding:"utf8"}).trim(),
    surfpoolBinarySha256:process.env.M84_SURFPOOL_SHA256||null,
-   runner:process.env.GITHUB_RUN_ID||"local",arch:process.arch},cases:[],complete:false,
+   runner:process.env.GITHUB_RUN_ID||"local",job:process.env.GITHUB_JOB||"local",
+   caseMakers:selected.join(","),arch:process.arch},cases:[],complete:false,
   unmeasured:["two-market-inventory","partial-fill-cancel-replace-retry","adverse-price-collateral-stress"]};
+ const evidencePath=join(dir,"m84-empirical.json");
+ checkpoint=async()=>{
+  const next=evidencePath+".next";
+  await writeFile(next,json(report),{mode:0o600});
+  await rename(next,evidencePath);
+ };
+ await checkpoint();
  try{
   report.hybridBuild=await deploy(H,process.env.HYBRID_SBF_PATH);
   report.manifestBuild=await deploy(M,process.env.MANIFEST_SBF_PATH);
-  for(const makers of [1,8]){
+  await checkpoint();
+  for(const makers of selected){
    const f={makers:Array.from({length:makers},key),taker:key(),payer:key(),baseMint:key().publicKey,quoteMint:key().publicKey};
-   for(const actor of [f.payer,f.taker,...f.makers]){
-    const sig=await rpc.requestAirdrop(actor.publicKey,2000000000);
-    await waitForFinalized(rpc,sig,{receiptRequired:false});
+   // Distinct newly generated actor accounts: issue funding once per actor,
+   // then wait for all finalized balances concurrently. No trade is parallelized.
+   const funding=await Promise.all([f.payer,f.taker,...f.makers].map(async actor=>{
+    const signature=await rpc.requestAirdrop(actor.publicKey,2000000000);
+    return {actor,signature};
+   }));
+   await Promise.all(funding.map(async({actor,signature})=>{
+    await waitForFinalized(rpc,signature,{receiptRequired:false});
     fail(await rpc.getBalance(actor.publicKey,"finalized")>=2000000000,"Airdrop funding unavailable in finalized bank");
-   }
+   }));
    const supply=2n*BigInt(makers+1)*FUND;
    for(const mint of [f.baseMint,f.quoteMint]){
     const data=classicMintBytes(f.payer.publicKey);data.writeBigUInt64LE(supply,36);await seed(mint,T,data);
@@ -309,9 +329,10 @@ async function main(){
    row.hybrid={};await hybrid(f,h,row.hybrid);
    row.manifest={};await manifest(f,m,row.manifest);
    validateFullFillPair(row);
+   await checkpoint();
   }
   report.complete=true;
  }catch(error){report.error=error.message;throw error;}
- finally{await writeFile(join(dir,"m84-empirical.json"),json(report),{mode:0o600});}
+ finally{await checkpoint();}
 }
 main().catch(e=>{console.error(e.message);process.exitCode=1;});

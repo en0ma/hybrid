@@ -96,3 +96,24 @@ export async function waitForFinalized(connection,signature,{receiptRequired=tru
  }
  throw Error("Finalized "+(receiptRequired?"receipt":"status")+" unavailable within polling budget: "+signature);
 }
+
+// A CI shard is evidence for exactly one paired workload on one runtime.
+export function validatePairedShard(report,{hybridCommit,manifestCommit,makers}){
+ if(![1,8].includes(makers)||!report||report.complete!==true||report.error!==undefined||
+  report.kind!=="preliminary-paired-full-fill"||report.network!=="offline-surfpool"||
+  report.hybridCommit!==hybridCommit||report.manifestCommit!==manifestCommit||
+  !/^[0-9a-f]{40}$/.test(hybridCommit)||manifestCommit!==MANIFEST_PIN||
+  !Array.isArray(report.selectedMakers)||report.selectedMakers.length!==1||report.selectedMakers[0]!==makers||
+  !Array.isArray(report.cases)||report.cases.length!==1||report.cases[0].makers!==makers)
+  throw Error("Incomplete or wrong-head paired shard");
+ const row=report.cases[0];
+ if(row.hybrid?.pendingAttempt||row.manifest?.pendingAttempt||
+   row.hybrid?.programId!=="US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx"||
+   row.manifest?.programId!=="MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms"||
+   row.hybrid.programId!==report.hybridBuild?.programId||row.manifest.programId!==report.manifestBuild?.programId||
+   ![report.hybridBuild?.elfSha256,report.manifestBuild?.elfSha256,report.toolchain?.surfpoolBinarySha256]
+     .every(x=>typeof x==="string"&&/^[0-9a-f]{64}$/.test(x))||
+   typeof report.genesis!=="string"||!report.genesis||report.toolchain?.caseMakers!==String(makers))
+  throw Error("Missing pinned runtime or completed receipt evidence");
+ return validateFullFillPair(row);
+}
