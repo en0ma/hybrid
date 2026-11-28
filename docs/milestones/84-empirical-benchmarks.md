@@ -1,6 +1,6 @@
 # Milestone 84: Empirical competitive benchmarks
 
-Status: implementation started on merged M83 baseline `ecbe68a0c0e2c98378766fcf5f8f0ca3d9266e4c`. No performance ranking or complete five-scenario result claimed.
+Status: all five local ASK workloads passed funded execution at `19cb86a908afe522728f8ead3045808b3d7f389c`, based on merged M83 `ecbe68a0c0e2c98378766fcf5f8f0ca3d9266e4c`. See the final same-head comparison below. Fresh CI/review is required for this closeout increment. No production or general performance ranking claimed.
 
 ## Acceptance
 
@@ -20,7 +20,7 @@ See `.github/workflows/empirical-benchmarks.yml`; the runner requires exact pinn
 
 ## Exit gates
 
-- [ ] All five equivalent workloads implemented and positive/negative tests committed.
+- [x] All five scoped paired local ASK workloads implemented and positive/negative tests committed; verified at `19cb86a`.
 - [ ] Exact-head CI green; preserve all existing SBF, CU and ELF limits.
 - [ ] Evidence and limitations documented; independent review of security-sensitive code.
 - [ ] Sequential merge with expected head SHA. No production activation without explicit approval.
@@ -67,3 +67,22 @@ Fourth shard implements two makers with 100 base atoms each at ASK prices 1 and 
 Exact head `262ed0d` passed all seven workflows, clean code review and zero unresolved findings. [Four-workload aggregate](https://github.com/en0ma/hybrid/actions/runs/46140590544), job 140968258361: Hybrid 198,690 CU total across 11 transactions, 84,631 CU execution plus payout (70,048 + 14,583); Manifest 61,819 CU total, 11,736 CU execution plus payout (8,483 + 3,253). Settlement bytes 1,078 vs 849, max packet 592 vs 462, both 10,000 lamports settlement fees. Controlled acknowledgement loss recovered original signature without second send. Actual transport outages remain fail-closed.
 
 Fifth shard: two local markets with the same two makers and taker and shared wallets, each book initially at prices 2 and 3, 100 base atoms each. Both markets fully funded before any mutation. Adverse reprice maker 0 from 2 to 1 via finalized cancel and replace; real 50-atom active fill at 1. Attempt to withdraw one base atom despite zero free base and remaining locked inventory: require exact insufficient-funds simulation rejection, then deliberately submit only that signed negative-test transaction on the isolated local runtime (skip preflight), require finalized same error and exact wire, and verify no mutation of protocol accounts, collateral, or SPL wallets. Include failed transaction CU/fees separately from successful settlement totals. Payout remaining quote credit; prove the other market's complete protocol-owned state hashes unchanged through each market's lifecycle and exact shared wallet conservation. This models adverse ASK repricing and locked-collateral withdrawal, not oracle-driven liquidation, cross-market credit or global order collateral. All five cases implemented subject to fresh funded CI and review; no result for the fifth claimed yet.
+
+## Five-workload same-head evidence and decision record
+
+All seven workflows completed successfully at `19cb86a908afe522728f8ead3045808b3d7f389c`. [Empirical run 46142217961](https://github.com/en0ma/hybrid/actions/runs/46142217961), aggregate job 140973446985, validated all five independent paired shards; [PR Gate 46142217966](https://github.com/en0ma/hybrid/actions/runs/46142217966). Codex review status completed, no unresolved threads; the review-state finding fields were null, not an affirmative clean-security attestation. Dedicated security receipt remains absent. The complete observed same-head measurements (two-market rows sum both markets) are:
+
+| Workload | Protocol | Successful lifecycle CU | Trade CU | Payout CU | Settlement CU | Settlement packet bytes | Failed withdrawal CU |
+|---|---|---:|---:|---:|---:|---:|---:|
+| One maker | Hybrid | 342,704 | 67,424 | 225,950 | 293,374 | 1,361 | — |
+| One maker | Manifest | 44,618 | 8,599 | 3,253 | 11,852 | 849 | — |
+| Eight makers | Hybrid | 2,368,516 | 98,679 | 1,898,052 | 1,996,731 | 6,589 | — |
+| Eight makers | Manifest | 138,492 | 14,962 | 26,205 | 41,167 | 3,558 | — |
+| Two markets | Hybrid | 823,389 | 152,831 | 495,400 | 648,231 | 2,722 | — |
+| Two markets | Manifest | 102,736 | 17,198 | 6,506 | 23,704 | 1,698 | — |
+| Partial fill / replace | Hybrid | 189,690 | 67,048 | 13,083 | 80,131 | 1,078 | — |
+| Partial fill / replace | Manifest | 57,475 | 8,594 | 3,268 | 11,862 | 849 | — |
+| Adverse stress | Hybrid | 505,356 | 152,110 | 35,166 | 187,276 | 2,156 | 27,802 |
+| Adverse stress | Manifest | 123,592 | 16,966 | 6,506 | 23,472 | 1,698 | 7,132 |
+
+Stress case: two successful market lifecycles per protocol plus two exact finalized failed withdrawals per protocol, each charged 5,000 lamports. Total CU including those rejected transactions: Hybrid 533,158; Manifest 130,724. All four simulated and finalized errors were instruction 1 InsufficientFunds; account-state rollback and unaffected market isolation were validated. Settlement network fees were equal between protocols within each case: 10,000 / 45,000 / 20,000 / 10,000 / 20,000 lamports respectively, excluding setup and negative attempts. Successful-lifecycle CU is not fully equivalent setup cost because Hybrid seed setup differs from Manifest signed creation. The aggregate artifact now also emits measured pre-trade and final account footprint, per-market and summed metrics, exact build/runtime provenance and negative-attempt costs; raw receipts and state evidence remain in the individual artifacts. No wall-clock performance ranking, capital-efficiency superiority, global collateral reuse, oracle liquidation, passive liquidity comparison, or mainnet readiness is established. The active-book compute disadvantage is a measured engineering priority, not a reason to hide or reinterpret the data. Investigate lazy claim proof verification, PDA derivation and batch settlement costs separately under existing security and compute gates; do not weaken proofs to improve a benchmark. Dedicated security/operations review and launch approval remain separate gates.

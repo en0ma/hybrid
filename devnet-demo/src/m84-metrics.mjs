@@ -319,3 +319,40 @@ export function validateStressPair(row){
   throw Error("Stress cross-market or protocol alias");
  return true;
 }
+
+// Produce a compact reproducible rollup only after validating the exact shard.
+// Footprint is allocated protocol-owned/vault account bytes and lamports, not
+// transaction fees. Negative transactions are reported separately and included
+// in total incurred CU rather than silently dropped.
+export function summarizePairedReport(report,options){
+ validatePairedShard(report,options);
+ const row=report.cases[0];
+ const footprint=f=>{
+  if(!f||!validInt(f.slot)||f.slot===0||!Array.isArray(f.accounts)||!f.accounts.length||
+   new Set(f.accounts.map(a=>a.address)).size!==f.accounts.length||
+   f.accounts.some(a=>typeof a.address!=="string"||!a.address||typeof a.owner!=="string"||!a.owner||
+    !validInt(a.bytes)||!validInt(a.lamports)||!(/^[0-9a-f]{64}$/.test(a.dataSha256)))||
+   f.accounts.reduce((n,a)=>n+a.bytes,0)!==f.bytes||f.accounts.reduce((n,a)=>n+a.lamports,0)!==f.lamports)
+    throw Error("Invalid measured account footprint");
+  return {slot:f.slot,bytes:f.bytes,lamports:f.lamports,accountCount:f.accounts.length};
+ };
+ const side=v=>{
+  const markets=v.markets??[v];
+  const entries=markets.map(x=>({market:x.market,priceAtoms:x.priceAtoms,metrics:x.metrics,
+   preTradeFootprint:footprint(x.preTradeFootprint??x.states?.before?.footprint),
+   finalFootprint:footprint(x.footprint),rejectedWithdrawal:x.rejectedWithdrawal??null}));
+  const sum=(select)=>entries.reduce((n,x)=>n+select(x),0);
+  const failedCU=sum(x=>x.rejectedWithdrawal?.computeUnits??0),failedFees=sum(x=>x.rejectedWithdrawal?.feeLamports??0);
+  return {programId:v.programId,inventoryUtilization:v.inventoryUtilization,
+   protocolFeeQuoteAtoms:v.protocolFeeQuoteAtoms,markets:entries,
+   successfulLifecycleCU:sum(x=>x.metrics.allComputeUnits),settlementCU:sum(x=>x.metrics.settlementComputeUnits),
+   settlementPacketBytes:sum(x=>x.metrics.settlementPacketBytesTotal),
+   settlementFeeLamports:sum(x=>x.metrics.settlementFeeLamports),failedCU,failedFees,
+   incurredCU:sum(x=>x.metrics.allComputeUnits)+failedCU,
+   preTradeBytes:sum(x=>x.preTradeFootprint.bytes),preTradeLamports:sum(x=>x.preTradeFootprint.lamports),
+   finalBytes:sum(x=>x.finalFootprint.bytes),finalLamports:sum(x=>x.finalFootprint.lamports)};
+ };
+ return {name:row.name,makers:row.makers,genesis:report.genesis,hybridCommit:report.hybridCommit,
+  manifestCommit:report.manifestCommit,toolchain:report.toolchain,hybridBuild:report.hybridBuild,manifestBuild:report.manifestBuild,
+  hybrid:side(row.hybrid),manifest:side(row.manifest)};
+}

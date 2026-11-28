@@ -150,8 +150,8 @@ jobs:
           HYBRID_BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           node --input-type=module -e '
-          import {readFileSync} from "node:fs";
-          import {validatePairedShard,MANIFEST_PIN} from "./devnet-demo/src/m84-metrics.mjs";
+          import {readFileSync,writeFileSync} from "node:fs";
+          import {validatePairedShard,summarizePairedReport,MANIFEST_PIN} from "./devnet-demo/src/m84-metrics.mjs";
           const reports=[1,8,2,4,5].map(makers=>{
             const file="paired-evidence/m84-empirical-"+process.env.GITHUB_RUN_ID+"-"+makers+"-makers/.m84-evidence/m84-empirical.json";
             const report=JSON.parse(readFileSync(file));
@@ -160,5 +160,16 @@ jobs:
           });
           if(new Set(reports.map(r=>r.genesis)).size!==5)
             console.log("Note: disposable runtimes reported the same genesis; compare each pair only within its own runner.");
-          console.log(JSON.stringify(reports.map(r=>({runner:r.toolchain.runner,genesis:r.genesis,cases:r.cases.map(c=>({name:c.name,hybrid:c.hybrid.metrics??c.hybrid.markets.map(m=>({...m.metrics,rejectedWithdrawal:m.rejectedWithdrawal})),manifest:c.manifest.metrics??c.manifest.markets.map(m=>({...m.metrics,rejectedWithdrawal:m.rejectedWithdrawal}))}))})),null,2));
+          const summary={schemaVersion:1,kind:"five-paired-local-ask-workloads",hybridCommit:process.env.HYBRID_BENCHMARK_COMMIT,
+            manifestCommit:MANIFEST_PIN,runId:process.env.GITHUB_RUN_ID,
+            workloads:reports.map((r,i)=>summarizePairedReport(r,{hybridCommit:process.env.HYBRID_BENCHMARK_COMMIT,manifestCommit:MANIFEST_PIN,makers:[1,8,2,4,5][i]}))};
+          writeFileSync("m84-paired-summary.json",JSON.stringify(summary,null,2)+"\n");
+          console.log(JSON.stringify(summary,null,2));
           '
+
+      - name: Upload consolidated five-workload comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: m84-paired-summary-${{ github.run_id }}
+          path: m84-paired-summary.json
+          if-no-files-found: error

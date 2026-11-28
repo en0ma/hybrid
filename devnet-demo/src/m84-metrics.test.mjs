@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {summarizeReceipts,validateFullFillPair,auditExecutedReceipt,waitForFinalized,validatePairedShard,validateTwoMarketPair,submitAndReconcileOnce,MANIFEST_PIN} from "./m84-metrics.mjs";
+import {summarizeReceipts,validateFullFillPair,auditExecutedReceipt,waitForFinalized,validatePairedShard,validateTwoMarketPair,submitAndReconcileOnce,summarizePairedReport,MANIFEST_PIN} from "./m84-metrics.mjs";
 import {Keypair,TransactionMessage,VersionedTransaction,PublicKey} from "@solana/web3.js";
 import bs58 from "bs58";
 test("aggregate execution and all payout costs, never setup-only costs",()=>{
@@ -137,4 +137,25 @@ test("finality accepts only the explicitly expected negative transaction error",
  assert.equal(await waitForFinalized(rpc,"sig",{attempts:1,expectedError}),receipt);
  await assert.rejects(waitForFinalized(rpc,"sig",{attempts:1}),/Finalized failure/);
  await assert.rejects(waitForFinalized({...rpc,getTransaction:async()=>({...receipt,meta:{err:null}})},"sig",{attempts:1,expectedError}),/status\/receipt mismatch/);
+});
+
+test("consolidated summary checks measured rent footprint and preserves provenance",()=>{
+ const h="US517G5965aydkZ46HS38QLi7UQiSojurfbQfKCELFx",m="MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms";
+ const make=(programId,fee)=>{
+  const receipts=["execute","payout"].map((stage,i)=>({stage,signature:programId+i,computeUnits:10,packetBytes:200,accountKeys:5,instructionMetas:3,feeLamports:5000}));
+  const footprint={slot:9,bytes:100,lamports:500,accounts:[{address:programId+"account",owner:programId,bytes:100,lamports:500,dataSha256:"e".repeat(64)}]};
+  return {programId,verified:true,grossBaseAtoms:"100",grossQuoteAtoms:"100",payouts:["100"],protocolFeeQuoteAtoms:fee,
+   inventoryUtilization:{numerator:"100",denominator:"1000000000"},footprint,preTradeFootprint:structuredClone(footprint),receipts,metrics:summarizeReceipts(receipts)};
+ };
+ const report={kind:"preliminary-paired-full-fill",network:"offline-surfpool",complete:true,hybridCommit:"a".repeat(40),
+  manifestCommit:MANIFEST_PIN,selectedMakers:[1],genesis:"fixture",toolchain:{caseMakers:"1",surfpoolBinarySha256:"b".repeat(64)},
+  hybridBuild:{programId:h,elfSha256:"c".repeat(64)},manifestBuild:{programId:m,elfSha256:"d".repeat(64)},
+  cases:[{name:"one-maker-one-level-full-fill",makers:1,orderBaseAtoms:"100",initialMakerBaseAtoms:"1000000000",hybrid:make(h,"1"),manifest:make(m,"0")}]};
+ const opts={hybridCommit:report.hybridCommit,manifestCommit:MANIFEST_PIN,makers:1};
+ const summary=summarizePairedReport(report,opts);
+ assert.equal(summary.hybrid.finalBytes,100);assert.equal(summary.hybrid.finalLamports,500);
+ assert.equal(summary.hybrid.incurredCU,20);assert.equal(summary.hybrid.failedCU,0);
+ assert.equal(summary.hybridCommit,report.hybridCommit);
+ report.cases[0].hybrid.footprint.accounts[0].lamports=499;
+ assert.throws(()=>summarizePairedReport(report,opts),/Invalid measured account footprint/);
 });
