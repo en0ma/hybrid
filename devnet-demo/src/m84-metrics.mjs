@@ -28,7 +28,7 @@ export function auditExecutedReceipt(receipt,{signature,wire,programId,market,bs
 export function summarizeReceipts(receipts){
  if(!Array.isArray(receipts)||!receipts.length||new Set(receipts.map(r=>r.signature)).size!==receipts.length)
   throw Error("Missing or duplicate receipt");
- for(const r of receipts)if(!["initialize","deposit","place","execute","payout"].includes(r.stage)||
+ for(const r of receipts)if(!["initialize","deposit","place","execute","payout","cancel","replace"].includes(r.stage)||
    !["computeUnits","packetBytes","accountKeys","instructionMetas","feeLamports"].every(k=>validInt(r[k]))||
    r.computeUnits===0||r.packetBytes===0||r.packetBytes>1232)throw Error("Invalid receipt metrics");
  const measured=receipts.filter(r=>r.stage==="execute"||r.stage==="payout");
@@ -101,12 +101,12 @@ export async function waitForFinalized(connection,signature,{receiptRequired=tru
 
 // A CI shard is evidence for exactly one paired workload on one runtime.
 export function validatePairedShard(report,{hybridCommit,manifestCommit,makers}){
- if(![1,8,2].includes(makers)||!report||report.complete!==true||report.error!==undefined||
+ if(![1,8,2,4].includes(makers)||!report||report.complete!==true||report.error!==undefined||
   report.kind!=="preliminary-paired-full-fill"||report.network!=="offline-surfpool"||
   report.hybridCommit!==hybridCommit||report.manifestCommit!==manifestCommit||
   !/^[0-9a-f]{40}$/.test(hybridCommit)||manifestCommit!==MANIFEST_PIN||
   !Array.isArray(report.selectedMakers)||report.selectedMakers.length!==1||report.selectedMakers[0]!==makers||
-  !Array.isArray(report.cases)||report.cases.length!==1||report.cases[0].makers!==(makers===2?1:makers))
+  !Array.isArray(report.cases)||report.cases.length!==1||report.cases[0].makers!==(makers===2?1:makers===4?2:makers))
   throw Error("Incomplete or wrong-head paired shard");
  const row=report.cases[0];
  if(row.hybrid?.pendingAttempt||row.manifest?.pendingAttempt||
@@ -117,7 +117,7 @@ export function validatePairedShard(report,{hybridCommit,manifestCommit,makers})
      .every(x=>typeof x==="string"&&/^[0-9a-f]{64}$/.test(x))||
    typeof report.genesis!=="string"||!report.genesis||report.toolchain?.caseMakers!==String(makers))
   throw Error("Missing pinned runtime or completed receipt evidence");
- return makers===2?validateTwoMarketPair(row):validateFullFillPair(row);
+ return makers===2?validateTwoMarketPair(row):makers===4?validatePartialPair(row):validateFullFillPair(row);
 }
 
 // Two simultaneous local markets share one funded external maker wallet.
@@ -151,5 +151,73 @@ export function validateTwoMarketPair(row){
  if(new Set(markets).size!==4||new Set(wallets).size!==8||new Set(signatures).size!==signatures.length)
   throw Error("Two-market account or receipt alias");
  for(let i=0;i<2;i++)validateFullFillPair({...row,priceAtoms:String(i+1),hybrid:row.hybrid.markets[i],manifest:row.manifest.markets[i]});
+ return true;
+}
+
+// A deliberate fault injection discards the acknowledgement after one real
+// submission. No second submission is allowed, including on real RPC error.
+export async function submitAndReconcileOnce({signature,simulateTimeout=false,sendOnce,reconcile}){
+ const response=await sendOnce();
+ if(response!==signature)throw Error("Send signature mismatch");
+ // The injected acknowledgement loss is local and deterministic: the real
+ // transaction has been sent; recovery receives only the precomputed signature.
+ const receipt=await reconcile(signature);
+ return {receipt,attempts:1,acknowledgementLost:simulateTimeout};
+}
+export function validatePartialPair(row){
+ if(row.name!=="partial-fill-cancel-replace-retry"||row.makers!==2||row.makerOwners?.length!==2||
+  new Set(row.makerOwners).size!==2||row.orderBaseAtoms!=="100"||
+  row.initialMakerBaseAtoms!=="1000000000")throw Error("Unexpected partial fixture");
+ const specs={
+  before:{base:"200",quote:"0",quantities:["100","100"],prices:["1","2"],free:["0","0"],credit:"0",fill:"0",paid:"0"},
+  partial:{base:"150",quote:"50",quantities:["50","100"],prices:["1","2"],free:["0","0"],credit:"50",fill:"50",paid:"0"},
+  cancelled:{base:"150",quote:"50",quantities:["0","100"],prices:["0","2"],free:["50","0"],credit:"50",fill:"50",paid:"0"},
+  replaced:{base:"150",quote:"50",quantities:["50","100"],prices:["3","2"],free:["0","0"],credit:"50",fill:"50",paid:"0"},
+  final:{base:"150",quote:"0",quantities:["50","100"],prices:["3","2"],free:["0","0"],credit:"0",fill:"50",paid:"50"}
+ };
+ const signatures=[];
+ for(const v of [row.hybrid,row.manifest]){
+  if(v?.verified!==true||v.pendingAttempt||v.grossBaseAtoms!=="50"||v.grossQuoteAtoms!=="50"||
+   v.protocolFeeQuoteAtoms!=="0"||v.payouts?.join(",")!=="50,0"||
+   v.inventoryUtilization?.numerator!=="200"||v.inventoryUtilization?.denominator!=="2000000000")
+   throw Error("Partial outcome mismatch");
+  const stages=v.receipts.map(r=>r.stage).join(",");
+  if(stages!=="initialize,initialize,deposit,place,initialize,deposit,place,execute,cancel,replace,payout")
+   throw Error("Missing ordered mutation receipts");
+  const receipt=v.receipts.find(r=>r.stage==="replace");
+  if(v.timeout?.kind!=="injected-lost-submission-acknowledgement"||v.timeout.signature!==receipt.signature||
+    v.timeout.finalizedSlot!==receipt.slot||v.timeout.sendAttempts!==1||v.timeout.canRetry!==false||
+    v.timeout.reconciled!==true||v.timeout.acknowledgementLost!==true)throw Error("Missing one-send signature reconciliation");
+  for(const [name,spec] of Object.entries(specs)){
+   const state=v.states?.[name],makers=state?.makers;
+   if(state?.vaultBase!==spec.base||state.vaultQuote!==spec.quote||makers?.length!==2||
+     state.wallets?.length!==3||!validInt(state.footprint?.bytes)||state.footprint.bytes===0||
+     !validInt(state.footprint?.lamports)||state.footprint.lamports===0)
+    throw Error("Partial state mismatch: "+name);
+   for(let i=0;i<2;i++){
+    const a=makers[i],order=a.orders?.[0],qty=spec.quantities[i];
+    if(a.owner!==row.makerOwners[i]||a.freeBase!==spec.free[i]||a.lockedBase!==qty||
+     a.freeQuote!==(i===0?spec.credit:"0")||a.lockedQuote!=="0"||
+     a.orders?.length!==(qty==="0"?0:1)||
+     (qty!=="0"&&(order.base!==qty||order.price!==spec.prices[i]||!/^[0-9]+$/.test(order.sequence))))
+     throw Error("Partial maker mismatch: "+name);
+    const wallet=state.wallets[i];
+    if(String(wallet.base)!=="999999900"||String(wallet.quote)!==String(1000000000n+(i===0?BigInt(spec.paid):0n)))
+     throw Error("Partial maker wallet mismatch: "+name);
+   }
+   if(String(state.wallets[2].base)!==String(1000000000n+BigInt(spec.fill))||
+     String(state.wallets[2].quote)!==String(1000000000n-BigInt(spec.fill)))
+    throw Error("Partial taker wallet mismatch: "+name);
+   if(name!=="before"&&makers[1].orders[0].sequence!==v.states.before.makers[1].orders[0].sequence)
+    throw Error("Unrelated maker order changed");
+  }
+  if(v.states.partial.makers[0].orders[0].sequence!==v.states.before.makers[0].orders[0].sequence||
+   v.states.replaced.makers[0].orders[0].sequence===v.states.before.makers[0].orders[0].sequence||
+   v.states.final.makers[0].orders[0].sequence!==v.states.replaced.makers[0].orders[0].sequence)
+   throw Error("Replacement order sequence mismatch");
+  if(JSON.stringify(summarizeReceipts(v.receipts))!==JSON.stringify(v.metrics))throw Error("Partial receipt aggregate mismatch");
+  signatures.push(...v.receipts.map(r=>r.signature));
+ }
+ if(row.hybrid.market===row.manifest.market||new Set(signatures).size!==signatures.length)throw Error("Partial pair alias");
  return true;
 }

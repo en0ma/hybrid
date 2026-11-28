@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {summarizeReceipts,validateFullFillPair,auditExecutedReceipt,waitForFinalized,validatePairedShard,validateTwoMarketPair,MANIFEST_PIN} from "./m84-metrics.mjs";
+import {summarizeReceipts,validateFullFillPair,auditExecutedReceipt,waitForFinalized,validatePairedShard,validateTwoMarketPair,submitAndReconcileOnce,MANIFEST_PIN} from "./m84-metrics.mjs";
 import {Keypair,TransactionMessage,VersionedTransaction,PublicKey} from "@solana/web3.js";
 import bs58 from "bs58";
 test("aggregate execution and all payout costs, never setup-only costs",()=>{
@@ -113,4 +113,18 @@ test("two-market evidence requires simultaneous distinct markets and a single sh
  assert.throws(()=>validateTwoMarketPair(late),/simultaneous/);
  const alias=structuredClone(row);alias.manifest.markets[1].market=alias.manifest.markets[0].market;alias.manifest.concurrentOpen[1].market=alias.manifest.markets[0].market;
  assert.throws(()=>validateTwoMarketPair(alias),/alias/);
+});
+
+test("injected acknowledgement loss reconciles original signature without another send",async()=>{
+ let sends=0,reads=0;
+ const out=await submitAndReconcileOnce({signature:"original",simulateTimeout:true,
+  sendOnce:async()=>{sends++;return "original";},
+  reconcile:async signature=>{reads++;assert.equal(signature,"original");return {slot:8};}});
+ assert.deepEqual(out,{receipt:{slot:8},attempts:1,acknowledgementLost:true});
+ assert.equal(sends,1);assert.equal(reads,1);
+ await assert.rejects(submitAndReconcileOnce({signature:"original",simulateTimeout:true,
+  sendOnce:async()=>{sends++;return "wrong";},reconcile:async()=>{throw Error("must not reconcile wrong signature");}}),/signature mismatch/);
+ await assert.rejects(submitAndReconcileOnce({signature:"original",simulateTimeout:true,
+  sendOnce:async()=>{sends++;throw Error("transport unavailable");},reconcile:async()=>{throw Error("unexpected read");}}),/transport unavailable/);
+ assert.equal(sends,3);
 });
