@@ -40,3 +40,18 @@ At `d9003ea`, [empirical CI](https://github.com/en0ma/hybrid/actions/runs/461204
 ## Independent paired-case CI shards and incremental evidence
 
 At `0c05986`, the existing funded lifecycle, core PR Gate ([green rerun](https://github.com/en0ma/hybrid/actions/runs/46122082839)) and code review passed, with zero unresolved findings; the empirical [run](https://github.com/en0ma/hybrid/actions/runs/46122072320) was still executing when inspected. Each case now runs in its own disposable CI job with both programs sharing that case's identical mint/funding/actor fixture. Parallelize only distinct disposable actor funding, not protocol trade or settlement. Checkpoint the report by atomic rename before submission and after every finalized receipt, logging only public receipt metadata. Each shard must validate the exact head, Manifest pin, program IDs, ELF and runtime hashes, selected case and complete receipts; an aggregate job downloads both and requires both successful shards. No cross-host latency ranking is implied; each comparison is within its own runner. These are still only the first two preliminary cases, not the entire five-workload contract. No verified numbers claimed until the actual runs finish.
+
+## Verified baseline and two-market local inventory increment
+
+Exact head `6ce9545` passed all seven workflows, clean code review and no unresolved threads. [Empirical run 46122963231](https://github.com/en0ma/hybrid/actions/runs/46122963231) aggregate job 140914208222 independently validated both artifacts; [PR Gate](https://github.com/en0ma/hybrid/actions/runs/46122963216). Surfpool 1.8.0, Agave v4.3.0, Manifest pin above. Observed values (not estimates):
+
+| Full-fill workload | Protocol | Execution CU | Payout CU | Total settlement CU | Total settlement bytes | Max packet bytes | Max account keys | Settlement fees (lamports) |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| One maker | Hybrid | 65,924 | 225,950 | 291,874 | 1,361 | 725 | 18 | 10,000 |
+| One maker | Manifest | 8,595 | 3,253 | 11,848 | 849 | 462 | 10 | 10,000 |
+| Eight makers | Hybrid | 97,179 | 1,910,052 | 2,007,231 | 6,589 | 733 | 18 | 45,000 |
+| Eight makers | Manifest | 14,962 | 26,205 | 41,167 | 3,558 | 462 | 10 | 45,000 |
+
+Hybrid lazy claims dominate CU here. This unfavorable result is retained rather than hidden or changed retroactively. Both protocols paid out to external wallets, but these narrow full-fill ASK cases do not measure passive liquidity, global orders or optimized batch claims. Each pair used a separate runner; no wall-clock ranking. Setup costs not economically equivalent; Hybrid empty market seed excludes signed creation. See uploaded artifacts for footprint and raw receipts.
+
+Third shard implements the two-market local-inventory case: same maker and taker, same mint pair and one shared base/quote wallet per actor per protocol (no top-ups between markets). Two simultaneous one-level ASK books at prices 1 and 2 (two distinct price levels across the markets), 100 base atoms each. Verify both open books, collateral vaults and shared-wallet 200 atom debit before either execution, then signed full fills and all payouts, final shared wallet totals and protocol fee difference (3 vs 0 quote atoms). Independent validation requires distinct market and wallet account addresses and receipt signatures, both open-state proofs before execution, and per-market equivalent gross fills and measured receipt costs. No global collateral reuse or two price levels *within each market* claimed. Remaining partial-fill/cancel/replace/retry and adverse-price collateral stress cases unmeasured. New exact-head run and review required.

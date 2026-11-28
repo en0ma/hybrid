@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {summarizeReceipts,validateFullFillPair,auditExecutedReceipt,waitForFinalized,validatePairedShard,MANIFEST_PIN} from "./m84-metrics.mjs";
+import {summarizeReceipts,validateFullFillPair,auditExecutedReceipt,waitForFinalized,validatePairedShard,validateTwoMarketPair,MANIFEST_PIN} from "./m84-metrics.mjs";
 import {Keypair,TransactionMessage,VersionedTransaction,PublicKey} from "@solana/web3.js";
 import bs58 from "bs58";
 test("aggregate execution and all payout costs, never setup-only costs",()=>{
@@ -84,4 +84,33 @@ test("paired shard requires exact revision, case, program hashes, runtime and co
  assert.throws(()=>validatePairedShard({...report,toolchain:{caseMakers:"1"}},opts),/pinned runtime/);
  const pending=structuredClone(report);pending.cases[0].hybrid.pendingAttempt={status:"submission-attempted"};
  assert.throws(()=>validatePairedShard(pending,opts),/completed receipt/);
+});
+
+test("two-market evidence requires simultaneous distinct markets and a single shared funding baseline",()=>{
+ const h="hybrid",m="manifest";
+ function protocol(programId,fee){
+  const markets=[1,2].map((price,i)=>{
+   const receipts=["execute","payout"].map((stage,j)=>({stage,signature:programId+i+j,slot:10+i*2+j,
+    computeUnits:10,packetBytes:200,accountKeys:5,instructionMetas:3,feeLamports:5000}));
+   return {programId,market:programId+i,priceAtoms:String(price),verified:true,grossBaseAtoms:"100",
+    grossQuoteAtoms:String(price*100),payouts:[String(price*100)],protocolFeeQuoteAtoms:String(fee?price:0),
+    inventoryUtilization:{numerator:"100",denominator:"1000000000"},footprint:{bytes:100,lamports:500},receipts,metrics:summarizeReceipts(receipts)};
+  });
+  return {programId,verified:true,protocolFeeQuoteAtoms:String(fee),markets,
+   inventoryUtilization:{numerator:"200",denominator:"1000000000"},
+   concurrentOpen:markets.map(x=>({market:x.market,priceAtoms:x.priceAtoms,lockedBaseAtoms:"100",vaultBaseAtoms:"100",slot:9})),
+   walletKeys:[{owner:"maker",base:programId+"mb",quote:programId+"mq"},{owner:"taker",base:programId+"tb",quote:programId+"tq"}],
+   initialWallets:[{base:"1000000000",quote:"1000000000"},{base:"1000000000",quote:"1000000000"}],
+   concurrentWallets:[{base:"999999800",quote:"1000000000"},{base:"1000000000",quote:"1000000000"}],
+   finalWallets:[{base:"999999800",quote:"1000000300"},{base:"1000000200",quote:String(999999700-fee)}]};
+ }
+ const row={name:"two-market-inventory",makers:1,orderBaseAtoms:"100",initialMakerBaseAtoms:"1000000000",
+  makerOwners:["maker"],taker:"taker",hybrid:protocol(h,3),manifest:protocol(m,0)};
+ assert.equal(validateTwoMarketPair(row),true);
+ const bad=structuredClone(row);bad.hybrid.concurrentWallets[0].base="999999900";
+ assert.throws(()=>validateTwoMarketPair(bad),/shared wallet/);
+ const late=structuredClone(row);late.manifest.concurrentOpen[1].slot=13;
+ assert.throws(()=>validateTwoMarketPair(late),/simultaneous/);
+ const alias=structuredClone(row);alias.manifest.markets[1].market=alias.manifest.markets[0].market;alias.manifest.concurrentOpen[1].market=alias.manifest.markets[0].market;
+ assert.throws(()=>validateTwoMarketPair(alias),/alias/);
 });

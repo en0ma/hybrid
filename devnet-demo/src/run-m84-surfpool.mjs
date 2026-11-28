@@ -14,7 +14,8 @@ import {authenticateSettlementCollateral,loadSettlementEpochs,decodeSettlementCu
 import {prepareSettlement} from "../../sdk/src/settlement-plan.mjs";
 import {buildSettlementClaim,recoverEpochProofs,reserveVaultFloor} from "../../sdk/src/settlement.mjs";
 import {loadLiveMakerSnapshot} from "../../sdk/src/maker-live-snapshot.mjs";
-import {auditExecutedReceipt,summarizeReceipts,validateFullFillPair,waitForFinalized,MANIFEST_PIN} from "./m84-metrics.mjs";
+import {canonicalSqrtPriceX64} from "../../sdk/src/quote-orders.mjs";
+import {auditExecutedReceipt,summarizeReceipts,validateFullFillPair,validateTwoMarketPair,waitForFinalized,MANIFEST_PIN} from "./m84-metrics.mjs";
 const {PublicKey,Keypair,Connection,SystemProgram,ComputeBudgetProgram,TransactionMessage,VersionedTransaction}=web3;
 const H=new PublicKey(PROGRAM_ID),M=new PublicKey("MNFSTqtC93rEfYHB6hF82sKdZpUDFWkViLByLd1k1Ms");
 const T=new PublicKey(TOKEN_PROGRAM_ID),T22=new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
@@ -98,16 +99,19 @@ async function footprint(keys){
   lamports:r.value.reduce((n,a)=>n+a.lamports,0),accounts:keys.map((k,i)=>({address:pk(k),owner:pk(r.value[i].owner),
    bytes:r.value[i].data.length,lamports:r.value[i].lamports,dataSha256:hash(r.value[i].data)}))};
 }
-async function verifyPayout(result,f,accounts,vaults,fee){
- const fill=ORDER*BigInt(f.makers.length),state=await walletState(accounts,f);
+async function verifyPayout(result,f,accounts,vaults,fee,start){
+ const fill=ORDER*BigInt(f.makers.length),price=f.price??1n,gross=fill*price,state=await walletState(accounts,f);
  const makers=state.slice(0,-1),taker=state.at(-1);
- fail(makers.every(a=>a.base===FUND-ORDER&&a.quote===FUND+ORDER)&&
-  taker.base===FUND+fill&&taker.quote===FUND-fill-fee&&
+ const pre=start??accounts.map((_,i)=>({base:i===accounts.length-1?FUND:FUND-ORDER,quote:FUND}));
+ fail(makers.every((a,i)=>a.base===pre[i].base&&a.quote===pre[i].quote+ORDER*price)&&
+  taker.base===pre.at(-1).base+fill&&taker.quote===pre.at(-1).quote-gross-fee&&
   vaults.base===0n&&vaults.quote===fee,"Final external SPL conservation mismatch");
- const n=BigInt(accounts.length),sum=(field)=>state.reduce((a,x)=>a+x[field],0n);
- fail(sum("base")+vaults.base===n*FUND&&sum("quote")+vaults.quote===n*FUND,"Mint atom conservation mismatch");
- Object.assign(result,{verified:true,grossBaseAtoms:String(fill),grossQuoteAtoms:String(fill),
-  payouts:makers.map(a=>String(a.quote-FUND)),protocolFeeQuoteAtoms:String(fee),
+ const sum=(rows,field)=>rows.reduce((a,x)=>a+x[field],0n);
+ fail(sum(state,"base")+vaults.base===sum(pre,"base")+fill&&
+  sum(state,"quote")+vaults.quote===sum(pre,"quote"),"Mint atom conservation mismatch");
+ Object.assign(result,{verified:true,grossBaseAtoms:String(fill),grossQuoteAtoms:String(gross),
+  payouts:makers.map((a,i)=>String(a.quote-pre[i].quote)),protocolFeeQuoteAtoms:String(fee),
+  preSettlementWallets:pre,
   inventoryUtilization:{numerator:String(fill),denominator:String(BigInt(f.makers.length)*FUND)},
   finalWallets:state,finalVaults:vaults,metrics:summarizeReceipts(result.receipts)});
 }
@@ -127,7 +131,8 @@ async function hybrid(f,accounts,result){
  await seed(custody,H,c);
  await seed(baseVault,T,classicTokenBytes(f.baseMint,authority));
  await seed(quoteVault,T,classicTokenBytes(f.quoteMint,authority));
- const mk=market.publicKey,payer=f.payer;
+ const mk=market.publicKey,payer=f.payer,price=f.price??1n,priceX64=price*Q;
+ result.market=pk(mk);result.priceAtoms=String(price);
  await send(result,"initialize",mk,H,[ix(H,[meta(mk,false,true),meta(custody),meta(reserve,true),meta(payer.publicKey,true,true),meta(SYS)],
   Buffer.concat([Buffer.from([39]),bytes(genesis)]))],payer,[market]);
  const balances=[];
@@ -138,7 +143,7 @@ async function hybrid(f,accounts,result){
   await send(result,"deposit",mk,H,[transferMakerCollateral(H,{market:mk,custody,makerBalance,maker:maker.publicKey,
    source:accounts[i].base,vault:baseVault,mint:f.baseMint,tokenProgram:T},{direction:"deposit",asset:"base",amount:ORDER})],maker);
   await send(result,"place",mk,H,[placeOrder(H,{market:mk,page:askPage,ownerPage:askOwner,makerBalance,maker:maker.publicKey},
-   {side:"ask",baseQty:ORDER,priceX64:Q,sqrtPriceX64:Q})],maker);
+   {side:"ask",baseQty:ORDER,priceX64,sqrtPriceX64:canonicalSqrtPriceX64(priceX64)})],maker);
  }
  const taker=accounts.at(-1);
  const snap=()=>authenticateSettlementCollateral(rpc,{adapter,programId:H,market:mk,side:"ask",
@@ -164,18 +169,25 @@ async function hybrid(f,accounts,result){
    throw Error("Hybrid "+commitment+" maker snapshot: "+error.message);
   }
  }
- const before=await snap(),fill=ORDER*BigInt(f.makers.length),fee=fill/100n;
- fail(before.orders.length===f.makers.length&&before.orders.every((o,i)=>o.baseQty===ORDER&&o.priceX64===Q&&
-  Buffer.from(o.owner).equals(bytes(f.makers[i].publicKey)))&&before.custodyState.totalBase===fill&&
-  before.custodyState.totalQuote===0n,"Hybrid pre-trade depth/custody mismatch");
- for(const [i,maker] of f.makers.entries()){
-  const state=await makerSnapshot(maker,"confirmed",result.receipts.at(-1).slot);
-  fail(state.inventory.lockedBase===ORDER&&state.inventory.freeBase===0n&&state.ownedOrders.length===1,
-   "Hybrid maker inventory mismatch");
+ const fill=ORDER*BigInt(f.makers.length),gross=fill*price,fee=gross/100n;
+ async function checkOpen(){
+  const before=await snap();
+  fail(before.orders.length===f.makers.length&&before.orders.every((o,i)=>o.baseQty===ORDER&&o.priceX64===priceX64&&
+   Buffer.from(o.owner).equals(bytes(f.makers[i].publicKey)))&&before.custodyState.totalBase===fill&&
+   before.custodyState.totalQuote===0n&&before.vaultAmounts.base===fill&&before.vaultAmounts.quote===0n,"Hybrid pre-trade depth/custody mismatch");
+  for(const maker of f.makers){
+   const state=await makerSnapshot(maker,"confirmed",result.receipts.at(-1).slot);
+   fail(state.inventory.lockedBase===ORDER&&state.inventory.freeBase===0n&&state.ownedOrders.length===1,
+    "Hybrid maker inventory mismatch");
+  }
+  result.preTradeFootprint=await footprint([mk,askPage,askOwner,bidPage,bidOwner,custody,reserve,baseVault,quoteVault,...balances]);
+  return {market:pk(mk),priceAtoms:String(price),lockedBaseAtoms:String(fill),vaultBaseAtoms:String(before.vaultAmounts.base),slot:before.slot};
  }
- result.preTradeFootprint=await footprint([mk,askPage,askOwner,bidPage,bidOwner,custody,reserve,baseVault,quoteVault,...balances]);
+ async function finish(){
+ await checkOpen();
+ const start=await walletState(accounts,f);
  const fresh=await snap(),prepared=prepareSettlement(H,fresh,{payer:f.taker.publicKey,systemProgram:SYS},
-  {baseFill:fill,quoteLimit:fill+fee});
+  {baseFill:fill,quoteLimit:gross+fee});
  await send(result,"execute",mk,H,[prepared.instruction],f.taker);
  const load=()=>loadSettlementEpochs(rpc,{adapter,programId:H,market:mk,genesisHex:hex(genesis),epochIds:[0n],commitment:"finalized"});
  const sealed=await load(),epoch=sealed.epochs[0];
@@ -200,8 +212,11 @@ async function hybrid(f,accounts,result){
    "Hybrid residual orders or collateral");
  }
  result.footprint=await footprint([mk,askPage,askOwner,bidPage,bidOwner,custody,reserve,epoch.address,baseVault,quoteVault,...balances]);
- await verifyPayout(result,f,accounts,{base:await amount(baseVault,f.baseMint,authority),quote:await amount(quoteVault,f.quoteMint,authority)},fee);
+ await verifyPayout(result,f,accounts,{base:await amount(baseVault,f.baseMint,authority),quote:await amount(quoteVault,f.quoteMint,authority)},fee,start);
  return result;
+ }
+ if(f.deferSettlement)return {checkOpen,finish};
+ return finish();
 }
 // Narrow exact decoder for the pinned Manifest v3.1.0 market, classic SPL
 // local Limit orders only. Every reachable node validated for bounds/parent/alias.
@@ -230,43 +245,76 @@ function manifestBook(data,f,baseVault,quoteVault){
 }
 async function manifest(f,accounts,result){
  Object.assign(result,{programId:pk(M),receipts:[],verified:false,initialization:"signed core market and seat initialization"});
- const market=key(),mk=market.publicKey;
+ const market=key(),mk=market.publicKey,price=f.price??1n;
+ result.market=pk(mk);result.priceAtoms=String(price);
  const vault=m=>PublicKey.findProgramAddressSync([Buffer.from("vault"),bytes(mk),bytes(m)],M)[0];
  const baseVault=vault(f.baseMint),quoteVault=vault(f.quoteMint);
  const rent=await rpc.getMinimumBalanceForRentExemption(256);
  await send(result,"initialize",mk,M,[SystemProgram.createAccount({fromPubkey:f.payer.publicKey,newAccountPubkey:mk,
   space:256,lamports:rent,programId:M}),ix(M,[meta(f.payer.publicKey,true,true),meta(mk,true),meta(SYS),
   meta(f.baseMint),meta(f.quoteMint),meta(baseVault,true),meta(quoteVault,true),meta(T),meta(T22)],Buffer.from([0]))],f.payer,[market]);
- const balances=(op,maker,tokenAccount,vault,mint)=>ix(M,[meta(maker.publicKey,true,true),meta(mk,true),
-  meta(tokenAccount,true),meta(vault,true),meta(T),meta(mint)],Buffer.concat([Buffer.from([op]),u64(ORDER),Buffer.from([0])]));
+ const balances=(op,maker,tokenAccount,vault,mint,quantity=ORDER)=>ix(M,[meta(maker.publicKey,true,true),meta(mk,true),
+  meta(tokenAccount,true),meta(vault,true),meta(T),meta(mint)],Buffer.concat([Buffer.from([op]),u64(quantity),Buffer.from([0])]));
  for(const [i,maker] of f.makers.entries()){
   const prefix=[meta(maker.publicKey,true,true),meta(mk,true),meta(SYS)];
   await send(result,"initialize",mk,M,[ix(M,prefix,Buffer.from([1]))],maker);
   await send(result,"deposit",mk,M,[balances(2,maker,accounts[i].base,baseVault,f.baseMint)],maker);
-  const data=Buffer.concat([Buffer.from([6,0]),u32(0),u32(1),u64(ORDER),u32(1),Buffer.from([0,0]),u32(0),Buffer.from([0])]);
+  const data=Buffer.concat([Buffer.from([6,0]),u32(0),u32(1),u64(ORDER),u32(Number(price)),Buffer.from([0,0]),u32(0),Buffer.from([0])]);
   await send(result,"place",mk,M,[ix(M,prefix,data)],maker);
  }
  const readBook=async()=>{const a=await rpc.getAccountInfo(mk,"finalized");fail(a?.owner.equals(M),"Manifest market owner mismatch");
   return manifestBook(a.data,f,baseVault,quoteVault);};
- const book=await readBook(),fill=ORDER*BigInt(f.makers.length);
- fail(book.asks.length===f.makers.length&&book.seats.length===f.makers.length&&
-  f.makers.every(m=>book.asks.filter(o=>o.owner.equals(m.publicKey)&&o.base===ORDER&&o.price===10n**18n).length===1)&&
-  book.seats.every(s=>s.base===0n&&s.quote===0n)&&await amount(baseVault,f.baseMint,baseVault)===fill&&
-  await amount(quoteVault,f.quoteMint,quoteVault)===0n,"Manifest pre-trade collateral mismatch");
- result.preTradeFootprint=await footprint([mk,baseVault,quoteVault]);
- const taker=accounts.at(-1);
+ const fill=ORDER*BigInt(f.makers.length),gross=fill*price;
+ async function checkOpen(){
+  const book=await readBook(),vaultBase=await amount(baseVault,f.baseMint,baseVault);
+  fail(book.asks.length===f.makers.length&&book.seats.length===f.makers.length&&
+   f.makers.every(m=>book.asks.filter(o=>o.owner.equals(m.publicKey)&&o.base===ORDER&&o.price===price*10n**18n).length===1)&&
+   book.seats.every(s=>s.base===0n&&s.quote===0n)&&vaultBase===fill&&
+   await amount(quoteVault,f.quoteMint,quoteVault)===0n,"Manifest pre-trade collateral mismatch");
+  result.preTradeFootprint=await footprint([mk,baseVault,quoteVault]);
+  return {market:pk(mk),priceAtoms:String(price),lockedBaseAtoms:String(fill),vaultBaseAtoms:String(vaultBase),slot:result.preTradeFootprint.slot};
+ }
+ async function finish(){
+ await checkOpen();
+ const start=await walletState(accounts,f),taker=accounts.at(-1);
  await send(result,"execute",mk,M,[ix(M,[meta(f.taker.publicKey,true,true),meta(mk,true),meta(SYS),
   meta(taker.base,true),meta(taker.quote,true),meta(baseVault,true),meta(quoteVault,true),meta(T)],
-  Buffer.concat([Buffer.from([4]),u64(fill),u64(fill),Buffer.from([0,0])]))],f.taker);
+  Buffer.concat([Buffer.from([4]),u64(gross),u64(fill),Buffer.from([0,0])]))],f.taker);
  const post=await readBook();
- fail(post.asks.length===0&&f.makers.every(m=>post.seats.filter(s=>s.owner.equals(m.publicKey)&&s.base===0n&&s.quote===ORDER).length===1),
+ fail(post.asks.length===0&&f.makers.every(m=>post.seats.filter(s=>s.owner.equals(m.publicKey)&&s.base===0n&&s.quote===ORDER*price).length===1),
   "Manifest executed fill/seat mismatch");
  for(const [i,maker] of f.makers.entries())
-  await send(result,"payout",mk,M,[balances(3,maker,accounts[i].quote,quoteVault,f.quoteMint)],maker);
+  await send(result,"payout",mk,M,[balances(3,maker,accounts[i].quote,quoteVault,f.quoteMint,ORDER*price)],maker);
  const final=await readBook();fail(final.asks.length===0&&final.seats.every(s=>s.base===0n&&s.quote===0n),"Manifest residual liability");
  result.footprint=await footprint([mk,baseVault,quoteVault]);
- await verifyPayout(result,f,accounts,{base:await amount(baseVault,f.baseMint,baseVault),quote:await amount(quoteVault,f.quoteMint,quoteVault)},0n);
+ await verifyPayout(result,f,accounts,{base:await amount(baseVault,f.baseMint,baseVault),quote:await amount(quoteVault,f.quoteMint,quoteVault)},0n,start);
  return result;
+ }
+ if(f.deferSettlement)return {checkOpen,finish};
+ return finish();
+}
+async function twoMarket(f,accounts,run,result,fee){
+ const walletKeys=accounts.map(a=>({owner:pk(a.owner.publicKey),base:pk(a.base),quote:pk(a.quote)}));
+ Object.assign(result,{programId:pk(run===hybrid?H:M),walletKeys,initialWallets:await walletState(accounts,f),markets:[{},{}]});
+ fail(result.initialWallets.every(a=>a.base===FUND&&a.quote===FUND),"Shared wallet initial funding mismatch");
+ const handles=[];
+ for(const [i,price] of [1n,2n].entries())
+  handles.push(await run({...f,price,deferSettlement:true},accounts,result.markets[i]));
+ // Both books have open collateral simultaneously, before any trade.
+ result.concurrentOpen=await Promise.all(handles.map(h=>h.checkOpen()));
+ result.concurrentWallets=await walletState(accounts,f);
+ fail(result.concurrentWallets[0].base===FUND-2n*ORDER&&result.concurrentWallets[0].quote===FUND&&
+  result.concurrentWallets[1].base===FUND&&result.concurrentWallets[1].quote===FUND,"Shared wallet collateral not simultaneously funded");
+ await checkpoint();
+ for(const h of handles)await h.finish();
+ result.finalWallets=await walletState(accounts,f);
+ const [maker,taker]=result.finalWallets;
+ fail(maker.base===FUND-200n&&maker.quote===FUND+300n&&taker.base===FUND+200n&&
+  taker.quote===FUND-300n-fee,"Two-market shared wallet conservation mismatch");
+ result.inventoryUtilization={numerator:"200",denominator:String(FUND)};
+ result.protocolFeeQuoteAtoms=String(fee);
+ result.verified=true;
+ await checkpoint();
 }
 async function main(){
  const endpoint=new URL(process.env.SOLANA_RPC_URL||"http://127.0.0.1:8899");
@@ -282,8 +330,8 @@ async function main(){
  const hybridCommit=rev(".."),manifestCommit=rev(process.env.MANIFEST_REPO);
  fail(hybridCommit===process.env.HYBRID_BENCHMARK_COMMIT&&manifestCommit===MANIFEST_PIN,"Unpinned checkout");
  const dir=resolve(process.env.M84_EVIDENCE_DIR||".m84-evidence");await mkdir(dir,{recursive:true,mode:0o700});
- const selected=process.env.M84_CASE_MAKERS===undefined?[1,8]:[Number(process.env.M84_CASE_MAKERS)];
- fail(selected.every(m=>[1,8].includes(m)),"Unknown full-fill case selection");
+ const selected=process.env.M84_CASE_MAKERS===undefined?[1,8,2]:[Number(process.env.M84_CASE_MAKERS)];
+ fail(selected.every(m=>[1,8,2].includes(m)),"Unknown benchmark case selection");
  const report={schemaVersion:1,kind:"preliminary-paired-full-fill",network:"offline-surfpool",selectedMakers:selected,
   hybridCommit,manifestCommit,genesis:pk(genesis),toolchain:{node:process.version,
    solana:execFileSync("solana",["--version"],{encoding:"utf8"}).trim(),
@@ -292,7 +340,7 @@ async function main(){
    surfpoolBinarySha256:process.env.M84_SURFPOOL_SHA256||null,
    runner:process.env.GITHUB_RUN_ID||"local",job:process.env.GITHUB_JOB||"local",
    caseMakers:selected.join(","),arch:process.arch},cases:[],complete:false,
-  unmeasured:["two-market-inventory","partial-fill-cancel-replace-retry","adverse-price-collateral-stress"]};
+  unmeasured:["partial-fill-cancel-replace-retry","adverse-price-collateral-stress"]};
  const evidencePath=join(dir,"m84-empirical.json");
  checkpoint=async()=>{
   const next=evidencePath+".next";
@@ -304,7 +352,8 @@ async function main(){
   report.hybridBuild=await deploy(H,process.env.HYBRID_SBF_PATH);
   report.manifestBuild=await deploy(M,process.env.MANIFEST_SBF_PATH);
   await checkpoint();
-  for(const makers of selected){
+  for(const selection of selected){
+   const makers=selection===2?1:selection;
    const f={makers:Array.from({length:makers},key),taker:key(),payer:key(),baseMint:key().publicKey,quoteMint:key().publicKey};
    // Distinct newly generated actor accounts: issue funding once per actor,
    // then wait for all finalized balances concurrently. No trade is parallelized.
@@ -321,14 +370,20 @@ async function main(){
     const data=classicMintBytes(f.payer.publicKey);data.writeBigUInt64LE(supply,36);await seed(mint,T,data);
    }
    const h=await externalAccounts(f),m=await externalAccounts(f);
-   const row={name:makers===1?"one-maker-one-level-full-fill":"eight-maker-fanout-full-fill",makers,
+   const row={name:selection===2?"two-market-inventory":makers===1?"one-maker-one-level-full-fill":"eight-maker-fanout-full-fill",makers,
     baseMint:pk(f.baseMint),quoteMint:pk(f.quoteMint),makerOwners:f.makers.map(x=>pk(x.publicKey)),
     taker:pk(f.taker.publicKey),orderBaseAtoms:String(ORDER),initialMakerBaseAtoms:String(FUND),initialMakerQuoteAtoms:String(FUND),
     initialTakerBaseAtoms:String(FUND),initialTakerQuoteAtoms:String(FUND),baseDecimals:6,quoteDecimals:6};
    report.cases.push(row);
-   row.hybrid={};await hybrid(f,h,row.hybrid);
-   row.manifest={};await manifest(f,m,row.manifest);
-   validateFullFillPair(row);
+   row.hybrid={};row.manifest={};
+   if(selection===2){
+    await twoMarket(f,h,hybrid,row.hybrid,3n);
+    await twoMarket(f,m,manifest,row.manifest,0n);
+    validateTwoMarketPair(row);
+   }else{
+    await hybrid(f,h,row.hybrid);await manifest(f,m,row.manifest);
+    validateFullFillPair(row);
+   }
    await checkpoint();
   }
   report.complete=true;

@@ -46,12 +46,14 @@ export function summarizeReceipts(receipts){
 }
 export function validateFullFillPair(pair){
  const {makers,hybrid,manifest,orderBaseAtoms,initialMakerBaseAtoms}=pair;
+ const price=pair.priceAtoms??"1";
+ if(!["1","2"].includes(price))throw Error("Unexpected paired price");
  if(![1,8].includes(makers)||orderBaseAtoms!=="100"||initialMakerBaseAtoms!=="1000000000")
   throw Error("Unexpected paired fixture");
- const fill=BigInt(makers)*BigInt(orderBaseAtoms);
+ const fill=BigInt(makers)*BigInt(orderBaseAtoms),gross=fill*BigInt(price);
  for(const v of [hybrid,manifest]){
-  if(v?.verified!==true||v.grossBaseAtoms!==String(fill)||v.grossQuoteAtoms!==String(fill)||
-    v.payouts?.length!==makers||v.payouts.some(x=>x!==orderBaseAtoms)||
+  if(v?.verified!==true||v.grossBaseAtoms!==String(fill)||v.grossQuoteAtoms!==String(gross)||
+    v.payouts?.length!==makers||v.payouts.some(x=>x!==String(BigInt(orderBaseAtoms)*BigInt(price)))||
     v.inventoryUtilization?.numerator!==String(fill)||
     v.inventoryUtilization?.denominator!==String(BigInt(makers)*BigInt(initialMakerBaseAtoms))||
     !validInt(v.footprint?.bytes)||v.footprint.bytes===0||
@@ -61,7 +63,7 @@ export function validateFullFillPair(pair){
   const summary=summarizeReceipts(v.receipts);
   if(JSON.stringify(summary)!==JSON.stringify(v.metrics))throw Error("Receipt metric aggregate mismatch");
  }
- if(hybrid.protocolFeeQuoteAtoms!==String(fill/100n)||manifest.protocolFeeQuoteAtoms!=="0")
+ if(hybrid.protocolFeeQuoteAtoms!==String(gross/100n)||manifest.protocolFeeQuoteAtoms!=="0")
   throw Error("Unaccounted protocol fee difference");
  if(new Set([...hybrid.receipts,...manifest.receipts].map(x=>x.signature)).size!==hybrid.receipts.length+manifest.receipts.length)
   throw Error("Cross-protocol receipt reuse");
@@ -99,12 +101,12 @@ export async function waitForFinalized(connection,signature,{receiptRequired=tru
 
 // A CI shard is evidence for exactly one paired workload on one runtime.
 export function validatePairedShard(report,{hybridCommit,manifestCommit,makers}){
- if(![1,8].includes(makers)||!report||report.complete!==true||report.error!==undefined||
+ if(![1,8,2].includes(makers)||!report||report.complete!==true||report.error!==undefined||
   report.kind!=="preliminary-paired-full-fill"||report.network!=="offline-surfpool"||
   report.hybridCommit!==hybridCommit||report.manifestCommit!==manifestCommit||
   !/^[0-9a-f]{40}$/.test(hybridCommit)||manifestCommit!==MANIFEST_PIN||
   !Array.isArray(report.selectedMakers)||report.selectedMakers.length!==1||report.selectedMakers[0]!==makers||
-  !Array.isArray(report.cases)||report.cases.length!==1||report.cases[0].makers!==makers)
+  !Array.isArray(report.cases)||report.cases.length!==1||report.cases[0].makers!==(makers===2?1:makers))
   throw Error("Incomplete or wrong-head paired shard");
  const row=report.cases[0];
  if(row.hybrid?.pendingAttempt||row.manifest?.pendingAttempt||
@@ -115,5 +117,39 @@ export function validatePairedShard(report,{hybridCommit,manifestCommit,makers})
      .every(x=>typeof x==="string"&&/^[0-9a-f]{64}$/.test(x))||
    typeof report.genesis!=="string"||!report.genesis||report.toolchain?.caseMakers!==String(makers))
   throw Error("Missing pinned runtime or completed receipt evidence");
- return validateFullFillPair(row);
+ return makers===2?validateTwoMarketPair(row):validateFullFillPair(row);
+}
+
+// Two simultaneous local markets share one funded external maker wallet.
+export function validateTwoMarketPair(row){
+ if(row.name!=="two-market-inventory"||row.makers!==1||row.initialMakerBaseAtoms!=="1000000000"||
+  row.orderBaseAtoms!=="100"||row.makerOwners?.length!==1||typeof row.taker!=="string")
+  throw Error("Unexpected two-market workload");
+ const signatures=[],markets=[],wallets=[];
+ for(const [protocol,fee] of [[row.hybrid,"3"],[row.manifest,"0"]]){
+  const equalState=(state,expected)=>Array.isArray(state)&&state.length===2&&
+   state.every((a,i)=>String(a.base)===expected[i][0]&&String(a.quote)===expected[i][1]);
+  if(protocol?.verified!==true||protocol.protocolFeeQuoteAtoms!==fee||
+   protocol.inventoryUtilization?.numerator!=="200"||protocol.inventoryUtilization?.denominator!=="1000000000"||
+   protocol.markets?.length!==2||protocol.concurrentOpen?.length!==2||protocol.walletKeys?.length!==2||
+   protocol.walletKeys[0].owner!==row.makerOwners[0]||protocol.walletKeys[1].owner!==row.taker||
+   !equalState(protocol.initialWallets,[["1000000000","1000000000"],["1000000000","1000000000"]])||
+   !equalState(protocol.concurrentWallets,[["999999800","1000000000"],["1000000000","1000000000"]])||
+   !equalState(protocol.finalWallets,[["999999800","1000000300"],["1000000200",String(999999700n-BigInt(fee))]]))
+   throw Error("Two-market shared wallet or collateral evidence mismatch");
+  for(const [i,market] of protocol.markets.entries()){
+   const open=protocol.concurrentOpen[i],price=String(i+1);
+   if(market.pendingAttempt||market.programId!==protocol.programId||typeof market.market!=="string"||
+    market.priceAtoms!==price||open.market!==market.market||open.priceAtoms!==price||
+    open.lockedBaseAtoms!=="100"||open.vaultBaseAtoms!=="100"||
+    !validInt(open.slot)||open.slot===0||open.slot>Math.min(...protocol.markets.flatMap(x=>x.receipts.filter(r=>r.stage==="execute").map(r=>r.slot))))
+    throw Error("Missing simultaneous market collateral proof");
+   markets.push(market.market);signatures.push(...market.receipts.map(r=>r.signature));
+  }
+  wallets.push(...protocol.walletKeys.flatMap(x=>[x.base,x.quote]));
+ }
+ if(new Set(markets).size!==4||new Set(wallets).size!==8||new Set(signatures).size!==signatures.length)
+  throw Error("Two-market account or receipt alias");
+ for(let i=0;i<2;i++)validateFullFillPair({...row,priceAtoms:String(i+1),hybrid:row.hybrid.markets[i],manifest:row.manifest.markets[i]});
+ return true;
 }

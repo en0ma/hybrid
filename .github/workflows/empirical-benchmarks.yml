@@ -7,13 +7,13 @@ permissions:
   contents: read
 jobs:
   paired:
-    name: Paired full-fill (${{ matrix.makers }} makers)
+    name: Paired workload (case ${{ matrix.makers }})
     runs-on: ubuntu-latest
     timeout-minutes: 55
     strategy:
       fail-fast: false
       matrix:
-        makers: [1, 8]
+        makers: [1, 8, 2]
     env:
       M84_CASE_MAKERS: ${{ matrix.makers }}
       SOLANA_RPC_URL: http://127.0.0.1:8899
@@ -96,7 +96,7 @@ jobs:
           const r=JSON.parse(readFileSync(".m84-evidence/m84-empirical.json"));
           validatePairedShard(r,{hybridCommit:process.env.HYBRID_BENCHMARK_COMMIT,
             manifestCommit:MANIFEST_PIN,makers:Number(process.env.M84_CASE_MAKERS)});
-          console.log(JSON.stringify(r.cases.map(c=>({name:c.name,hybrid:c.hybrid.metrics,manifest:c.manifest.metrics})),null,2));
+          console.log(JSON.stringify(r.cases.map(c=>({name:c.name,hybrid:c.hybrid.metrics??c.hybrid.markets.map(m=>m.metrics),manifest:c.manifest.metrics??c.manifest.markets.map(m=>m.metrics)})),null,2));
           '
       - name: Print bounded partial evidence on failure
         if: failure()
@@ -129,7 +129,7 @@ jobs:
         run: if [ -f m84-surfpool.pid ]; then kill "$(cat m84-surfpool.pid)" 2>/dev/null || true; fi
 
   require-both-pairs:
-    name: Require both paired workloads
+    name: Require all three paired workloads
     needs: [paired]
     if: always()
     runs-on: ubuntu-latest
@@ -152,13 +152,13 @@ jobs:
           node --input-type=module -e '
           import {readFileSync} from "node:fs";
           import {validatePairedShard,MANIFEST_PIN} from "./devnet-demo/src/m84-metrics.mjs";
-          const reports=[1,8].map(makers=>{
+          const reports=[1,8,2].map(makers=>{
             const file="paired-evidence/m84-empirical-"+process.env.GITHUB_RUN_ID+"-"+makers+"-makers/.m84-evidence/m84-empirical.json";
             const report=JSON.parse(readFileSync(file));
             validatePairedShard(report,{hybridCommit:process.env.HYBRID_BENCHMARK_COMMIT,manifestCommit:MANIFEST_PIN,makers});
             return report;
           });
-          if(new Set(reports.map(r=>r.genesis)).size!==2)
+          if(new Set(reports.map(r=>r.genesis)).size!==3)
             console.log("Note: disposable runtimes reported the same genesis; compare each pair only within its own runner.");
-          console.log(JSON.stringify(reports.map(r=>({runner:r.toolchain.runner,genesis:r.genesis,cases:r.cases.map(c=>({name:c.name,hybrid:c.hybrid.metrics,manifest:c.manifest.metrics}))})),null,2));
+          console.log(JSON.stringify(reports.map(r=>({runner:r.toolchain.runner,genesis:r.genesis,cases:r.cases.map(c=>({name:c.name,hybrid:c.hybrid.metrics??c.hybrid.markets.map(m=>m.metrics),manifest:c.manifest.metrics??c.manifest.markets.map(m=>m.metrics)}))})),null,2));
           '
