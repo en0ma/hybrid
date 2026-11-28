@@ -326,12 +326,13 @@ async function runShared(rpc,url,genesis,dir,report){
 // M83: isolated fixture, actual SDK messages and SBF receipts. Each phase
 // is reloaded from the durable session; no manual account mutation after
 // provisioning and funding. External fills occur only between retired intents.
-async function runMakerSession(rpc,url,genesis,dir,report){
+async function runMakerSession(rpc,url,genesis,dir,report,incident=false){
+ const prefix=incident?"m83-incident":"m83-maker";
  const f=await setup(rpc,url,"ask",false,genesis,true);
  const maker=f.makers[0],market=f.market.publicKey;
  const result={market:market.toBase58(),maker:maker.publicKey.toBase58(),
   receipts:[],mutations:[],complete:false};
- report.makerSession=result;
+ report[incident?"makerIncident":"makerSession"]=result;
  const snapshotOptions={adapter,programId:program,market,maker:maker.publicKey,
   askHeadOwner:f.head,bidHeadOwner:f.bidHead,expectedGenesisHash:genesis.toBase58()};
  const observe=(commitment="confirmed")=>loadLiveMakerSnapshot(rpc,{...snapshotOptions,
@@ -348,10 +349,10 @@ async function runMakerSession(rpc,url,genesis,dir,report){
  fail(initial.inventory.freeBase===100n&&initial.inventory.lockedBase===100n&&
   initial.inventory.freeQuote===200n&&initial.inventory.lockedQuote===0n,
   "M83 funding mismatch");
- const sessionPath=join(dir,"m83-maker.session"),policy={maxLagSlots:32,maxOrders:8,maxChanges:8,
+ const sessionPath=join(dir,prefix+".session"),policy={maxLagSlots:32,maxOrders:8,maxChanges:8,
   maxBaseExposure:"500",maxQuoteNotional:"500",maxLossQuote:"0",baselineEquityQuote:"400",
   maxOrdersPerWindow:8,maxTransactionsPerWindow:8,maxRetries:0};
- const configPath=join(dir,"m83-maker-cli-config.json");
+ const configPath=join(dir,prefix+"-cli-config.json");
  const config={rpcUrl:url,expectedGenesisHash:genesis.toBase58(),market:market.toBase58(),
   maker:maker.publicKey.toBase58(),askHeadOwner:f.head.toBase58(),bidHeadOwner:f.bidHead.toBase58(),
   sessionPath,policy,orders:[],isolatedTestWalletAcknowledged:true,acknowledgeEmptySession:true};
@@ -386,13 +387,31 @@ async function runMakerSession(rpc,url,genesis,dir,report){
   }
   throw Error("M83 finalized receipt unavailable");
  }
+ async function partialFill(){
+  const pre=await observe();
+  const [page]=PublicKey.findProgramAddressSync([Buffer.from("ask-page"),bytes(market),u32(0)],program);
+  const fill=await signed(rpc,swap(program,{market,custody:f.custody,page,ownerPage:f.head,
+   taker:f.taker.publicKey,takerBase:f.takerBase,takerQuote:f.takerQuote,baseVault:f.baseVault,
+   quoteVault:f.quoteVault,vaultAuthority:f.authority,tokenProgram:token,makerBalances:[f.balances[0]]},
+   {side:"buy",mode:"exact-out",amount:25n,limit:25n}),f.payer,[f.taker],result);
+  const receipt=await waitFinalized(fill.signature);
+  const post=await observe();
+  fail(post.ownedOrders.some(o=>o.side==="ask"&&o.sequence===1n&&o.baseQty===75n)&&
+   post.inventory.lockedBase===pre.inventory.lockedBase-25n&&
+   post.inventory.freeQuote===pre.inventory.freeQuote+25n&&
+   post.custodyState.totalBase===pre.custodyState.totalBase-25n&&
+   post.custodyState.totalQuote===pre.custodyState.totalQuote+25n&&
+   post.vaultAmounts.base===pre.vaultAmounts.base-25n&&
+   post.vaultAmounts.quote===pre.vaultAmounts.quote+25n,"M83 partial fill reconciliation mismatch");
+  result.partialFill={signature:fill.signature,slot:receipt.slot,baseAtoms:"25",quoteAtoms:"25",verified:true};
+ }
  async function mutate(orders,phase){
   await setOrders(orders);
   const reserved=await command("sandbox-reserve");
   fail(reserved.phase==="reserved"&&reserved.action,"M83 reservation missing");
   const tx=web3.VersionedTransaction.deserialize(Buffer.from(reserved.unsignedWireBase64,"base64"));
   tx.sign([maker]);
-  const wirePath=join(dir,"m83-private-wire-"+result.mutations.length+".base64");
+  const wirePath=join(dir,prefix+"-private-wire-"+result.mutations.length+".base64");
   await writeFile(wirePath,Buffer.from(tx.serialize()).toString("base64"),{mode:0o600,flag:"wx"});
   const prepared=await command("sandbox-prepare",[wirePath]);
   const inspected=await command("inspect",[],false);
@@ -410,6 +429,35 @@ async function runMakerSession(rpc,url,genesis,dir,report){
    !status.canSubmit&&!status.canRetry&&!status.canRelease,"M83 restarted finalized status mismatch");
   const final=await command("sandbox-finalize");
   fail(final.state==="finalized-success"&&final.finalizedSlot===receipt.slot,"M83 finality mismatch");
+  if(incident){
+   // A genuine finalized fill after the original maker receipt but before
+   // retirement invalidates the strict expected post-state.
+   await partialFill();
+   fail(result.partialFill.slot>=receipt.slot,"M83 incident fill precedes mutation");
+   const audit=await command("audit",[],false);
+   fail(audit.matches===false&&audit.signature===prepared.signature&&
+    ["inventory.lockedBase","inventory.freeQuote","ownedOrders","custody","vaults"]
+      .every(k=>audit.differences.includes(k))&&
+    !audit.canSubmit&&!audit.canRetry&&!audit.canRelease,"M83 incident audit mismatch");
+   let rejected=false;
+   try{await command("sandbox-reconcile");}
+   catch(e){rejected=/M83 CLI sandbox-reconcile failed/.test(e.message);}
+   fail(rejected,"M83 incident reconciliation unexpectedly released");
+   const saved=await command("inspect",[],false);
+   fail(saved.phase==="finalized"&&saved.signature===prepared.signature&&
+    saved.transactionsReserved===1,"M83 incident journal not retained");
+   const after=await command("audit",[],false);
+   fail(!after.matches&&after.signature===prepared.signature,"M83 locked incident audit unavailable");
+   let blocked=false;
+   try{await command("sandbox-reserve");}
+   catch(e){blocked=/M83 CLI sandbox-reserve failed/.test(e.message);}
+   fail(blocked,"M83 incident permitted a new reservation");
+   await unlink(wirePath);
+   Object.assign(result,{complete:true,signature:prepared.signature,finalizedSlot:receipt.slot,
+    audit:after,reconcileRejected:true,newReservationBlocked:true,retainedPhase:saved.phase,
+    retainedCounters:saved.transactionsReserved});
+   return;
+  }
   const reconciled=await command("sandbox-reconcile");
   const saved=await command("inspect",[],false);
   await unlink(wirePath);
@@ -423,24 +471,8 @@ async function runMakerSession(rpc,url,genesis,dir,report){
    restartVerified:true,independentCliProcesses:true,disabledStatusVerified:true,reconciled:true});
  }
  await mutate([ask(100),bid(20)],"place");
- // Real active taker partial fill between retired intents, not inferred
- // from an RPC status. The existing SBF exact-out path transfers 25 atoms.
- const pre=await observe();
- const [page]=PublicKey.findProgramAddressSync([Buffer.from("ask-page"),bytes(market),u32(0)],program);
- const fill=await signed(rpc,swap(program,{market,custody:f.custody,page,ownerPage:f.head,
-  taker:f.taker.publicKey,takerBase:f.takerBase,takerQuote:f.takerQuote,baseVault:f.baseVault,
-  quoteVault:f.quoteVault,vaultAuthority:f.authority,tokenProgram:token,makerBalances:[f.balances[0]]},
-  {side:"buy",mode:"exact-out",amount:25n,limit:25n}),f.payer,[f.taker],result);
- await waitFinalized(fill.signature);
- const post=await observe();
- fail(post.ownedOrders.some(o=>o.side==="ask"&&o.sequence===1n&&o.baseQty===75n)&&
-  post.inventory.lockedBase===pre.inventory.lockedBase-25n&&
-  post.inventory.freeQuote===pre.inventory.freeQuote+25n&&
-  post.custodyState.totalBase===pre.custodyState.totalBase-25n&&
-  post.custodyState.totalQuote===pre.custodyState.totalQuote+25n&&
-  post.vaultAmounts.base===pre.vaultAmounts.base-25n&&
-  post.vaultAmounts.quote===pre.vaultAmounts.quote+25n,"M83 partial fill reconciliation mismatch");
- result.partialFill={signature:fill.signature,baseAtoms:"25",quoteAtoms:"25",verified:true};
+ if(incident)return;
+ await partialFill();
  await mutate([ask(90,"1.25"),bid(20)],"cancel");
  await mutate([ask(90,"1.25"),bid(20)],"place");
  await mutate([],"cancel");
@@ -473,6 +505,7 @@ async function main(){
  try{for(const side of ["ask","bid"])for(const multi of [false,true])await runCase(rpc,url,side,multi,genesis,dir,report);
   await runShared(rpc,url,genesis,dir,report);
   await runMakerSession(rpc,url,genesis,dir,report);
+  await runMakerSession(rpc,url,genesis,dir,report,true);
   report.complete=true;
  }catch(error){report.error=error.message;throw error;}
  finally{await writeFile(join(dir,"sdk-settlement-evidence.json"),json(report),{mode:0o600});}

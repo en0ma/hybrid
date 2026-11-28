@@ -22,3 +22,5 @@ Each CLI invocation performs one stage. Reserve, externally sign the exact messa
 
 ## Evidence and release gates
 Record exact commit, CI run, RPC class/genesis, signer public key only, submitted signatures, finalized receipts and CU, all inventory/vault deltas, risk policy, archived counter renewals and incident evidence. Existing funded offline Surfpool coverage is not public devnet proof. Concurrent in-flight changes still require independent manual reconciliation; crash-interrupted records have no automated repair. Multi-page mutation unsupported. Independent security and operations review, exact-head CI, and explicit operator release decision required. No production activation.
+
+For a finalized outstanding intent, `audit config.json` can compare the saved expected order/inventory state to fresh finalized authenticated state with execution disabled, including after a rejected reconciliation leaves a lock. Preserve the report with both receipts. A mismatch remains an incident, not permission to clear a lock, edit a journal, or submit a replacement.

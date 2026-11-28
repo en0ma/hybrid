@@ -18,7 +18,7 @@ test("sandbox commands require both explicit switches and literal loopback",()=>
  }
 });
 test("read-only commands do not enable submission even with switches",()=>{
- for(const command of ["observe","plan","inspect","status"]){
+ for(const command of ["observe","plan","inspect","status","audit"]){
   const opts=parseMakerConfig({...cfg,rpcUrl:"https://api.devnet.solana.com"},command,env);
   assert.equal(opts.control.enabled,false);assert.equal(opts.control.sandboxSubmit,false);
  }

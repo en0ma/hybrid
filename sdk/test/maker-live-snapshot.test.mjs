@@ -12,7 +12,7 @@ import {createSolanaSettlementAdapter} from "../src/settlement-solana.mjs";
 import {initializeLiveMakerSession,inspectLiveMakerSession,reserveLiveMakerIntent,
   prepareLiveMakerIntent,observeLiveMakerIntent,submitSandboxMakerIntent,
   finalizeSandboxMakerIntent,reconcileSandboxMakerIntent,renewSandboxMakerRateWindow,
-  reconcileFailedSandboxMakerIntent} from "../src/maker-live-session.mjs";
+  reconcileFailedSandboxMakerIntent,auditFinalizedSandboxMakerIntent} from "../src/maker-live-session.mjs";
 import {loadLiveMakerSnapshot} from "../src/maker-live-snapshot.mjs";
 const Q=1n<<64n;
 const key=n=>new PublicKey(Buffer.alloc(32,n));
@@ -430,6 +430,14 @@ test("unexplained post-finality inventory remains blocked",async()=>{
   await finalizedCancelFixture(async({f,sessionPath,opts,after})=>{
     after.inventory.writeBigUInt64LE(109n,96);
     await assert.rejects(reconcileSandboxMakerIntent(f.connection,opts),/Unexplained post-finality/);
+    // The rejection leaves a lock. Read-only evidence must still work.
+    const proof=await auditFinalizedSandboxMakerIntent(f.connection,opts);
+    assert.equal(proof.matches,false);
+    assert.deepEqual(proof.differences,["inventory.freeQuote"]);
+    assert.equal(proof.expected.inventory.freeQuote,"110");
+    assert.equal(proof.actual.inventory.freeQuote,"109");
+    assert.equal(proof.canRelease,false);assert.equal(proof.canRetry,false);
+    assert.ok((await stat(sessionPath+".lock")).size>0);
     assert.equal((await inspectLiveMakerSession(sessionPath)).phase,"finalized");
     assert.ok((await stat(sessionPath+".transaction")).size>0);
   });

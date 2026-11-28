@@ -440,6 +440,44 @@ function expectedAfter(intent){
   return {inventory:Object.fromEntries(inventoryFields.map(k=>[k,String(inventory[k])])),
     orders:sortedOrders(orders),nextSequence:String(nextSequence)};
 }
+async function finalizedStateAudit(connection,{state,record,snapshotOptions}){
+  const intent=state.intent;
+  if(record.lastConfirmedSlot!==intent.finalizedSlot||record.lastConfirmedSlot!==state.lastSlot||
+    !positive(intent.before?.slot)||intent.before.slot>record.lastConfirmedSlot)
+    throw new Error("Finalized journal and pre-submit context mismatch");
+  const snapshot=await loadLiveMakerSnapshot(connection,{
+    ...snapshotOptions,commitment:"finalized",maxLagSlots:state.limits.maxLagSlots,
+    minContextSlot:Math.max(snapshotOptions.minContextSlot??0,state.lastSlot),
+  });
+  const expected=expectedAfter(intent);
+  const actual={inventory:Object.fromEntries(inventoryFields.map(k=>[k,String(snapshot.inventory[k])])),
+    orders:sortedOrders(snapshot.ownedOrders),nextSequence:String(snapshot.header.nextSequence)};
+  const custody={base:String(snapshot.custodyState.totalBase),quote:String(snapshot.custodyState.totalQuote)};
+  const vaults={base:String(snapshot.vaultAmounts.base),quote:String(snapshot.vaultAmounts.quote)};
+  const differences=[];
+  if(snapshot.pendingLazySettlement)differences.push("pendingLazySettlement");
+  for(const field of inventoryFields)if(actual.inventory[field]!==expected.inventory[field])
+    differences.push("inventory."+field);
+  if(!equal(actual.orders,expected.orders))differences.push("ownedOrders");
+  if(actual.nextSequence!==expected.nextSequence)differences.push("nextSequence");
+  if(!equal(custody,intent.before.custody))differences.push("custody");
+  if(!equal(vaults,intent.before.vaults))differences.push("vaults");
+  return {slot:snapshot.slot,actual,custody,vaults,expected,
+    expectedCustody:intent.before.custody,expectedVaults:intent.before.vaults,
+    differences,matches:differences.length===0};
+}
+/** Read-only evidence for incident review, even when a stale lock exists.
+ * This never repairs records, retires a journal or grants permission to send.
+ * A concurrent writer may cause identity mismatch; the result is advisory.
+ */
+export async function auditFinalizedSandboxMakerIntent(connection,{sessionPath,snapshotOptions}){
+  const state=await read(sessionPath);sameDomain(state,snapshotOptions);
+  if(state.phase!=="finalized")throw new Error("No finalized intent to audit");
+  const {record}=await verifiedJournal(sessionPath,state);
+  const proof=await finalizedStateAudit(connection,{state,record,snapshotOptions});
+  return {...proof,signature:record.signature,finalizedSlot:record.lastConfirmedSlot,
+    mode:"observation-only",canSubmit:false,canRetry:false,canRelease:false};
+}
 /** Strict single-action, no-intervening-change reconciliation.
  * A concurrent fill, deposit, withdrawal, sequence advance or unexplained
  * vault change is NOT inferred to be harmless. Leave the session blocked.
@@ -450,27 +488,14 @@ export async function reconcileSandboxMakerIntent(connection,{sessionPath,snapsh
     const state=await read(sessionPath);sameDomain(state,snapshotOptions);
     if(state.phase!=="finalized")throw new Error("No finalized intent to reconcile");
     const {record}=await verifiedJournal(sessionPath,state);
-    const intent=state.intent;
-    if(record.lastConfirmedSlot!==intent.finalizedSlot||record.lastConfirmedSlot!==state.lastSlot||
-      !positive(intent.before?.slot)||intent.before.slot>record.lastConfirmedSlot)
-      throw new Error("Finalized journal and pre-submit context mismatch");
-    const snapshot=await loadLiveMakerSnapshot(connection,{
-      ...snapshotOptions,commitment:"finalized",maxLagSlots:state.limits.maxLagSlots,
-      minContextSlot:Math.max(snapshotOptions.minContextSlot??0,state.lastSlot),
-    });
-    const expected=expectedAfter(intent);
-    const actual={inventory:Object.fromEntries(inventoryFields.map(k=>[k,String(snapshot.inventory[k])])),
-      orders:sortedOrders(snapshot.ownedOrders),nextSequence:String(snapshot.header.nextSequence)};
-    const custody={base:String(snapshot.custodyState.totalBase),quote:String(snapshot.custodyState.totalQuote)};
-    const vaults={base:String(snapshot.vaultAmounts.base),quote:String(snapshot.vaultAmounts.quote)};
-    if(snapshot.pendingLazySettlement||!equal(actual,expected)||
-      !equal(custody,intent.before.custody)||!equal(vaults,intent.before.vaults))
+    const proof=await finalizedStateAudit(connection,{state,record,snapshotOptions});
+    if(!proof.matches)
       throw new Error("Unexplained post-finality maker, custody or vault state; manual reconciliation required");
-    const audit={slot:snapshot.slot,actual,custody,vaults};
+    const audit={slot:proof.slot,actual:proof.actual,custody:proof.custody,vaults:proof.vaults};
     // Exclusive archive creation retains both complete records. If anything
     // fails after archival, the lock and/or non-idle state prevent reuse.
     await retireWithArchive(sessionPath,state,record,audit);
-    return {state:"reconciled",signature:record.signature,slot:snapshot.slot,
+    return {state:"reconciled",signature:record.signature,slot:audit.slot,
       canSubmit:false,canRetry:false,requiresFreshPlan:true};
   });
 }

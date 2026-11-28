@@ -107,8 +107,17 @@ jobs:
             m.finalInventory?.freeBase!=="175"||m.finalInventory?.freeQuote!=="225"||
             m.finalInventory?.lockedBase!=="0"||m.finalInventory?.lockedQuote!=="0")
             throw Error("Incomplete funded M83 maker session evidence");
+          const incident=r.makerIncident;
+          if(!incident?.complete||!incident.partialFill?.verified||!incident.reconcileRejected||
+            !incident.newReservationBlocked||incident.retainedPhase!=="finalized"||
+            incident.retainedCounters!==1||incident.audit?.matches!==false||
+            incident.audit.canRelease!==false||incident.audit.canRetry!==false||
+            incident.audit.signature!==incident.signature||
+            !["inventory.lockedBase","inventory.freeQuote","ownedOrders","custody","vaults"]
+              .every(k=>incident.audit.differences?.includes(k)))
+            throw Error("Incomplete funded M83 concurrent-fill incident evidence");
           console.log(JSON.stringify({settlement:r.cases.map(c=>({side:c.side,multi:c.multi,receipts:c.receipts})),
-            makerSession:m},null,2));
+            makerSession:m,makerIncident:incident},null,2));
           '
       - name: Upload non-secret evidence on success or failure
         if: always()
