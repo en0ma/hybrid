@@ -24,3 +24,7 @@ See `.github/workflows/empirical-benchmarks.yml`; the runner requires exact pinn
 - [ ] Exact-head CI green; preserve all existing SBF, CU and ELF limits.
 - [ ] Evidence and limitations documented; independent review of security-sensitive code.
 - [ ] Sequential merge with expected head SHA. No production activation without explicit approval.
+
+## CI setup correction
+
+At initial head `5f42d41`, six existing workflows passed, code review was clean, but [new empirical workflow](https://github.com/en0ma/hybrid/actions/runs/46116124764) failed with zero jobs. Move runner-dependent paths into a step using `GITHUB_ENV`, use the same pinned Agave v4.3.0 and Surfpool 1.5.0 as PR Gate (record container image ID), bind the RPC port to loopback, and run for every main-target PR head so docs-only updates do not silently omit evidence. Persist per-protocol partial receipts and pending attempt status in the failure report, without signed wire or keys. No verified comparison numbers yet.

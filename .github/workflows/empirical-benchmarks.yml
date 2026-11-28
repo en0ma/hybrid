@@ -2,13 +2,7 @@ name: Empirical paired benchmarks
 on:
   workflow_dispatch:
   pull_request:
-    paths:
-      - ".github/workflows/empirical-benchmarks.yml"
-      - "devnet-demo/src/m84-*"
-      - "devnet-demo/src/run-m84-surfpool.mjs"
-      - "sdk/**"
-      - "program/**"
-      - "crates/**"
+    branches: [main]
 permissions:
   contents: read
 jobs:
@@ -19,9 +13,8 @@ jobs:
       SOLANA_RPC_URL: http://127.0.0.1:8899
       M84_OFFLINE_FIXTURE: "1"
       HYBRID_BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-      MANIFEST_REPO: ${{ runner.temp }}/manifest-m84
-      MANIFEST_SBF_PATH: ${{ runner.temp }}/m84-deploy/manifest.so
-      HYBRID_SBF_PATH: ${{ runner.temp }}/m84-deploy/hybrid_program.so
+      SOLANA_VERSION: v4.3.0
+      SURFPOOL_VERSION: "1.5.0"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,16 +22,27 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install toolchains
+      - name: Configure runner-local paths
         run: |
           set -euo pipefail
-          curl -fsSL https://release.anza.xyz/stable/install -o /tmp/agave-installer.sh
-          sh /tmp/agave-installer.sh
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
-          curl -fsSL https://run.surfpool.run/ -o /tmp/surfpool-installer.sh
-          bash /tmp/surfpool-installer.sh
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          {
+            echo "MANIFEST_REPO=$RUNNER_TEMP/manifest-m84"
+            echo "MANIFEST_SBF_PATH=$RUNNER_TEMP/m84-deploy/manifest.so"
+            echo "HYBRID_SBF_PATH=$RUNNER_TEMP/m84-deploy/hybrid_program.so"
+          } >> "$GITHUB_ENV"
+      - name: Cache Solana CLI and SBF tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/solana/install
+          key: ${{ runner.os }}-solana-v4.3.0-v1
+      - name: Install pinned Solana toolchain
+        run: source ci/install-solana.sh
+      - name: Pull pinned Surfpool runtime
+        run: |
+          set -euo pipefail
+          docker pull "surfpool/surfpool:$SURFPOOL_VERSION"
+          image="$(docker image inspect --format '{{.Id}}' "surfpool/surfpool:$SURFPOOL_VERSION")"
+          echo "M84_SURFPOOL_IMAGE=$image" >> "$GITHUB_ENV"
       - name: Build exact Hybrid and Manifest programs
         run: |
           set -euo pipefail
@@ -59,13 +63,14 @@ jobs:
         working-directory: devnet-demo
         run: |
           set -euo pipefail
-          NO_DNA=1 surfpool start --offline --ci --no-deploy > m84-surfpool.log 2>&1 &
-          echo $! > m84-surfpool.pid
+          docker run -d --name hybrid-m84-surfpool \
+            -p 127.0.0.1:8899:8899 -e NO_DNA=1 "$M84_SURFPOOL_IMAGE" \
+            start --offline --ci --no-deploy
           for i in $(seq 1 40); do
             if curl -fsS -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"getGenesisHash"}' "$SOLANA_RPC_URL" | grep -q '"result"'; then exit 0; fi
             sleep 2
           done
-          cat m84-surfpool.log
+          docker logs hybrid-m84-surfpool
           exit 1
       - name: Execute paired full-fill cases
         working-directory: devnet-demo
@@ -83,6 +88,10 @@ jobs:
           for(const c of r.cases)validateFullFillPair(c);
           console.log(JSON.stringify(r.cases.map(c=>({name:c.name,hybrid:c.hybrid.metrics,manifest:c.manifest.metrics})),null,2));
           '
+      - name: Collect runtime logs
+        if: always()
+        working-directory: devnet-demo
+        run: docker logs hybrid-m84-surfpool > m84-surfpool.log 2>&1 || true
       - name: Upload empirical evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -96,4 +105,4 @@ jobs:
       - name: Stop runtime
         if: always()
         working-directory: devnet-demo
-        run: if [ -f m84-surfpool.pid ]; then kill "$(cat m84-surfpool.pid)" 2>/dev/null || true; fi
+        run: docker rm -f hybrid-m84-surfpool || true

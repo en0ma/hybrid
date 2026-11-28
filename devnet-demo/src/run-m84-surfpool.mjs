@@ -56,8 +56,10 @@ async function send(result,stage,market,program,instructions,payer,others=[]){
   instructions:[ComputeBudgetProgram.setComputeUnitLimit({units:400000}),...instructions]}).compileToV0Message();
  const tx=new VersionedTransaction(message);tx.sign([payer,...others]);
  const wire=Buffer.from(tx.serialize()),signature=bs58.encode(tx.signatures[0]);
+ result.pendingAttempt={stage,signature,slot:await rpc.getSlot("confirmed"),status:"prepared"};
  const sim=await rpc.simulateTransaction(tx,{sigVerify:true,replaceRecentBlockhash:false,commitment:"confirmed"});
  fail(sim.value.err===null,"Simulation failed "+stage+" "+JSON.stringify(sim.value.err));
+ result.pendingAttempt.status="submission-attempted";
  fail(await rpc.sendRawTransaction(wire,{maxRetries:0,skipPreflight:false})===signature,"Send signature mismatch");
  const confirmed=await rpc.confirmTransaction({signature,blockhash,lastValidBlockHeight},"confirmed");
  fail(confirmed.value.err===null,"Failed "+stage+" "+signature);
@@ -73,6 +75,7 @@ async function send(result,stage,market,program,instructions,payer,others=[]){
  }
  const proof=auditExecutedReceipt(receipt,{signature,wire,programId:program,market,bs58});
  result.receipts.push({stage,...proof,simulationComputeUnits:sim.value.unitsConsumed});
+ delete result.pendingAttempt;
  return proof;
 }
 async function externalAccounts(f){
@@ -116,8 +119,8 @@ async function verifyPayout(result,f,accounts,vaults,fee){
   inventoryUtilization:{numerator:String(fill),denominator:String(BigInt(f.makers.length)*FUND)},
   finalWallets:state,finalVaults:vaults,metrics:summarizeReceipts(result.receipts)});
 }
-async function hybrid(f,accounts){
- const result={programId:pk(H),receipts:[],verified:false,initialization:"seeded empty market/book/custody; signed balance/reserve initialization"};
+async function hybrid(f,accounts,result){
+ Object.assign(result,{programId:pk(H),receipts:[],verified:false,initialization:"seeded empty market/book/custody; signed balance/reserve initialization"});
  const market=key(),askOwner=key().publicKey,bidOwner=key().publicKey;
  const derive=(name,...rest)=>PublicKey.findProgramAddressSync([Buffer.from(name),bytes(market.publicKey),...rest],H);
  const [custody,bump]=derive("custody"),[reserve]=derive("lazy-reserve"),[authority]=derive("vault-authority");
@@ -214,8 +217,8 @@ function manifestBook(data,f,baseVault,quoteVault){
  fail(bids.length===0,"Unexpected Manifest bids");
  return {seats:[...seats.values()],asks};
 }
-async function manifest(f,accounts){
- const result={programId:pk(M),receipts:[],verified:false,initialization:"signed core market and seat initialization"};
+async function manifest(f,accounts,result){
+ Object.assign(result,{programId:pk(M),receipts:[],verified:false,initialization:"signed core market and seat initialization"});
  const market=key(),mk=market.publicKey;
  const vault=m=>PublicKey.findProgramAddressSync([Buffer.from("vault"),bytes(mk),bytes(m)],M)[0];
  const baseVault=vault(f.baseMint),quoteVault=vault(f.quoteMint);
@@ -269,7 +272,8 @@ async function main(){
   hybridCommit,manifestCommit,genesis:pk(genesis),toolchain:{node:process.version,
    solana:execFileSync("solana",["--version"],{encoding:"utf8"}).trim(),
    rust:execFileSync("rustc",["--version"],{encoding:"utf8"}).trim(),
-   surfpool:execFileSync("surfpool",["--version"],{encoding:"utf8"}).trim(),
+   surfpool:process.env.SURFPOOL_VERSION||execFileSync("surfpool",["--version"],{encoding:"utf8"}).trim(),
+   surfpoolImage:process.env.M84_SURFPOOL_IMAGE||null,
    runner:process.env.GITHUB_RUN_ID||"local",arch:process.arch},cases:[],complete:false,
   unmeasured:["two-market-inventory","partial-fill-cancel-replace-retry","adverse-price-collateral-stress"]};
  try{
@@ -290,7 +294,8 @@ async function main(){
     taker:pk(f.taker.publicKey),orderBaseAtoms:String(ORDER),initialMakerBaseAtoms:String(FUND),initialMakerQuoteAtoms:String(FUND),
     initialTakerBaseAtoms:String(FUND),initialTakerQuoteAtoms:String(FUND),baseDecimals:6,quoteDecimals:6};
    report.cases.push(row);
-   row.hybrid=await hybrid(f,h);row.manifest=await manifest(f,m);
+   row.hybrid={};await hybrid(f,h,row.hybrid);
+   row.manifest={};await manifest(f,m,row.manifest);
    validateFullFillPair(row);
   }
   report.complete=true;
