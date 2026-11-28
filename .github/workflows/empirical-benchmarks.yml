@@ -1,0 +1,175 @@
+name: Empirical paired benchmarks
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  paired:
+    name: Paired workload (case ${{ matrix.makers }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        makers: [1, 8, 2, 4, 5]
+    env:
+      M84_CASE_MAKERS: ${{ matrix.makers }}
+      SOLANA_RPC_URL: http://127.0.0.1:8899
+      M84_OFFLINE_FIXTURE: "1"
+      HYBRID_BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+      SOLANA_VERSION: v4.3.0
+      SURFPOOL_VERSION: "1.8.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Configure runner-local paths
+        run: |
+          set -euo pipefail
+          {
+            echo "MANIFEST_REPO=$RUNNER_TEMP/manifest-m84"
+            echo "MANIFEST_SBF_PATH=$RUNNER_TEMP/m84-deploy/manifest.so"
+            echo "HYBRID_SBF_PATH=$RUNNER_TEMP/m84-deploy/hybrid_program.so"
+          } >> "$GITHUB_ENV"
+      - name: Cache Solana CLI and SBF tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/solana/install
+          key: ${{ runner.os }}-solana-v4.3.0-v1
+      - name: Install pinned Solana toolchain
+        run: source ci/install-solana.sh
+      - name: Install exact funded-lifecycle Surfpool release
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 "https://github.com/solana-foundation/surfpool/releases/download/v$SURFPOOL_VERSION/surfpool-linux-x64.tar.gz" -o "$RUNNER_TEMP/surfpool.tar.gz"
+          mkdir -p "$RUNNER_TEMP/m84-surfpool"
+          tar -xzf "$RUNNER_TEMP/surfpool.tar.gz" -C "$RUNNER_TEMP/m84-surfpool"
+          bin="$(find "$RUNNER_TEMP/m84-surfpool" -type f -name surfpool -print -quit)"
+          test -n "$bin"
+          chmod +x "$bin"
+          test "$("$bin" --version)" = "surfpool $SURFPOOL_VERSION"
+          echo "$(dirname "$bin")" >> "$GITHUB_PATH"
+          echo "M84_SURFPOOL_SHA256=$(sha256sum "$bin" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+      - name: Build exact Hybrid and Manifest programs
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HYBRID_BENCHMARK_COMMIT"
+          git clone --filter=blob:none https://github.com/Bonasa-Tech/manifest.git "$MANIFEST_REPO"
+          git -C "$MANIFEST_REPO" checkout --detach d04b7aa90b098ba64ebcdf398e9a24d89a9114d8
+          test "$(git -C "$MANIFEST_REPO" rev-parse HEAD)" = d04b7aa90b098ba64ebcdf398e9a24d89a9114d8
+          mkdir -p "$RUNNER_TEMP/m84-deploy"
+          cargo build-sbf --manifest-path program/Cargo.toml --sbf-out-dir "$RUNNER_TEMP/m84-deploy"
+          cargo build-sbf --manifest-path "$MANIFEST_REPO/programs/manifest/Cargo.toml" --sbf-out-dir "$RUNNER_TEMP/m84-deploy"
+          sha256sum "$HYBRID_SBF_PATH" "$MANIFEST_SBF_PATH"
+      - name: Install runner and test receipt auditor
+        working-directory: devnet-demo
+        run: |
+          npm install --no-save --no-audit --no-fund
+          node --test src/m84-metrics.test.mjs
+      - name: Start disposable offline Surfpool
+        working-directory: devnet-demo
+        run: |
+          set -euo pipefail
+          NO_DNA=1 surfpool start --offline --ci --no-deploy > m84-surfpool.log 2>&1 &
+          echo $! > m84-surfpool.pid
+          for i in $(seq 1 40); do
+            if curl -fsS -X POST -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"getGenesisHash"}' "$SOLANA_RPC_URL" | grep -q '"result"'; then exit 0; fi
+            sleep 2
+          done
+          cat m84-surfpool.log
+          exit 1
+      - name: Execute paired full-fill cases
+        timeout-minutes: 35
+        working-directory: devnet-demo
+        run: node src/run-m84-surfpool.mjs
+      - name: Require actual paired receipt evidence
+        working-directory: devnet-demo
+        run: |
+          node --input-type=module -e '
+          import {readFileSync} from "node:fs";
+          import {validatePairedShard,MANIFEST_PIN} from "./src/m84-metrics.mjs";
+          const r=JSON.parse(readFileSync(".m84-evidence/m84-empirical.json"));
+          validatePairedShard(r,{hybridCommit:process.env.HYBRID_BENCHMARK_COMMIT,
+            manifestCommit:MANIFEST_PIN,makers:Number(process.env.M84_CASE_MAKERS)});
+          console.log(JSON.stringify(r.cases.map(c=>({name:c.name,hybrid:c.hybrid.metrics??c.hybrid.markets.map(m=>({...m.metrics,rejectedWithdrawal:m.rejectedWithdrawal})),manifest:c.manifest.metrics??c.manifest.markets.map(m=>({...m.metrics,rejectedWithdrawal:m.rejectedWithdrawal}))})),null,2));
+          '
+      - name: Print bounded partial evidence on failure
+        if: failure()
+        working-directory: devnet-demo
+        run: |
+          if [ -f .m84-evidence/m84-empirical.json ]; then
+            node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            const r=JSON.parse(readFileSync(".m84-evidence/m84-empirical.json"));
+            console.log(JSON.stringify({error:r.error,cases:r.cases.map(c=>({
+              name:c.name,hybrid:{receipts:c.hybrid?.receipts,pendingAttempt:c.hybrid?.pendingAttempt,
+                snapshotDiagnostics:c.hybrid?.snapshotDiagnostics},
+              manifest:{receipts:c.manifest?.receipts,pendingAttempt:c.manifest?.pendingAttempt}
+            }))},null,2));
+            '
+          fi
+      - name: Upload empirical evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m84-empirical-${{ github.run_id }}-${{ matrix.makers }}-makers
+          include-hidden-files: true
+          if-no-files-found: warn
+          path: |
+            devnet-demo/.m84-evidence/m84-empirical.json
+            devnet-demo/m84-surfpool.log
+      - name: Stop runtime
+        if: always()
+        working-directory: devnet-demo
+        run: if [ -f m84-surfpool.pid ]; then kill "$(cat m84-surfpool.pid)" 2>/dev/null || true; fi
+
+  require-both-pairs:
+    name: Require all five paired workloads
+    needs: [paired]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful independent shards
+        env:
+          MATRIX_RESULT: ${{ needs.paired.result }}
+        run: test "$MATRIX_RESULT" = success
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: m84-empirical-${{ github.run_id }}-*-makers
+          path: paired-evidence
+      - name: Validate exact-head evidence from both independent runs
+        env:
+          HYBRID_BENCHMARK_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node --input-type=module -e '
+          import {readFileSync,writeFileSync} from "node:fs";
+          import {validatePairedShard,summarizePairedReport,MANIFEST_PIN} from "./devnet-demo/src/m84-metrics.mjs";
+          const reports=[1,8,2,4,5].map(makers=>{
+            const file="paired-evidence/m84-empirical-"+process.env.GITHUB_RUN_ID+"-"+makers+"-makers/.m84-evidence/m84-empirical.json";
+            const report=JSON.parse(readFileSync(file));
+            validatePairedShard(report,{hybridCommit:process.env.HYBRID_BENCHMARK_COMMIT,manifestCommit:MANIFEST_PIN,makers});
+            return report;
+          });
+          if(new Set(reports.map(r=>r.genesis)).size!==5)
+            console.log("Note: disposable runtimes reported the same genesis; compare each pair only within its own runner.");
+          const summary={schemaVersion:1,kind:"five-paired-local-ask-workloads",hybridCommit:process.env.HYBRID_BENCHMARK_COMMIT,
+            manifestCommit:MANIFEST_PIN,runId:process.env.GITHUB_RUN_ID,
+            workloads:reports.map((r,i)=>summarizePairedReport(r,{hybridCommit:process.env.HYBRID_BENCHMARK_COMMIT,manifestCommit:MANIFEST_PIN,makers:[1,8,2,4,5][i]}))};
+          writeFileSync("m84-paired-summary.json",JSON.stringify(summary,null,2)+"\n");
+          console.log(JSON.stringify(summary,null,2));
+          '
+
+      - name: Upload consolidated five-workload comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: m84-paired-summary-${{ github.run_id }}
+          path: m84-paired-summary.json
+          if-no-files-found: error
